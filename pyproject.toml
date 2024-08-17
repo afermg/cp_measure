@@ -67,7 +67,17 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-dev = ["build", "pyinstaller", "twine"]
+dev = [
+    "build",
+    "pyinstaller",
+    "twine", # End of original deps
+    "jupyter~=1.0.0",
+    "pytest>=8.2.2",
+    "jupytext~=1.15.0",
+    "ruff-lsp~=0.0.48",
+    "ruff~=0.3.2",
+    "ipdb>=0.13.13",
+]
 # TODO: should be handled by nox or tox
 test = ["pytest~=7.4.1"]
 
@@ -79,28 +89,28 @@ Repository = "https://github.com/CellProfiler/CellProfiler"
 Issues = "https://github.com/CellProfiler/CellProfiler/issues"
 Changelog = "https://github.com/CellProfiler/CellProfiler/releases"
 
-[tool.setuptools]
-# true by default
-include-package-data = true
+# [tool.setuptools]
+# # true by default
+# include-package-data = true
 
-# default exclusions for automatic discovery on flat-layout:
-# https://setuptools.pypa.io/en/latest/userguide/package_discovery.html#flat-layout
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["cellprofiler_library*"]
-# enable PEP 420 namespace packages for cellprofiler/data dir
-namespaces = true
+# # default exclusions for automatic discovery on flat-layout:
+# # https://setuptools.pypa.io/en/latest/userguide/package_discovery.html#flat-layout
+# [tool.setuptools.packages.find]
+# where = ["."]
+# include = ["cellprofiler_library*"]
+# # enable PEP 420 namespace packages for cellprofiler/data dir
+# namespaces = true
 
-[tool.setuptools.package-data]
-# PEP 561
-cellprofiler_library = ["py.typed"]
+# [tool.setuptools.package-data]
+# # PEP 561
+# cellprofiler_library = ["py.typed"]
 
-[tool.setuptools_scm]
-root = "../../.."
-# run pip install -e to get latest
-version_file = "cellprofiler_library/_version.py"
-# local scheme complies with PEP 440
-# https://peps.python.org/pep-0440/#local-version-identifiers%3E
-# but not accepted by TestPyPI and PyPi
-# https://setuptools-scm.readthedocs.io/en/stable/usage/#default-versioning-scheme
-local_scheme = "no-local-version"
+# [tool.setuptools_scm]
+# root = "../../.."
+# # run pip install -e to get latest
+# version_file = "cellprofiler_library/_version.py"
+# # local scheme complies with PEP 440
+# # https://peps.python.org/pep-0440/#local-version-identifiers%3E
+# # but not accepted by TestPyPI and PyPi
+# # https://setuptools-scm.readthedocs.io/en/stable/usage/#default-versioning-scheme
+# local_scheme = "no-local-version"
