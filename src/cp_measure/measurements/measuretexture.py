@@ -1,6 +1,3 @@
-import cellprofiler.gui.help.content
-import cellprofiler.icons
-
 __doc__ = """\
 MeasureTexture
 ==============
@@ -143,657 +140,96 @@ References
 .. _GeoGebra: https://www.geogebra.org/ 
 .. |MT_image0| image:: {MEASURE_TEXTURE_3D_INFO}
 .. |MT_image1| image:: {MEASURE_TEXTURE_3D_INFO2}
-""".format(
-    **{
-        "MEASURE_TEXTURE_3D_INFO": cellprofiler.gui.help.content.image_resource(
-            "Measure_texture_3D_correspondences_1.png"
-        ),
-        "MEASURE_TEXTURE_3D_INFO2": cellprofiler.gui.help.content.image_resource(
-            "Measure_texture_3D_correspondences_2.png"
-        )
-    }
-)
+"""
 
 import mahotas.features
 import numpy
 import skimage.exposure
 import skimage.measure
 import skimage.util
-from cellprofiler_core.constants.measurement import COLTYPE_FLOAT
-from cellprofiler_core.module import Module
-from cellprofiler_core.setting import (
-    HiddenCount,
-    Divider,
-    SettingsGroup,
-    ValidationError,
-)
-from cellprofiler_core.setting.choice import Choice
-from cellprofiler_core.setting.do_something import DoSomething, RemoveSettingButton
-from cellprofiler_core.setting.subscriber import (
-    ImageListSubscriber,
-    LabelListSubscriber,
-)
-from cellprofiler_core.setting.text import Integer
-from cellprofiler_core.utilities.core.object import size_similarly
-
-TEXTURE = "Texture"
 
 F_HARALICK = """AngularSecondMoment Contrast Correlation Variance
 InverseDifferenceMoment SumAverage SumVariance SumEntropy Entropy
 DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
 
-IO_IMAGES = "Images"
-IO_OBJECTS = "Objects"
-IO_BOTH = "Both"
 
+def measure_texture(
+    pixels: numpy.ndarray,
+    mask: numpy.ndarray = None,  # MODIFIED: if mask is not provided do whole image
+    scale: int = 3,
+    gray_levels: int = 256,
+):
+    """
+    Parameters
+    ----------
+    gray_levels : int, optional (default is 256)
+        Number of gray levels. Measuring at more levels gives you _potentially_
+        more detailed information about your image, but at the cost of somewhat
+        decreased processing speed (default is 256).
+    texture_scale : int, optional (default is 3)
+        You can specify the scale of texture to be measured, in pixel units; the
+        texture scale is the distance between correlated intensities in the
+        image. A higher number for the scale of texture measures larger patterns
+        of texture whereas smaller numbers measure more localized patterns of
+        texture. It is best to measure texture on a scale smaller than your
+        objects’ sizes, so be sure that the value entered for scale of texture
+        is smaller than most of your objects. For very small objects (smaller
+        than the scale of texture you are measuring), the texture cannot be
+        measured and will result in a undefined value in the output file.
 
-class MeasureTexture(Module):
-    module_name = "MeasureTexture"
+    Returns
+    -------
+    Dictionary of floats.
 
-    variable_revision_number = 7
+    Notes
+    -----
+    Before processing, your image will be rescaled from its current pixel values
+    to 0 - [gray levels - 1]. The texture features will then be calculated.
 
-    category = "Measurement"
+    In all CellProfiler 2 versions, this value was fixed at 8; in all
+    CellProfiler 3 versions it was fixed at 256.  The minimum number of levels is
+    2, the maximum is 256.
+    """
 
-    def create_settings(self):
-        self.images_list = ImageListSubscriber(
-            "Select images to measure",
-            [],
-            doc="""Select the grayscale images whose intensity you want to measure.""",
+    # Modified use pixels nality to determine the number of directions
+    n_directions = 13 if pixels.ndim > 2 else 4
+
+    # MODIFIED: We assume that the mask provided has the same shape
+    # as pixels, thus no cropping is performed
+    # MODIFIED: Perform image-wide operation if no mask is provided
+    if mask is not None:
+        pixels[~mask] = 0
+
+    # mahotas.features.haralick bricks itself when provided a
+    # dtype larger than uint8 (version 1.4.3)
+    pixels = skimage.util.img_as_ubyte(pixels)
+    if gray_levels != 256:
+        pixels = skimage.exposure.rescale_intensity(
+            pixels, in_range=(0, 255), out_range=(0, gray_levels - 1)
+        ).astype(numpy.uint8)
+    # MODIFIED: We assume only one mask/object
+    # MODIFIED: Given that we are only using one mask we do not need a third dimension
+    features = numpy.empty((n_directions, 13))
+
+    try:
+        features[:, :] = mahotas.features.haralick(
+            pixels, distance=scale, ignore_zeros=True
         )
+    except ValueError:
+        features[:, :] = numpy.nan
 
-        self.objects_list = LabelListSubscriber(
-            "Select objects to measure",
-            [],
-            doc="""\
-        Select the objects whose texture you want to measure. If you only want
-        to measure the texture for the image overall, you can remove all objects
-        using the “Remove this object” button.
-
-        Objects specified here will have their texture measured against *all*
-        images specified above, which may lead to image-object combinations that
-        are unnecessary. If you do not want this behavior, use multiple
-        **MeasureTexture** modules to specify the particular image-object
-        measures that you want.
-        """,
-        )
-
-        self.gray_levels = Integer(
-            "Enter how many gray levels to measure the texture at",
-            256,
-            2,
-            256,
-            doc="""\
-        Enter the number of gray levels (ie, total possible values of intensity) 
-        you want to measure texture at.  Measuring at more levels gives you 
-        _potentially_ more detailed information about your image, but at the cost
-        of somewhat decreased processing speed.  
-
-        Before processing, your image will be rescaled from its current pixel values
-        to 0 - [gray levels - 1]. The texture features will then be calculated. 
-
-        In all CellProfiler 2 versions, this value was fixed at 8; in all 
-        CellProfiler 3 versions it was fixed at 256.  The minimum number of levels is
-        2, the maximum is 256.
-        """,
-        )
-
-        self.scale_groups = []
-
-        self.scale_count = HiddenCount(self.scale_groups)
-
-        self.image_divider = Divider()
-
-        self.object_divider = Divider()
-
-        self.add_scale(removable=False)
-
-        self.add_scales = DoSomething(
-            callback=self.add_scale,
-            label="Add another scale",
-            text="",
-            doc="""\
-            Add an additional texture scale to measure. Useful when you
-            want to measure texture features of different sizes.
-            """,
-        )
-
-        self.images_or_objects = Choice(
-            "Measure whole images or objects?",
-            [IO_IMAGES, IO_OBJECTS, IO_BOTH],
-            value=IO_BOTH,
-            doc="""\
-This setting determines whether the module computes image-wide
-measurements, per-object measurements or both.
-
--  *{IO_IMAGES}:* Select if you only want to measure the texture
-   across entire images.
--  *{IO_OBJECTS}:* Select if you want to measure the texture
-   on a per-object basis only.
--  *{IO_BOTH}:* Select to make both image and object measurements.
-""".format(
-                **{"IO_IMAGES": IO_IMAGES, "IO_OBJECTS": IO_OBJECTS, "IO_BOTH": IO_BOTH}
-            ),
-        )
-
-    def settings(self):
-        settings = [
-            self.images_list,
-            self.objects_list,
-            self.gray_levels,
-            self.scale_count,
-            self.images_or_objects,
-        ]
-
-        for group in self.scale_groups:
-            settings += [getattr(group, "scale")]
-
-        return settings
-
-    def prepare_settings(self, setting_values):
-        counts_and_sequences = [
-            (int(setting_values[3]), self.scale_groups, self.add_scale),
-        ]
-
-        for count, sequence, fn in counts_and_sequences:
-            del sequence[count:]
-            while len(sequence) < count:
-                fn()
-
-    def visible_settings(self):
-        visible_settings = [
-            self.images_list,
-            self.image_divider,
-            self.images_or_objects,
-        ]
-
-        if self.wants_object_measurements():
-            visible_settings += [self.objects_list]
-        visible_settings += [self.object_divider]
-
-        visible_settings += [self.gray_levels]
-
-        for group in self.scale_groups:
-            visible_settings += group.visible_settings()
-
-        visible_settings += [self.add_scales]
-
-        return visible_settings
-
-    def wants_image_measurements(self):
-        return self.images_or_objects in (IO_IMAGES, IO_BOTH)
-
-    def wants_object_measurements(self):
-        return self.images_or_objects in (IO_OBJECTS, IO_BOTH)
-
-    def add_scale(self, removable=True):
-        """
-
-        Add a scale to the scale_groups collection
-
-        :param removable: set this to False to keep from showing the "remove" button for scales that must be present.
-
-        """
-        group = SettingsGroup()
-
-        if removable:
-            group.append("divider", Divider(line=False))
-
-        scale = Integer(
-            doc="""\
-You can specify the scale of texture to be measured, in pixel units; the
-texture scale is the distance between correlated intensities in the
-image. A higher number for the scale of texture measures larger patterns
-of texture whereas smaller numbers measure more localized patterns of
-texture. It is best to measure texture on a scale smaller than your
-objects’ sizes, so be sure that the value entered for scale of texture
-is smaller than most of your objects. For very small objects (smaller
-than the scale of texture you are measuring), the texture cannot be
-measured and will result in a undefined value in the output file.
-""",
-            text="Texture scale to measure",
-            value=len(self.scale_groups) + 3,
-        )
-
-        group.append("scale", scale)
-
-        if removable:
-            remove_setting = RemoveSettingButton(
-                entry=group, label="Remove this scale", list=self.scale_groups, text=""
-            )
-
-            group.append("remover", remove_setting)
-
-        self.scale_groups.append(group)
-
-    def validate_module(self, pipeline):
-        images = set()
-        if len(self.images_list.value) == 0:
-            raise ValidationError("No images selected", self.images_list)
-        for image_name in self.images_list.value:
-            if image_name in images:
-                raise ValidationError(
-                    "%s has already been selected" % image_name, image_name
+        # MODIFIED: Reconstructed name:
+        # Texture_{X}_{scale}_{distance_id}_{graylevels}
+    results = {}
+    for feature_name, values in zip(F_HARALICK, features):
+        for distance_i, value in enumerate(values):
+            results[
+                "{}_{:d}_{:02d}_{:d}".format(
+                    feature_name,
+                    scale,
+                    distance_i,
+                    gray_levels,
                 )
-            images.add(image_name)
+            ] = value
 
-        if self.wants_object_measurements():
-            objects = set()
-            if len(self.objects_list.value) == 0:
-                raise ValidationError("No objects selected", self.objects_list)
-            for object_name in self.objects_list.value:
-                if object_name in objects:
-                    raise ValidationError(
-                        "%s has already been selected" % object_name, object_name
-                    )
-                objects.add(object_name)
-
-        scales = set()
-        for group in self.scale_groups:
-            if group.scale.value in scales:
-                raise ValidationError(
-                    "{} has already been selected".format(group.scale.value),
-                    group.scale,
-                )
-
-            scales.add(group.scale.value)
-
-    def get_categories(self, pipeline, object_name):
-        object_name_exists = object_name in self.objects_list.value
-
-        if self.wants_object_measurements() and object_name_exists:
-            return [TEXTURE]
-
-        if self.wants_image_measurements() and object_name == "Image":
-            return [TEXTURE]
-
-        return []
-
-    def get_features(self):
-        return F_HARALICK
-
-    def get_measurements(self, pipeline, object_name, category):
-        if category in self.get_categories(pipeline, object_name):
-            return self.get_features()
-
-        return []
-
-    def get_measurement_images(self, pipeline, object_name, category, measurement):
-        measurements = self.get_measurements(pipeline, object_name, category)
-
-        if measurement in measurements:
-            return self.images_list.value
-
-        return []
-
-    def get_measurement_scales(
-        self, pipeline, object_name, category, measurement, image_name
-    ):
-        def format_measurement(scale_group):
-            return [
-                "{:d}_{:02d}_{:d}".format(scale_group.scale.value, angle,self.gray_levels.value)
-                for angle in range(13 if pipeline.volumetric() else 4)
-            ]
-
-        if (
-            len(
-                self.get_measurement_images(
-                    pipeline, object_name, category, measurement
-                )
-            )
-            > 0
-        ):
-            return sum(
-                [format_measurement(scale_group) for scale_group in self.scale_groups],
-                [],
-            )
-
-        return []
-
-    # TODO: fix nested loops
-    def get_measurement_columns(self, pipeline):
-        columns = []
-
-        if self.wants_image_measurements():
-            for feature in self.get_features():
-                for image_name in self.images_list.value:
-                    for scale_group in self.scale_groups:
-                        for angle in range(13 if pipeline.volumetric() else 4):
-                            columns += [
-                                (
-                                    "Image",
-                                    "{}_{}_{}_{:d}_{:02d}_{:d}".format(
-                                        TEXTURE,
-                                        feature,
-                                        image_name,
-                                        scale_group.scale.value,
-                                        angle,
-                                        self.gray_levels.value,
-                                    ),
-                                    COLTYPE_FLOAT,
-                                )
-                            ]
-
-        if self.wants_object_measurements():
-            for object_name in self.objects_list.value:
-                for feature in self.get_features():
-                    for image_name in self.images_list.value:
-                        for scale_group in self.scale_groups:
-                            for angle in range(13 if pipeline.volumetric() else 4):
-                                columns += [
-                                    (
-                                        object_name,
-                                        "{}_{}_{}_{:d}_{:02d}_{:d}".format(
-                                            TEXTURE,
-                                            feature,
-                                            image_name,
-                                            scale_group.scale.value,
-                                            angle,
-                                            self.gray_levels.value,
-                                        ),
-                                        COLTYPE_FLOAT,
-                                    )
-                                ]
-
-        return columns
-
-    def run(self, workspace):
-        workspace.display_data.col_labels = [
-            "Image",
-            "Object",
-            "Measurement",
-            "Scale",
-            "Value",
-        ]
-
-        statistics = []
-
-        for image_name in self.images_list.value:
-            for scale_group in self.scale_groups:
-                scale = scale_group.scale.value
-
-                if self.wants_image_measurements():
-                    statistics += self.run_image(image_name, scale, workspace)
-
-                if self.wants_object_measurements():
-                    for object_name in self.objects_list.value:
-                        statistics += self.run_one(
-                            image_name, object_name, scale, workspace
-                        )
-
-        if self.show_window:
-            workspace.display_data.statistics = statistics
-
-    def display(self, workspace, figure):
-        figure.set_subplots((1, 1))
-        if self.wants_object_measurements():
-            helptext = "default"
-        else:
-            helptext = None
-        figure.subplot_table(
-            0,
-            0,
-            workspace.display_data.statistics,
-            col_labels=workspace.display_data.col_labels,
-            title=helptext,
-        )
-
-    def run_one(self, image_name, object_name, scale, workspace):
-        statistics = []
-
-        image = workspace.image_set.get_image(image_name, must_be_grayscale=True)
-
-        objects = workspace.get_objects(object_name)
-        labels = objects.segmented
-
-        gray_levels = int(self.gray_levels.value)
-
-        unique_labels = numpy.unique(labels)
-        if unique_labels[0] == 0:
-            unique_labels = unique_labels[1:]
-
-        n_directions = 13 if objects.volumetric else 4
-
-        if len(unique_labels) == 0:
-            for direction in range(n_directions):
-                for feature_name in F_HARALICK:
-                    statistics += self.record_measurement(
-                        image=image_name,
-                        feature=feature_name,
-                        obj=object_name,
-                        result=numpy.zeros((0,)),
-                        scale="{:d}_{:02d}".format(scale, direction),
-                        workspace=workspace,
-                        gray_levels="{:d}".format(gray_levels),
-                    )
-
-            return statistics
-
-        # IMG-961: Ensure image and objects have the same shape.
-        try:
-            mask = (
-                image.mask
-                if image.has_mask
-                else numpy.ones_like(image.pixel_data, dtype=bool)
-            )
-            pixel_data = objects.crop_image_similarly(image.pixel_data)
-        except ValueError:
-            pixel_data, m1 = size_similarly(labels, image.pixel_data)
-
-            if numpy.any(~m1):
-                if image.has_mask:
-                    mask, m2 = size_similarly(labels, image.mask)
-                    mask[~m2] = False
-                else:
-                    mask = m1
-
-        pixel_data[~mask] = 0
-        # mahotas.features.haralick bricks itself when provided a dtype larger than uint8 (version 1.4.3)
-        pixel_data = skimage.util.img_as_ubyte(pixel_data)
-        if gray_levels != 256:
-            pixel_data = skimage.exposure.rescale_intensity(
-                pixel_data, in_range=(0, 255), out_range=(0, gray_levels - 1)
-            ).astype(numpy.uint8)
-        props = skimage.measure.regionprops(labels, pixel_data)
-
-        features = numpy.empty((n_directions, 13, len(unique_labels)))
-
-        for index, prop in enumerate(props):
-            label_data = prop["intensity_image"]
-            try:
-                features[:, :, index] = mahotas.features.haralick(
-                    label_data, distance=scale, ignore_zeros=True
-                )
-            except ValueError:
-                features[:, :, index] = numpy.nan
-
-        for direction, direction_features in enumerate(features):
-            for feature_name, feature in zip(F_HARALICK, direction_features):
-                statistics += self.record_measurement(
-                    image=image_name,
-                    feature=feature_name,
-                    obj=object_name,
-                    result=feature,
-                    scale="{:d}_{:02d}".format(scale, direction),
-                    workspace=workspace,
-                    gray_levels="{:d}".format(gray_levels),
-                )
-
-        return statistics
-
-    def run_image(self, image_name, scale, workspace):
-        statistics = []
-
-        image = workspace.image_set.get_image(image_name, must_be_grayscale=True)
-
-        # mahotas.features.haralick bricks itself when provided a dtype larger than uint8 (version 1.4.3)
-        gray_levels = int(self.gray_levels.value)
-        pixel_data = skimage.util.img_as_ubyte(image.pixel_data)
-        if gray_levels != 256:
-            pixel_data = skimage.exposure.rescale_intensity(
-                pixel_data, in_range=(0, 255), out_range=(0, gray_levels - 1)
-            ).astype(numpy.uint8)
-
-        features = mahotas.features.haralick(pixel_data, distance=scale)
-
-        for direction, direction_features in enumerate(features):
-            object_name = "{:d}_{:02d}".format(scale, direction)
-
-            for feature_name, feature in zip(F_HARALICK, direction_features):
-                statistics += self.record_image_measurement(
-                    feature_name=feature_name,
-                    image_name=image_name,
-                    result=feature,
-                    scale=object_name,
-                    workspace=workspace,
-                    gray_levels="{:d}".format(gray_levels),
-                )
-
-        return statistics
-
-    def record_measurement(
-        self, workspace, image, obj, scale, feature, result, gray_levels
-    ):
-        result[~numpy.isfinite(result)] = 0
-
-        workspace.add_measurement(
-            obj,
-            "{}_{}_{}_{}_{}".format(TEXTURE, feature, image, str(scale), gray_levels),
-            result,
-        )
-
-        # TODO: get outta crazee towne
-        functions = [
-            ("min", numpy.min),
-            ("max", numpy.max),
-            ("mean", numpy.mean),
-            ("median", numpy.median),
-            ("std dev", numpy.std),
-        ]
-
-        # TODO: poop emoji
-        statistics = [
-            [
-                image,
-                obj,
-                "{} {}".format(aggregate, feature),
-                scale,
-                "{:.2}".format(fn(result)) if len(result) else "-",
-            ]
-            for aggregate, fn in functions
-        ]
-
-        return statistics
-
-    def record_image_measurement(
-        self, workspace, image_name, scale, feature_name, result, gray_levels
-    ):
-        # TODO: this is very concerning
-        if not numpy.isfinite(result):
-            result = 0
-
-        feature = "{}_{}_{}_{}_{}".format(
-            TEXTURE, feature_name, image_name, str(scale), gray_levels
-        )
-
-        workspace.measurements.add_image_measurement(feature, result)
-
-        statistics = [
-            image_name,
-            "-",
-            feature_name,
-            scale,
-            "{:.2}".format(float(result)),
-        ]
-
-        return [statistics]
-
-    def upgrade_settings(self, setting_values, variable_revision_number, module_name):
-        if variable_revision_number == 1:
-            #
-            # Added "wants_gabor"
-            #
-            setting_values = setting_values[:-1] + ["Yes"] + setting_values[-1:]
-
-            variable_revision_number = 2
-
-        if variable_revision_number == 2:
-            #
-            # Added angles
-            #
-            image_count = int(setting_values[0])
-
-            object_count = int(setting_values[1])
-
-            scale_count = int(setting_values[2])
-
-            scale_offset = 3 + image_count + object_count
-
-            new_setting_values = setting_values[:scale_offset]
-
-            for scale in setting_values[scale_offset : scale_offset + scale_count]:
-                new_setting_values += [scale, "Horizontal"]
-
-            new_setting_values += setting_values[scale_offset + scale_count :]
-
-            setting_values = new_setting_values
-
-            variable_revision_number = 3
-
-        if variable_revision_number == 3:
-            #
-            # Added image / objects choice
-            #
-            setting_values = setting_values + [IO_BOTH]
-
-            variable_revision_number = 4
-
-        if variable_revision_number == 4:
-            #
-            #  Removed angles
-            #
-            image_count, object_count, scale_count = setting_values[:3]
-            scale_offset = 3 + int(image_count) + int(object_count)
-            scales = setting_values[scale_offset::2][: int(scale_count)]
-            new_setting_values = setting_values[:scale_offset] + scales
-
-            #
-            # Removed "wants_gabor", and "gabor_angles"
-            #
-            new_setting_values += setting_values[-1:]
-
-            setting_values = new_setting_values
-            variable_revision_number = 5
-        if variable_revision_number == 5:
-            num_images = int(setting_values[0])
-            num_objects = int(setting_values[1])
-            num_scales = setting_values[2]
-            div_img = 3 + num_images
-            div_obj = div_img + num_objects
-            images_set = set(setting_values[3:div_img])
-            objects_set = set(setting_values[div_img:div_obj])
-            scales_list = setting_values[div_obj:-1]
-
-            if "None" in images_set:
-                images_set.remove("None")
-            if "None" in objects_set:
-                objects_set.remove("None")
-            images_string = ", ".join(map(str, images_set))
-            objects_string = ", ".join(map(str, objects_set))
-
-            module_mode = setting_values[-1]
-            setting_values = [
-                images_string,
-                objects_string,
-                num_scales,
-                module_mode,
-            ] + scales_list
-            variable_revision_number = 6
-
-        if variable_revision_number == 6:
-            setting_values = setting_values[:2] + ["256"] + setting_values[2:]
-            variable_revision_number = 7
-
-        return setting_values, variable_revision_number
-
-    def volumetric(self):
-        return True
+    return results
