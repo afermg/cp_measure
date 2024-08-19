@@ -1,4 +1,3 @@
-import cellprofiler.gui.help.content
 import centrosome.cpmorphology
 import centrosome.propagate
 import centrosome.zernike
@@ -7,6 +6,7 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
+
 # from cellprofiler_core.constants.measurement import COLTYPE_FLOAT
 # from cellprofiler_core.image import Image
 # from cellprofiler_core.module import Module
@@ -125,596 +125,235 @@ MEASUREMENT_ALIASES = {
 }
 
 
-class MeasureObjectIntensityDistribution(Module):
-    def create_settings(self):
-      self.wants_zernikes = Choice(
-            "Calculate intensity Zernikes?",
-            Z_ALL,
-            doc="""\
-This setting determines whether the intensity Zernike moments are
-calculated. Choose *{Z_NONE}* to save computation time by not
-calculating the Zernike moments. Choose *{Z_MAGNITUDES}* to only save
-the magnitude information and discard information related to the
-object’s angular orientation. Choose *{Z_MAGNITUDES_AND_PHASE}* to
-save the phase information as well. The last option lets you recover
-each object’s rough appearance from the Zernikes but may not contribute
-useful information for classifying phenotypes.
+def get_radial_distribution(
+    pixels: numpy.ndarray,
+    mask: numpy.ndarray,
+    scaled: bool = True,
+    n_bins: int = 4,
+    maximum_radius: int = 100,
+):
+    """
+    zernike_degree : int
+        Maximum zernike moment.
 
-|MeasureObjectIntensityDistribution_image0|
+        This is the maximum radial moment that will be calculated. There are
+        increasing numbers of azimuthal moments as you increase the radial
+        moment, so higher values are increasingly expensive to calculate.
 
-.. |MeasureObjectIntensityDistribution_image0| image:: {MeasureObjectIntensityDistribution_Magnitude_Phase}
-""".format(
-                **{
-                    "Z_NONE": Z_NONE,
-                    "Z_MAGNITUDES": Z_MAGNITUDES,
-                    "Z_MAGNITUDES_AND_PHASE": Z_MAGNITUDES_AND_PHASE,
-                    "MeasureObjectIntensityDistribution_Magnitude_Phase": MeasureObjectIntensityDistribution_Magnitude_Phase,
-                }
-            ),
+    scaled : bool
+        Scale the bins?
+
+        When Trie divide the object radially into the number of bins
+        that you specify. Otherwise create the number of bins you specify
+        based on distance. If True, it will use a maximum distance so
+        that each object will have the same measurements (which might be zero
+        for small objects) and so that the measurements can be taken without
+        knowing the maximum object radius before the run starts.
+
+    bin_count : int
+        Number of bins
+
+        Specify the number of bins that you want to use to measure the distribution.
+        Radial distribution is measured with respect to a series of concentric
+        rings starting from the object center (or more generally, between contours
+        at a normalized distance from the object center). This number specifies
+        the number of rings into which the distribution is to be divided.
+
+    maximum_radius : int
+        Maximum radius
+
+        Specify the maximum radius for the unscaled bins. The unscaled binning method
+        creates the number of bins that you specify and creates equally spaced bin
+        boundaries up to the maximum radius. Parts of the object that are beyond this
+        radius will be counted in an overflow bin. The radius is measured in pixels.
+    """
+
+    labels = mask.astype(int)
+    d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
+
+    # Find the point in each object farthest away from the edge.
+    # This does better than the centroid:
+    # * The center is within the object
+    # * The center tends to be an interesting point, like the
+    #   center of the nucleus or the center of one or the other
+    #   of two touching cells.
+    #
+    # MODIFICATION: Delegated label indices to maximum_position_of_labels
+    # This should not affect this one-mask/object function
+    i, j = centrosome.cpmorphology.maximum_position_of_labels(d_to_edge, labels)
+
+    center_labels = numpy.zeros(labels.shape, int)
+
+    center_labels[i, j] = labels[i, j]
+
+    #
+    # Use the coloring trick here to process touching objects
+    # in separate operations
+    #
+    colors = centrosome.cpmorphology.color_labels(labels)
+
+    ncolors = numpy.max(colors)
+
+    d_from_center = numpy.zeros(labels.shape)
+
+    cl = numpy.zeros(labels.shape, int)
+
+    for color in range(1, ncolors + 1):
+        mask = colors == color
+        l, d = centrosome.propagate.propagate(
+            numpy.zeros(center_labels.shape), center_labels, mask, 1
         )
 
-        self.zernike_degree = Integer(
-            "Maximum zernike moment",
-            value=9,
-            minval=1,
-            maxval=20,
-            doc="""\
-(*Only if "{wants_zernikes}" is "{Z_MAGNITUDES}" or "{Z_MAGNITUDES_AND_PHASE}"*)
+        d_from_center[mask] = d[mask]
 
-This is the maximum radial moment that will be calculated. There are
-increasing numbers of azimuthal moments as you increase the radial
-moment, so higher values are increasingly expensive to calculate.
-""".format(
-                **{
-                    "wants_zernikes": self.wants_zernikes.text,
-                    "Z_MAGNITUDES": Z_MAGNITUDES,
-                    "Z_MAGNITUDES_AND_PHASE": Z_MAGNITUDES_AND_PHASE,
-                }
-            ),
+        cl[mask] = l[mask]
+
+    good_mask = cl > 0
+
+    i_center = numpy.zeros(cl.shape)
+
+    i_center[good_mask] = i[cl[good_mask] - 1]
+
+    j_center = numpy.zeros(cl.shape)
+
+    j_center[good_mask] = j[cl[good_mask] - 1]
+
+    normalized_distance = numpy.zeros(labels.shape)
+
+    if scaled:
+        total_distance = d_from_center + d_to_edge
+
+        normalized_distance[good_mask] = d_from_center[good_mask] / (
+            total_distance[good_mask] + 0.001
         )
+    else:
+        normalized_distance[good_mask] = d_from_center[good_mask] / maximum_radius
 
-        self.spacer_1 = Divider()
+    ngood_pixels = numpy.sum(good_mask)
 
-        self.add_object_button = DoSomething("", "Add another object", self.add_object)
+    good_labels = labels[good_mask]
 
-        self.spacer_2 = Divider()
+    bin_indexes = (normalized_distance * bin_count).astype(int)
 
-        self.add_bin_count_button = DoSomething(
-            "", "Add another set of bins", self.add_bin_count
-        )
+    bin_indexes[bin_indexes > bin_count] = bin_count
 
-        self.spacer_3 = Divider()
+    labels_and_bins = (good_labels - 1, bin_indexes[good_mask])
 
-        self.add_heatmap_button = DoSomething(
-            "",
-            "Add another heatmap display",
-            self.add_heatmap,
-            doc="""\
-Press this button to add a display of one of the radial distribution
-measurements. Each radial band of the object is colored using a
-heatmap according to the measurement value for that band.
-""",
-        )
+    histogram = scipy.sparse.coo_matrix(
+        (pixel_data[good_mask], labels_and_bins), (nobjects, bin_count + 1)
+    ).toarray()
 
-        self.add_object(can_remove=False)
+    sum_by_object = numpy.sum(histogram, 1)
 
-        self.add_bin_count(can_remove=False)
+    sum_by_object_per_bin = numpy.dstack([sum_by_object] * (bin_count + 1))[0]
 
-        group.append(
-            "center_choice",
-            Choice(
-                "Object to use as center?",
-                C_ALL,
-                doc="""\
-There are three ways to specify the center of the radial measurement:
+    fraction_at_distance = histogram / sum_by_object_per_bin
 
--  *{C_SELF}:* Use the centers of these objects for the radial
-   measurement.
--  *{C_CENTERS_OF_OTHER}:* Use the centers of other objects for the
-   radial measurement.
--  *{C_EDGES_OF_OTHER}:* Measure distances from the edge of the other
-   object to each pixel outside of the centering object. Do not include
-   pixels within the centering object in the radial measurement
-   calculations.
+    number_at_distance = scipy.sparse.coo_matrix(
+        (numpy.ones(ngood_pixels), labels_and_bins), (nobjects, bin_count + 1)
+    ).toarray()
 
-For example, if measuring the radial distribution in a Cell object, you
-can use the center of the Cell objects (*{C_SELF}*) or you can use
-previously identified Nuclei objects as the centers
-(*{C_CENTERS_OF_OTHER}*).""".format(
-                    **{
-                        "C_SELF": C_SELF,
-                        "C_CENTERS_OF_OTHER": C_CENTERS_OF_OTHER,
-                        "C_EDGES_OF_OTHER": C_EDGES_OF_OTHER,
-                        "MeasureObjectIntensityDistribution_Edges_Centers": MeasureObjectIntensityDistribution_Edges_Centers,
-                    }
-                ),
-            ),
-        )
+    object_mask = number_at_distance > 0
 
-       group.append(
-            "wants_scaled",
-            Binary(
-                "Scale the bins?",
-                True,
-                doc="""\
-Select *{YES}* to divide the object radially into the number of bins
-that you specify.
+    sum_by_object = numpy.sum(number_at_distance, 1)
 
-Select *{NO}* to create the number of bins you specify based on
-distance. For this option, you will be asked to specify a maximum
-distance so that each object will have the same measurements (which
-might be zero for small objects) and so that the measurements can be
-taken without knowing the maximum object radius before the run starts.
-""".format(**{"YES": "Yes", "NO": "No"}),
-            ),
-        )
+    sum_by_object_per_bin = numpy.dstack([sum_by_object] * (bin_count + 1))[0]
 
-        group.append(
-            "bin_count",
-            Integer(
-                "Number of bins",
-                4,
-                2,
-                doc="""\
-Specify the number of bins that you want to use to measure the
-distribution. Radial distribution is measured with respect to a series
-of concentric rings starting from the object center (or more generally,
-between contours at a normalized distance from the object center). This
-number specifies the number of rings into which the distribution is to
-be divided. Additional ring counts can be specified by clicking the *Add
-another set of bins* button.""",
-            ),
-        )
+    fraction_at_bin = number_at_distance / sum_by_object_per_bin
 
-        group.append(
-            "maximum_radius",
-            Integer(
-                "Maximum radius",
-                100,
-                minval=1,
-                doc="""\
-Specify the maximum radius for the unscaled bins. The unscaled binning method creates the number of
-bins that you specify and creates equally spaced bin boundaries up to the maximum radius. Parts of
-the object that are beyond this radius will be counted in an overflow bin. The radius is measured
-in pixels.
-""",
-            ),
-        )
+    mean_pixel_fraction = fraction_at_distance / (
+        fraction_at_bin + numpy.finfo(float).eps
+    )
 
-        group.can_remove = can_remove
+    masked_fraction_at_distance = numpy.ma.masked_array(
+        fraction_at_distance, ~object_mask
+    )
 
-        if can_remove:
-            group.append(
-                "remover",
-                RemoveSettingButton(
-                    "", "Remove this set of bins", self.bin_counts, group
-                ),
+    masked_mean_pixel_fraction = numpy.ma.masked_array(
+        mean_pixel_fraction, ~object_mask
+    )
+
+    # Anisotropy calculation.  Split each cell into eight wedges, then
+    # compute coefficient of variation of the wedges' mean intensities
+    # in each ring.
+    #
+    # Compute each pixel's delta from the center object's centroid
+    i, j = numpy.mgrid[0 : labels.shape[0], 0 : labels.shape[1]]
+
+    imask = i[good_mask] > i_center[good_mask]
+
+    jmask = j[good_mask] > j_center[good_mask]
+
+    absmask = abs(i[good_mask] - i_center[good_mask]) > abs(
+        j[good_mask] - j_center[good_mask]
+    )
+
+    radial_index = imask.astype(int) + jmask.astype(int) * 2 + absmask.astype(int) * 4
+
+    statistics = []
+
+    for bin in range(bin_count + (0 if wants_scaled else 1)):
+        bin_mask = good_mask & (bin_indexes == bin)
+
+        bin_pixels = numpy.sum(bin_mask)
+
+        bin_labels = labels[bin_mask]
+
+        bin_radial_index = radial_index[bin_indexes[good_mask] == bin]
+
+        labels_and_radii = (bin_labels - 1, bin_radial_index)
+
+        radial_values = scipy.sparse.coo_matrix(
+            (pixel_data[bin_mask], labels_and_radii), (nobjects, 8)
+        ).toarray()
+
+        pixel_count = scipy.sparse.coo_matrix(
+            (numpy.ones(bin_pixels), labels_and_radii), (nobjects, 8)
+        ).toarray()
+
+        mask = pixel_count == 0
+
+        radial_means = numpy.ma.masked_array(radial_values / pixel_count, mask)
+
+        radial_cv = numpy.std(radial_means, 1) / numpy.mean(radial_means, 1)
+
+        radial_cv[numpy.sum(~mask, 1) == 0] = 0
+
+        for measurement, feature, overflow_feature in (
+            (fraction_at_distance[:, bin], MF_FRAC_AT_D, OF_FRAC_AT_D),
+            (mean_pixel_fraction[:, bin], MF_MEAN_FRAC, OF_MEAN_FRAC),
+            (numpy.array(radial_cv), MF_RADIAL_CV, OF_RADIAL_CV),
+        ):
+            if bin == bin_count:
+                measurement_name = overflow_feature % image_name
+            else:
+                measurement_name = feature % (image_name, bin + 1, bin_count)
+
+            measurements.add_measurement(object_name, measurement_name, measurement)
+
+        radial_cv.mask = numpy.sum(~mask, 1) == 0
+
+        bin_name = str(bin + 1) if bin < bin_count else "Overflow"
+
+        statistics += [
+            (
+                image_name,
+                object_name,
+                bin_name,
+                str(bin_count),
+                numpy.round(numpy.mean(masked_fraction_at_distance[:, bin]), 4),
+                numpy.round(numpy.mean(masked_mean_pixel_fraction[:, bin]), 4),
+                numpy.round(numpy.mean(radial_cv), 4),
             )
-
-        self.bin_counts.append(group)
-
-    def settings(self):
-        result = [
-            self.images_list,
-            self.object_count,
-            self.bin_counts_count,
-            self.heatmap_count,
-            self.wants_zernikes,
-            self.zernike_degree,
         ]
-
-    def run(self, workspace):
-        header = (
-            "Image",
-            "Objects",
-            "Bin # (innermost=1)",
-            "Bin count",
-            "Fraction",
-            "Intensity",
-            "COV",
-        )
-
-        stats = []
-
-        d = {}
-
-        for image in self.images_list.value:
-            for o in self.objects:
-                for bin_count_settings in self.bin_counts:
-                    stats += self.do_measurements(
-                        workspace,
-                        image,
-                        o.object_name.value,
-                        o.center_object_name.value
-                        if o.center_choice != C_SELF
-                        else None,
-                        o.center_choice.value,
-                        bin_count_settings,
-                        d,
-                    )
-
-        if self.wants_zernikes != Z_NONE:
-            self.calculate_zernikes(workspace)
-
-        if self.show_window:
-            workspace.display_data.header = header
-
-            workspace.display_data.stats = stats
-
-            workspace.display_data.heatmaps = []
-
-        for heatmap in self.heatmaps:
-            heatmap_img = d.get(id(heatmap))
-
-            if heatmap_img is not None:
-                if self.show_window or heatmap.wants_to_save_display:
-                    labels = workspace.object_set.get_objects(
-                        heatmap.object_name.get_objects_name()
-                    ).segmented
-
-                if self.show_window:
-                    workspace.display_data.heatmaps.append((heatmap_img, labels != 0))
-
-                if heatmap.wants_to_save_display:
-                    colormap = heatmap.colormap.value
-
-                    if colormap == matplotlib.cm.gray.name:
-                        output_pixels = heatmap_img
-                    else:
-                        if colormap == "Default":
-                            colormap = get_default_colormap()
-
-                        cm = matplotlib.cm.ScalarMappable(cmap=colormap)
-
-                        output_pixels = cm.to_rgba(heatmap_img)[:, :, :3]
-
-                        output_pixels[labels == 0, :] = 0
-
-                    parent_image = workspace.image_set.get_image(
-                        heatmap.image_name.get_image_name()
-                    )
-
-                    output_img = Image(output_pixels, parent_image=parent_image)
-
-                    img_name = heatmap.display_name.value
-
-                    workspace.image_set.add(img_name, output_img)
-
-    def do_measurements(
-        self,
-        workspace,
-        image_name,
-        object_name,
-        center_object_name,
-        center_choice,
-        bin_count_settings,
-        dd,
-    ):
-        """Perform the radial measurements on the image set
-
-        workspace - workspace that holds images / objects
-        image_name - make measurements on this image
-        object_name - make measurements on these objects
-        center_object_name - use the centers of these related objects as
-                      the centers for radial measurements. None to use the
-                      objects themselves.
-        center_choice - the user's center choice for this object:
-                      C_SELF, C_CENTERS_OF_OBJECTS or C_EDGES_OF_OBJECTS.
-        bin_count_settings - the bin count settings group
-        d - a dictionary for saving reusable partial results
-
-        returns one statistics tuple per ring.
-        """
-        bin_count = bin_count_settings.bin_count.value
-
-        wants_scaled = bin_count_settings.wants_scaled.value
-
-        maximum_radius = bin_count_settings.maximum_radius.value
-
-        image = workspace.image_set.get_image(image_name, must_be_grayscale=True)
-
-        objects = workspace.object_set.get_objects(object_name)
-
-        labels, pixel_data = crop_labels_and_image(objects.segmented, image.pixel_data)
-
-        nobjects = numpy.max(objects.segmented)
-
-        measurements = workspace.measurements
-
-        name = (
-            object_name
-            if center_object_name is None
-            else "{}_{}".format(object_name, center_object_name)
-        )
-
-        if name in dd:
-            normalized_distance, i_center, j_center, good_mask = dd[name]
-        else:
-            d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
-
-            if center_object_name is not None:
-                #
-                # Use the center of the centering objects to assign a center
-                # to each labeled pixel using propagation
-                #
-                center_objects = workspace.object_set.get_objects(center_object_name)
-
-                center_labels, cmask = size_similarly(labels, center_objects.segmented)
-
-                pixel_counts = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.sum(
-                        numpy.ones(center_labels.shape),
-                        center_labels,
-                        numpy.arange(
-                            1, numpy.max(center_labels) + 1, dtype=numpy.int32
-                        ),
-                    )
-                )
-
-                good = pixel_counts > 0
-
-                i, j = (
-                    centrosome.cpmorphology.centers_of_labels(center_labels) + 0.5
-                ).astype(int)
-
-                ig = i[good]
-
-                jg = j[good]
-
-                lg = numpy.arange(1, len(i) + 1)[good]
-
-                if center_choice == C_CENTERS_OF_OTHER:
-                    #
-                    # Reduce the propagation labels to the centers of
-                    # the centering objects
-                    #
-                    center_labels = numpy.zeros(center_labels.shape, int)
-
-                    center_labels[ig, jg] = lg
-
-                cl, d_from_center = centrosome.propagate.propagate(
-                    numpy.zeros(center_labels.shape), center_labels, labels != 0, 1
-                )
-
-                #
-                # Erase the centers that fall outside of labels
-                #
-                cl[labels == 0] = 0
-
-                #
-                # If objects are hollow or crescent-shaped, there may be
-                # objects without center labels. As a backup, find the
-                # center that is the closest to the center of mass.
-                #
-                missing_mask = (labels != 0) & (cl == 0)
-
-                missing_labels = numpy.unique(labels[missing_mask])
-
-                if len(missing_labels):
-                    all_centers = centrosome.cpmorphology.centers_of_labels(labels)
-
-                    missing_i_centers, missing_j_centers = all_centers[
-                        :, missing_labels - 1
-                    ]
-
-                    di = missing_i_centers[:, numpy.newaxis] - ig[numpy.newaxis, :]
-
-                    dj = missing_j_centers[:, numpy.newaxis] - jg[numpy.newaxis, :]
-
-                    missing_best = lg[numpy.argsort(di * di + dj * dj)[:, 0]]
-
-                    best = numpy.zeros(numpy.max(labels) + 1, int)
-
-                    best[missing_labels] = missing_best
-
-                    cl[missing_mask] = best[labels[missing_mask]]
-
-                    #
-                    # Now compute the crow-flies distance to the centers
-                    # of these pixels from whatever center was assigned to
-                    # the object.
-                    #
-                    iii, jjj = numpy.mgrid[0 : labels.shape[0], 0 : labels.shape[1]]
-
-                    di = iii[missing_mask] - i[cl[missing_mask] - 1]
-
-                    dj = jjj[missing_mask] - j[cl[missing_mask] - 1]
-
-                    d_from_center[missing_mask] = numpy.sqrt(di * di + dj * dj)
-            else:
-                # Find the point in each object farthest away from the edge.
-                # This does better than the centroid:
-                # * The center is within the object
-                # * The center tends to be an interesting point, like the
-                #   center of the nucleus or the center of one or the other
-                #   of two touching cells.
-                #
-                i, j = centrosome.cpmorphology.maximum_position_of_labels(
-                    d_to_edge, labels, objects.indices
-                )
-
-                center_labels = numpy.zeros(labels.shape, int)
-
-                center_labels[i, j] = labels[i, j]
-
-                #
-                # Use the coloring trick here to process touching objects
-                # in separate operations
-                #
-                colors = centrosome.cpmorphology.color_labels(labels)
-
-                ncolors = numpy.max(colors)
-
-                d_from_center = numpy.zeros(labels.shape)
-
-                cl = numpy.zeros(labels.shape, int)
-
-                for color in range(1, ncolors + 1):
-                    mask = colors == color
-                    l, d = centrosome.propagate.propagate(
-                        numpy.zeros(center_labels.shape), center_labels, mask, 1
-                    )
-
-                    d_from_center[mask] = d[mask]
-
-                    cl[mask] = l[mask]
-
-            good_mask = cl > 0
-
-            i_center = numpy.zeros(cl.shape)
-
-            i_center[good_mask] = i[cl[good_mask] - 1]
-
-            j_center = numpy.zeros(cl.shape)
-
-            j_center[good_mask] = j[cl[good_mask] - 1]
-
-            normalized_distance = numpy.zeros(labels.shape)
-
-            if wants_scaled:
-                total_distance = d_from_center + d_to_edge
-
-                normalized_distance[good_mask] = d_from_center[good_mask] / (
-                    total_distance[good_mask] + 0.001
-                )
-            else:
-                normalized_distance[good_mask] = (
-                    d_from_center[good_mask] / maximum_radius
-                )
-
-            dd[name] = [normalized_distance, i_center, j_center, good_mask]
-
-        ngood_pixels = numpy.sum(good_mask)
-
-        good_labels = labels[good_mask]
-
-        bin_indexes = (normalized_distance * bin_count).astype(int)
-
-        bin_indexes[bin_indexes > bin_count] = bin_count
-
-        labels_and_bins = (good_labels - 1, bin_indexes[good_mask])
-
-        histogram = scipy.sparse.coo_matrix(
-            (pixel_data[good_mask], labels_and_bins), (nobjects, bin_count + 1)
-        ).toarray()
-
-        sum_by_object = numpy.sum(histogram, 1)
-
-        sum_by_object_per_bin = numpy.dstack([sum_by_object] * (bin_count + 1))[0]
-
-        fraction_at_distance = histogram / sum_by_object_per_bin
-
-        number_at_distance = scipy.sparse.coo_matrix(
-            (numpy.ones(ngood_pixels), labels_and_bins), (nobjects, bin_count + 1)
-        ).toarray()
-
-        object_mask = number_at_distance > 0
-
-        sum_by_object = numpy.sum(number_at_distance, 1)
-
-        sum_by_object_per_bin = numpy.dstack([sum_by_object] * (bin_count + 1))[0]
-
-        fraction_at_bin = number_at_distance / sum_by_object_per_bin
-
-        mean_pixel_fraction = fraction_at_distance / (
-            fraction_at_bin + numpy.finfo(float).eps
-        )
-
-        masked_fraction_at_distance = numpy.ma.masked_array(
-            fraction_at_distance, ~object_mask
-        )
-
-        masked_mean_pixel_fraction = numpy.ma.masked_array(
-            mean_pixel_fraction, ~object_mask
-        )
-
-        # Anisotropy calculation.  Split each cell into eight wedges, then
-        # compute coefficient of variation of the wedges' mean intensities
-        # in each ring.
-        #
-        # Compute each pixel's delta from the center object's centroid
-        i, j = numpy.mgrid[0 : labels.shape[0], 0 : labels.shape[1]]
-
-        imask = i[good_mask] > i_center[good_mask]
-
-        jmask = j[good_mask] > j_center[good_mask]
-
-        absmask = abs(i[good_mask] - i_center[good_mask]) > abs(
-            j[good_mask] - j_center[good_mask]
-        )
-
-        radial_index = (
-            imask.astype(int) + jmask.astype(int) * 2 + absmask.astype(int) * 4
-        )
-
-        statistics = []
-
-        for bin in range(bin_count + (0 if wants_scaled else 1)):
-            bin_mask = good_mask & (bin_indexes == bin)
-
-            bin_pixels = numpy.sum(bin_mask)
-
-            bin_labels = labels[bin_mask]
-
-            bin_radial_index = radial_index[bin_indexes[good_mask] == bin]
-
-            labels_and_radii = (bin_labels - 1, bin_radial_index)
-
-            radial_values = scipy.sparse.coo_matrix(
-                (pixel_data[bin_mask], labels_and_radii), (nobjects, 8)
-            ).toarray()
-
-            pixel_count = scipy.sparse.coo_matrix(
-                (numpy.ones(bin_pixels), labels_and_radii), (nobjects, 8)
-            ).toarray()
-
-            mask = pixel_count == 0
-
-            radial_means = numpy.ma.masked_array(radial_values / pixel_count, mask)
-
-            radial_cv = numpy.std(radial_means, 1) / numpy.mean(radial_means, 1)
-
-            radial_cv[numpy.sum(~mask, 1) == 0] = 0
-
-            for measurement, feature, overflow_feature in (
-                (fraction_at_distance[:, bin], MF_FRAC_AT_D, OF_FRAC_AT_D),
-                (mean_pixel_fraction[:, bin], MF_MEAN_FRAC, OF_MEAN_FRAC),
-                (numpy.array(radial_cv), MF_RADIAL_CV, OF_RADIAL_CV),
-            ):
-                if bin == bin_count:
-                    measurement_name = overflow_feature % image_name
-                else:
-                    measurement_name = feature % (image_name, bin + 1, bin_count)
-
-                measurements.add_measurement(object_name, measurement_name, measurement)
-
-                if feature in heatmaps:
-                    heatmaps[feature][bin_mask] = measurement[bin_labels - 1]
-
-            radial_cv.mask = numpy.sum(~mask, 1) == 0
-
-            bin_name = str(bin + 1) if bin < bin_count else "Overflow"
-
-            statistics += [
-                (
-                    image_name,
-                    object_name,
-                    bin_name,
-                    str(bin_count),
-                    numpy.round(numpy.mean(masked_fraction_at_distance[:, bin]), 4),
-                    numpy.round(numpy.mean(masked_mean_pixel_fraction[:, bin]), 4),
-                    numpy.round(numpy.mean(radial_cv), 4),
-                )
-            ]
 
         return statistics
 
-def calculate_zernikes(pixels, mask, zernike_degree: int):
-    zernike_indexes = centrosome.zernike.get_zernike_indexes(
-        zernike_degree + 1
-    )
 
-    labels = mask.astype(int) # Convert boolean mask to labels
+def calculate_zernikes(pixels, mask, zernike_degree: int = 9):
+    zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
+
+    labels = mask.astype(int)  # Convert boolean mask to labels
     for o in self.objects:
         object_name = o.object_name.value
 
@@ -732,9 +371,9 @@ def calculate_zernikes(pixels, mask, zernike_degree: int):
         # TODO: Check that this has the correct dimensions
         ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels)
 
-            # ij[indexes] = ij_
+        # ij[indexes] = ij_
 
-            # r[indexes] = r_
+        # r[indexes] = r_
 
         #
         # Then compute x and y, the position of each labeled pixel
@@ -771,7 +410,7 @@ def calculate_zernikes(pixels, mask, zernike_degree: int):
 
             # meas[object_name, ftr] = magnitude
             results[f"ZernikeMagnitude_{n}_{m}"] = magnitude
-             
+
             if self.wants_zernikes == Z_MAGNITUDES_AND_PHASE:
                 phase = numpy.arctan2(vr, vi)
 
@@ -779,21 +418,22 @@ def calculate_zernikes(pixels, mask, zernike_degree: int):
 
                 meas[object_name, ftr] = phase
         return results
-                        
-def boolean_mask_to_ijv(mask:numpy.ndarray) -> numpy.ndarray:
+
+
+def boolean_mask_to_ijv(mask: numpy.ndarray) -> numpy.ndarray:
     """
     input: 2d boolean array
     output: (n, 3) integer array following (i,j,1)
     """
 
     # Extract coordinates of object from boolean mask
-    i,j = numpy.where(mask)
+    i, j = numpy.where(mask)
     n = len(i)
-    ijv = np.ones((n,n,n), dtype=int)
-    ijv[:,0] = i
-    ijv[:,1] = j
+    ijv = np.ones((n, n, n), dtype=int)
+    ijv[:, 0] = i
+    ijv[:, 1] = j
     return ijv
-            
+
 
 def get_zernike_magnitude_name(image_name, n, m):
     """The feature name of the magnitude of a Zernike moment
@@ -803,6 +443,7 @@ def get_zernike_magnitude_name(image_name, n, m):
     m - the azimuthal moment of the Zernike
     """
     return "_".join((M_CATEGORY, FF_ZERNIKE_MAGNITUDE, image_name, str(n), str(m)))
+
 
 def get_zernike_phase_name(image_name, n, m):
     """The feature name of the phase of a Zernike moment
