@@ -62,12 +62,6 @@ Measurements made by this module
 
 """
 
-C_SELF = "These objects"
-C_CENTERS_OF_OTHER_V2 = "Other objects"
-C_CENTERS_OF_OTHER = "Centers of other objects"
-C_EDGES_OF_OTHER = "Edges of other objects"
-C_ALL = [C_SELF, C_CENTERS_OF_OTHER, C_EDGES_OF_OTHER]
-
 Z_NONE = "None"
 Z_MAGNITUDES = "Magnitudes only"
 Z_MAGNITUDES_AND_PHASE = "Magnitudes and phase"
@@ -81,7 +75,7 @@ F_ALL = [F_FRAC_AT_D, F_MEAN_FRAC, F_RADIAL_CV]
 
 FF_SCALE = "%dof%d"
 FF_OVERFLOW = "Overflow"
-FF_GENERIC = "_%s_" + FF_SCALE
+FF_GENERIC = FF_SCALE
 FF_FRAC_AT_D = F_FRAC_AT_D + FF_GENERIC
 FF_MEAN_FRAC = F_MEAN_FRAC + FF_GENERIC
 FF_RADIAL_CV = F_RADIAL_CV + FF_GENERIC
@@ -129,7 +123,7 @@ def get_radial_distribution(
     pixels: numpy.ndarray,
     mask: numpy.ndarray,
     scaled: bool = True,
-    n_bins: int = 4,
+    bin_count: int = 4,
     maximum_radius: int = 100,
 ):
     """
@@ -169,6 +163,7 @@ def get_radial_distribution(
     """
 
     labels = mask.astype(int)
+    nobjects = 1
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
 
     # Find the point in each object farthest away from the edge.
@@ -180,7 +175,9 @@ def get_radial_distribution(
     #
     # MODIFICATION: Delegated label indices to maximum_position_of_labels
     # This should not affect this one-mask/object function
-    i, j = centrosome.cpmorphology.maximum_position_of_labels(d_to_edge, labels)
+    i, j = centrosome.cpmorphology.maximum_position_of_labels(
+        d_to_edge, labels, indices=[1]
+    )
 
     center_labels = numpy.zeros(labels.shape, int)
 
@@ -240,7 +237,7 @@ def get_radial_distribution(
     labels_and_bins = (good_labels - 1, bin_indexes[good_mask])
 
     histogram = scipy.sparse.coo_matrix(
-        (pixel_data[good_mask], labels_and_bins), (nobjects, bin_count + 1)
+        (pixels[good_mask], labels_and_bins), (nobjects, bin_count + 1)
     ).toarray()
 
     sum_by_object = numpy.sum(histogram, 1)
@@ -290,11 +287,12 @@ def get_radial_distribution(
 
     radial_index = imask.astype(int) + jmask.astype(int) * 2 + absmask.astype(int) * 4
 
-    statistics = []
+    results = {}
 
-    for bin in range(bin_count + (0 if wants_scaled else 1)):
+    for bin in range(bin_count + (0 if scaled else 1)):
+        print(bin)
         bin_mask = good_mask & (bin_indexes == bin)
-
+                
         bin_pixels = numpy.sum(bin_mask)
 
         bin_labels = labels[bin_mask]
@@ -304,7 +302,7 @@ def get_radial_distribution(
         labels_and_radii = (bin_labels - 1, bin_radial_index)
 
         radial_values = scipy.sparse.coo_matrix(
-            (pixel_data[bin_mask], labels_and_radii), (nobjects, 8)
+            (pixels[bin_mask], labels_and_radii), (nobjects, 8)
         ).toarray()
 
         pixel_count = scipy.sparse.coo_matrix(
@@ -327,28 +325,11 @@ def get_radial_distribution(
             if bin == bin_count:
                 measurement_name = overflow_feature % image_name
             else:
-                measurement_name = feature % (image_name, bin + 1, bin_count)
+                measurement_name = feature % (bin + 1, bin_count)
 
-            measurements.add_measurement(object_name, measurement_name, measurement)
-
-        radial_cv.mask = numpy.sum(~mask, 1) == 0
-
-        bin_name = str(bin + 1) if bin < bin_count else "Overflow"
-
-        statistics += [
-            (
-                image_name,
-                object_name,
-                bin_name,
-                str(bin_count),
-                numpy.round(numpy.mean(masked_fraction_at_distance[:, bin]), 4),
-                numpy.round(numpy.mean(masked_mean_pixel_fraction[:, bin]), 4),
-                numpy.round(numpy.mean(radial_cv), 4),
-            )
-        ]
-
-        return statistics
-
+            results[measurement_name] = measurement[0]
+            
+    return results
 
 def calculate_zernikes(pixels, mask, zernike_degree: int = 9):
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
