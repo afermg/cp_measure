@@ -86,9 +86,9 @@ FF_ZERNIKE_PHASE = "ZernikePhase"
 MF_FRAC_AT_D = "_".join((M_CATEGORY, FF_FRAC_AT_D))
 MF_MEAN_FRAC = "_".join((M_CATEGORY, FF_MEAN_FRAC))
 MF_RADIAL_CV = "_".join((M_CATEGORY, FF_RADIAL_CV))
-OF_FRAC_AT_D = "_".join((M_CATEGORY, F_FRAC_AT_D, "%s", FF_OVERFLOW))
-OF_MEAN_FRAC = "_".join((M_CATEGORY, F_MEAN_FRAC, "%s", FF_OVERFLOW))
-OF_RADIAL_CV = "_".join((M_CATEGORY, F_RADIAL_CV, "%s", FF_OVERFLOW))
+OF_FRAC_AT_D = "_".join((M_CATEGORY, F_FRAC_AT_D, FF_OVERFLOW))
+OF_MEAN_FRAC = "_".join((M_CATEGORY, F_MEAN_FRAC, FF_OVERFLOW))
+OF_RADIAL_CV = "_".join((M_CATEGORY, F_RADIAL_CV, FF_OVERFLOW))
 
 """# of settings aside from groups"""
 SETTINGS_STATIC_COUNT = 3
@@ -137,7 +137,7 @@ def get_radial_distribution(
     scaled : bool
         Scale the bins?
 
-        When Trie divide the object radially into the number of bins
+        When True divide the object radially into the number of bins
         that you specify. Otherwise create the number of bins you specify
         based on distance. If True, it will use a maximum distance so
         that each object will have the same measurements (which might be zero
@@ -292,7 +292,7 @@ def get_radial_distribution(
     for bin in range(bin_count + (0 if scaled else 1)):
         print(bin)
         bin_mask = good_mask & (bin_indexes == bin)
-                
+
         bin_pixels = numpy.sum(bin_mask)
 
         bin_labels = labels[bin_mask]
@@ -323,82 +323,64 @@ def get_radial_distribution(
             (numpy.array(radial_cv), MF_RADIAL_CV, OF_RADIAL_CV),
         ):
             if bin == bin_count:
-                measurement_name = overflow_feature % image_name
+                measurement_name = overflow_feature
             else:
                 measurement_name = feature % (bin + 1, bin_count)
 
             results[measurement_name] = measurement[0]
-            
+
     return results
+
 
 def calculate_zernikes(pixels, mask, zernike_degree: int = 9):
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
     labels = mask.astype(int)  # Convert boolean mask to labels
-    for o in self.objects:
-        object_name = o.object_name.value
+    l_ = [1]  # Will be used later for scipy.ndimage.sum
 
-        objects = workspace.object_set.get_objects(object_name)
+    # MODIFIED: Delegate index generation to the minimum_enclosing_circle
+    # TODO: Check that this has the correct dimensions
+    ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels)
 
-        #
-        # First, get a table of centers and radii of minimum enclosing
-        # circles per object
-        #
-        # ij = numpy.zeros((objects.count + 1, 2))
+    #
+    # Then compute x and y, the position of each labeled pixel
+    # within a unit circle around the object
+    #
+    ijv = boolean_mask_to_ijv(mask)
 
-        # r = numpy.zeros(objects.count + 1)
+    yx = (ijv[:, :2] - ij) / r
 
-        # MODIFIED: Delegate index generation to the minimum_enclosing_circle
-        # TODO: Check that this has the correct dimensions
-        ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels)
+    z = centrosome.zernike.construct_zernike_polynomials(
+        yx[:, 1], yx[:, 0], zernike_indexes
+    )
 
-        # ij[indexes] = ij_
+    area = mask.sum()
 
-        # r[indexes] = r_
-
-        #
-        # Then compute x and y, the position of each labeled pixel
-        # within a unit circle around the object
-        #
-        ijv = boolean_mask_to_ijv(mask)
-
-        yx = (ijv[:, :2] - ij) / r
-
-        z = centrosome.zernike.construct_zernike_polynomials(
-            yx[:, 1], yx[:, 0], zernike_indexes
+    #
+    # Results will be formatted in a dictionary with the following keys:
+    # Zernike{Magniture|Phase}_{n}_{m}
+    # n - the radial moment of the Zernike
+    # m - the azimuthal moment of the Zernike
+    #
+    results = {}
+    for i, (n, m) in enumerate(zernike_indexes):
+        vr = scipy.ndimage.sum(
+            pixels[ijv[:, 0], ijv[:, 1]] * z[:, i].real,
+            labels=l_,
         )
 
-        area = mask.sum()
+        vi = scipy.ndimage.sum(
+            pixels[ijv[:, 0], ijv[:, 1]] * z[:, i].imag,
+            labels=l_,
+        )
 
-        results = {}
-        for i, (n, m) in enumerate(zernike_indexes):
-            vr = scipy.ndimage.sum(
-                pixels[ijv[:, 0], ijv[:, 1]] * z_[:, i].real,
-                # FIXME replace functionality of labels and index
-                # labels=l_,
-                # index=objects.indices,
-            )
+        magnitude = numpy.sqrt(vr * vr + vi * vi) / area
+        phase = numpy.arctan2(vr, vi)
 
-            vi = scipy.ndimage.sum(
-                pixels[ijv[mask, 0], ijv[mask, 1]] * z_[:, i].imag,
-                # labels=l_,
-                # index=objects.indices,
-            )
+        results[f"ZernikeMagnitude_{n}_{m}"] = magnitude
+        results[f"ZernikePhase_{n}_{m}"] = phase
 
-            magnitude = numpy.sqrt(vr * vr + vi * vi) / area
-
-            # ftr = self.get_zernike_magnitude_name(image_name, n, m)
-
-            # meas[object_name, ftr] = magnitude
-            results[f"ZernikeMagnitude_{n}_{m}"] = magnitude
-
-            if self.wants_zernikes == Z_MAGNITUDES_AND_PHASE:
-                phase = numpy.arctan2(vr, vi)
-
-                ftr = self.get_zernike_phase_name(image_name, n, m)
-
-                meas[object_name, ftr] = phase
-        return results
+    return results
 
 
 def boolean_mask_to_ijv(mask: numpy.ndarray) -> numpy.ndarray:
@@ -410,138 +392,7 @@ def boolean_mask_to_ijv(mask: numpy.ndarray) -> numpy.ndarray:
     # Extract coordinates of object from boolean mask
     i, j = numpy.where(mask)
     n = len(i)
-    ijv = np.ones((n, n, n), dtype=int)
+    ijv = numpy.ones((n, 3), dtype=int)
     ijv[:, 0] = i
     ijv[:, 1] = j
     return ijv
-
-
-def get_zernike_magnitude_name(image_name, n, m):
-    """The feature name of the magnitude of a Zernike moment
-
-    image_name - the name of the image being measured
-    n - the radial moment of the Zernike
-    m - the azimuthal moment of the Zernike
-    """
-    return "_".join((M_CATEGORY, FF_ZERNIKE_MAGNITUDE, image_name, str(n), str(m)))
-
-
-def get_zernike_phase_name(image_name, n, m):
-    """The feature name of the phase of a Zernike moment
-
-    image_name - the name of the image being measured
-    n - the radial moment of the Zernike
-    m - the azimuthal moment of the Zernike
-    """
-    return "_".join((M_CATEGORY, FF_ZERNIKE_PHASE, image_name, str(n), str(m)))
-
-    def get_measurement_columns(self, pipeline):
-        columns = []
-
-        for image_name in self.images_list.value:
-            for o in self.objects:
-                object_name = o.object_name.value
-
-                for bin_count_obj in self.bin_counts:
-                    bin_count = bin_count_obj.bin_count.value
-
-                    wants_scaling = bin_count_obj.wants_scaled.value
-
-                    for feature, ofeature in (
-                        (MF_FRAC_AT_D, OF_FRAC_AT_D),
-                        (MF_MEAN_FRAC, OF_MEAN_FRAC),
-                        (MF_RADIAL_CV, OF_RADIAL_CV),
-                    ):
-                        for bin in range(1, bin_count + 1):
-                            columns.append(
-                                (
-                                    object_name,
-                                    feature % (image_name, bin, bin_count),
-                                    COLTYPE_FLOAT,
-                                )
-                            )
-
-                        if not wants_scaling:
-                            columns.append(
-                                (
-                                    object_name,
-                                    ofeature % image_name,
-                                    COLTYPE_FLOAT,
-                                )
-                            )
-
-                    if self.wants_zernikes != Z_NONE:
-                        name_fns = [self.get_zernike_magnitude_name]
-
-                        if self.wants_zernikes == Z_MAGNITUDES_AND_PHASE:
-                            name_fns.append(self.get_zernike_phase_name)
-
-                        max_n = self.zernike_degree.value
-
-                        for name_fn in name_fns:
-                            for n, m in centrosome.zernike.get_zernike_indexes(
-                                max_n + 1
-                            ):
-                                ftr = name_fn(image_name, n, m)
-
-                                columns.append(
-                                    (
-                                        object_name,
-                                        ftr,
-                                        COLTYPE_FLOAT,
-                                    )
-                                )
-
-        return columns
-
-    def get_categories(self, pipeline, object_name):
-        if object_name in [x.object_name.value for x in self.objects]:
-            return [M_CATEGORY]
-
-        return []
-
-    def get_measurements(self, pipeline, object_name, category):
-        if category in self.get_categories(pipeline, object_name):
-            if self.wants_zernikes == Z_NONE:
-                return F_ALL
-
-            if self.wants_zernikes == Z_MAGNITUDES:
-                return F_ALL + [FF_ZERNIKE_MAGNITUDE]
-
-            return F_ALL + [FF_ZERNIKE_MAGNITUDE, FF_ZERNIKE_PHASE]
-
-        return []
-
-    def get_measurement_images(self, pipeline, object_name, category, feature):
-        if feature in self.get_measurements(pipeline, object_name, category):
-            return self.images_list.value
-        return []
-
-    def get_measurement_scales(
-        self, pipeline, object_name, category, feature, image_name
-    ):
-        if image_name in self.get_measurement_images(
-            pipeline, object_name, category, feature
-        ):
-            if feature in (FF_ZERNIKE_MAGNITUDE, FF_ZERNIKE_PHASE):
-                n_max = self.zernike_degree.value
-
-                result = [
-                    "{}_{}".format(n, m)
-                    for n, m in centrosome.zernike.get_zernike_indexes(n_max + 1)
-                ]
-            else:
-                result = [
-                    FF_SCALE % (bin, bin_count.bin_count.value)
-                    for bin_count in self.bin_counts
-                    for bin in range(1, bin_count.bin_count.value + 1)
-                ]
-
-                if any(
-                    [not bin_count.wants_scaled.value for bin_count in self.bin_counts]
-                ):
-                    result += [FF_OVERFLOW]
-
-            return result
-
-        return []
