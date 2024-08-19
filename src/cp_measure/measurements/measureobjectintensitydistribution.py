@@ -50,16 +50,10 @@ F_ALL = [F_FRAC_AT_D, F_MEAN_FRAC, F_RADIAL_CV]
 FF_SCALE = "%dof%d"
 FF_OVERFLOW = "Overflow"
 FF_GENERIC = FF_SCALE
-FF_FRAC_AT_D = F_FRAC_AT_D + FF_GENERIC
-FF_MEAN_FRAC = F_MEAN_FRAC + FF_GENERIC
-FF_RADIAL_CV = F_RADIAL_CV + FF_GENERIC
 
-FF_ZERNIKE_MAGNITUDE = "ZernikeMagnitude"
-FF_ZERNIKE_PHASE = "ZernikePhase"
-
-MF_FRAC_AT_D = "_".join((M_CATEGORY, FF_FRAC_AT_D))
-MF_MEAN_FRAC = "_".join((M_CATEGORY, FF_MEAN_FRAC))
-MF_RADIAL_CV = "_".join((M_CATEGORY, FF_RADIAL_CV))
+MF_FRAC_AT_D = "_".join((M_CATEGORY, F_FRAC_AT_D, FF_GENERIC))
+MF_MEAN_FRAC = "_".join((M_CATEGORY, F_MEAN_FRAC, FF_GENERIC))
+MF_RADIAL_CV = "_".join((M_CATEGORY, F_RADIAL_CV, FF_GENERIC))
 OF_FRAC_AT_D = "_".join((M_CATEGORY, F_FRAC_AT_D, FF_OVERFLOW))
 OF_MEAN_FRAC = "_".join((M_CATEGORY, F_MEAN_FRAC, FF_OVERFLOW))
 OF_RADIAL_CV = "_".join((M_CATEGORY, F_RADIAL_CV, FF_OVERFLOW))
@@ -296,7 +290,7 @@ def get_radial_distribution(
     return results
 
 
-def calculate_zernikes(pixels, mask, zernike_degree: int = 9):
+def get_zernikes(pixels, mask, zernike_degree: int = 9):
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
     labels = mask.astype(int)  # Convert boolean mask to labels
@@ -341,8 +335,8 @@ def calculate_zernikes(pixels, mask, zernike_degree: int = 9):
         magnitude = numpy.sqrt(vr * vr + vi * vi) / area
         phase = numpy.arctan2(vr, vi)
 
-        results[f"ZernikeMagnitude_{n}_{m}"] = magnitude
-        results[f"ZernikePhase_{n}_{m}"] = phase
+        results[f"{M_CATEGORY}_ZernikeMagnitude_{n}_{m}"] = magnitude
+        results[f"{M_CATEGORY}_ZernikePhase_{n}_{m}"] = phase
 
     return results
 
