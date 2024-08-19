@@ -224,8 +224,6 @@ def get_radial_distribution(
         (numpy.ones(ngood_pixels), labels_and_bins), (nobjects, bin_count + 1)
     ).toarray()
 
-    object_mask = number_at_distance > 0
-
     sum_by_object = numpy.sum(number_at_distance, 1)
 
     sum_by_object_per_bin = numpy.dstack([sum_by_object] * (bin_count + 1))[0]
@@ -234,14 +232,6 @@ def get_radial_distribution(
 
     mean_pixel_fraction = fraction_at_distance / (
         fraction_at_bin + numpy.finfo(float).eps
-    )
-
-    masked_fraction_at_distance = numpy.ma.masked_array(
-        fraction_at_distance, ~object_mask
-    )
-
-    masked_mean_pixel_fraction = numpy.ma.masked_array(
-        mean_pixel_fraction, ~object_mask
     )
 
     # Anisotropy calculation.  Split each cell into eight wedges, then
