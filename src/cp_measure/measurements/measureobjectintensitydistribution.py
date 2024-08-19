@@ -1,3 +1,4 @@
+import cellprofiler.gui.help.content
 import centrosome.cpmorphology
 import centrosome.propagate
 import centrosome.zernike
@@ -6,67 +7,32 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
-from cellprofiler_core.constants.measurement import COLTYPE_FLOAT
-from cellprofiler_core.image import Image
-from cellprofiler_core.module import Module
-from cellprofiler_core.preferences import get_default_colormap
-from cellprofiler_core.setting import (
-    HiddenCount,
-    Divider,
-    SettingsGroup,
-    Binary,
-    ValidationError,
-)
-from cellprofiler_core.setting.choice import Choice, Colormap
-from cellprofiler_core.setting.do_something import DoSomething, RemoveSettingButton
-from cellprofiler_core.setting.subscriber import (
-    LabelSubscriber,
-    ImageListSubscriber,
-    ImageSubscriber,
-)
-from cellprofiler_core.setting.text import Integer, ImageName
-from cellprofiler_core.utilities.core.object import (
-    crop_labels_and_image,
-    size_similarly,
-)
+# from cellprofiler_core.constants.measurement import COLTYPE_FLOAT
+# from cellprofiler_core.image import Image
+# from cellprofiler_core.module import Module
+# from cellprofiler_core.preferences import get_default_colormap
+# from cellprofiler_core.setting import (
+#     Binary,
+#     Divider,
+#     HiddenCount,
+#     SettingsGroup,
+#     ValidationError,
+# )
+# from cellprofiler_core.setting.choice import Choice, Colormap
+# from cellprofiler_core.setting.do_something import DoSomething, RemoveSettingButton
+# from cellprofiler_core.setting.subscriber import (
+#     ImageListSubscriber,
+#     ImageSubscriber,
+#     LabelSubscriber,
+# )
+# from cellprofiler_core.setting.text import ImageName, Integer
+# from cellprofiler_core.utilities.core.object import (
+#     crop_labels_and_image,
+#     size_similarly,
+# )
 
-import cellprofiler.gui.help.content
-
-MeasureObjectIntensityDistribution_Magnitude_Phase = cellprofiler.gui.help.content.image_resource(
-    "MeasureObjectIntensityDistribution_Magnitude_Phase.png"
-)
-MeasureObjectIntensityDistribution_Edges_Centers = cellprofiler.gui.help.content.image_resource(
-    "MeasureObjectIntensityDistribution_Edges_Centers.png"
-)
-
-__doc__ = """
-MeasureObjectIntensityDistribution
-==================================
-
-**MeasureObjectIntensityDistribution** measures the spatial distribution of
-intensities within each object.
-
-Given an image with objects identified, this module measures the
-intensity distribution from each object’s center to its boundary within
-a set of bins, i.e., rings that you specify.
-
-|MeasureObjectIntensityDistribution_image0|
-
-The distribution is measured from the center of the object, where the
-center is defined as the point farthest from any edge. The numbering of bins is
-from 1 (innermost) to *N* (outermost), where *N* is the number of bins
-you specify. Alternatively, if primary objects exist within
-the object of interest (e.g., nuclei within cells), you can choose the
-center of the primary objects as the center from which to measure the
-radial distribution. This might be useful in cytoplasm-to-nucleus
-translocation experiments, for example. Note that the ring widths are
-normalized per-object, i.e., not necessarily a constant width across
-objects.
-
-|MeasureObjectIntensityDistribution_image1|
-
-|
-
+# |
+"""
 ============ ============ ===============
 Supports 2D? Supports 3D? Respects masks?
 ============ ============ ===============
@@ -94,15 +60,7 @@ Measurements made by this module
    invariant degree magnitude of the moment and the ZernikePhase feature
    gives the moment’s orientation.
 
-.. |MeasureObjectIntensityDistribution_image0| image:: {MeasureObjectIntensityDistribution_Magnitude_Phase}
-.. |MeasureObjectIntensityDistribution_image1| image:: {MeasureObjectIntensityDistribution_Edges_Centers}
-
-""".format(
-    **{
-        "MeasureObjectIntensityDistribution_Magnitude_Phase": MeasureObjectIntensityDistribution_Magnitude_Phase,
-        "MeasureObjectIntensityDistribution_Edges_Centers": MeasureObjectIntensityDistribution_Edges_Centers,
-    }
-)
+"""
 
 C_SELF = "These objects"
 C_CENTERS_OF_OTHER_V2 = "Other objects"
@@ -168,30 +126,8 @@ MEASUREMENT_ALIASES = {
 
 
 class MeasureObjectIntensityDistribution(Module):
-    module_name = "MeasureObjectIntensityDistribution"
-    category = "Measurement"
-    variable_revision_number = 6
-
     def create_settings(self):
-        self.images_list = ImageListSubscriber(
-            "Select images to measure",
-            [],
-            doc="""Select the images whose intensity distribution you want to measure.""",
-        )
-
-        self.objects = []
-
-        self.bin_counts = []
-
-        self.heatmaps = []
-
-        self.object_count = HiddenCount(self.objects)
-
-        self.bin_counts_count = HiddenCount(self.bin_counts)
-
-        self.heatmap_count = HiddenCount(self.heatmaps)
-
-        self.wants_zernikes = Choice(
+      self.wants_zernikes = Choice(
             "Calculate intensity Zernikes?",
             Z_ALL,
             doc="""\
@@ -264,21 +200,6 @@ heatmap according to the measurement value for that band.
 
         self.add_bin_count(can_remove=False)
 
-    def add_object(self, can_remove=True):
-        group = SettingsGroup()
-
-        if can_remove:
-            group.append("divider", Divider(line=False))
-
-        group.append(
-            "object_name",
-            LabelSubscriber(
-                "Select objects to measure",
-                "None",
-                doc="Select the objects whose intensity distribution you want to measure.",
-            ),
-        )
-
         group.append(
             "center_choice",
             Choice(
@@ -299,12 +220,7 @@ There are three ways to specify the center of the radial measurement:
 For example, if measuring the radial distribution in a Cell object, you
 can use the center of the Cell objects (*{C_SELF}*) or you can use
 previously identified Nuclei objects as the centers
-(*{C_CENTERS_OF_OTHER}*).
-
-|MeasureObjectIntensityDistribution_image1|
-
-.. |MeasureObjectIntensityDistribution_image1| image:: {MeasureObjectIntensityDistribution_Edges_Centers}
-""".format(
+(*{C_CENTERS_OF_OTHER}*).""".format(
                     **{
                         "C_SELF": C_SELF,
                         "C_CENTERS_OF_OTHER": C_CENTERS_OF_OTHER,
@@ -315,38 +231,7 @@ previously identified Nuclei objects as the centers
             ),
         )
 
-        group.append(
-            "center_object_name",
-            LabelSubscriber(
-                "Select objects to use as centers",
-                "None",
-                doc="""\
-*(Used only if “{C_CENTERS_OF_OTHER}” are selected for centers)*
-
-Select the object to use as the center, or select *None* to use the
-input object centers (which is the same as selecting *{C_SELF}* for the
-object centers).
-""".format(
-                    **{"C_CENTERS_OF_OTHER": C_CENTERS_OF_OTHER, "C_SELF": C_SELF}
-                ),
-            ),
-        )
-
-        if can_remove:
-            group.append(
-                "remover",
-                RemoveSettingButton("", "Remove this object", self.objects, group),
-            )
-
-        self.objects.append(group)
-
-    def add_bin_count(self, can_remove=True):
-        group = SettingsGroup()
-
-        if can_remove:
-            group.append("divider", Divider(line=False))
-
-        group.append(
+       group.append(
             "wants_scaled",
             Binary(
                 "Scale the bins?",
@@ -360,9 +245,7 @@ distance. For this option, you will be asked to specify a maximum
 distance so that each object will have the same measurements (which
 might be zero for small objects) and so that the measurements can be
 taken without knowing the maximum object radius before the run starts.
-""".format(
-                    **{"YES": "Yes", "NO": "No"}
-                ),
+""".format(**{"YES": "Yes", "NO": "No"}),
             ),
         )
 
@@ -410,151 +293,6 @@ in pixels.
 
         self.bin_counts.append(group)
 
-    def get_bin_count_choices(self, pipeline=None):
-        choices = []
-        for bin_count in self.bin_counts:
-            nbins = str(bin_count.bin_count.value)
-            if nbins != choices:
-                choices.append(nbins)
-        return choices
-
-    def add_heatmap(self):
-        group = SettingsGroup()
-
-        if len(self.heatmaps) > 0:
-            group.append("divider", Divider(line=False))
-
-        group.append(
-            "image_name",
-            MORDImageNameSubscriber(
-                "Image",
-                doc="""\
-The heatmap will be displayed with measurements taken using this image. The setting will let you
-choose from among the images you have specified in "Select image to measure".
-""",
-            ),
-        )
-
-        group.image_name.set_module(self)
-
-        group.append(
-            "object_name",
-            MORDObjectNameSubscriber(
-                "Objects to display",
-                doc="""\
-The objects to display in the heatmap. You can select any of the
-objects chosen in "Select objects to measure".""",
-            ),
-        )
-
-        group.object_name.set_module(self)
-
-        group.append(
-            "bin_count",
-            Choice(
-                "Number of bins",
-                self.get_bin_count_choices(),
-                choices_fn=self.get_bin_count_choices,
-            ),
-        )
-
-        def get_number_of_bins(module=self, group=group):
-            if len(module.bin_counts) == 1:
-                return module.bin_counts[0].bin_count.value
-
-            return int(group.bin_count.value)
-
-        group.get_number_of_bins = get_number_of_bins
-
-        group.append(
-            "measurement",
-            Choice(
-                "Measurement", MEASUREMENT_CHOICES, doc="The measurement to display."
-            ),
-        )
-
-        group.append(
-            "colormap",
-            Colormap(
-                "Color map",
-                value="Blues",
-                doc="""\
-The color map setting chooses the color palette that will be
-used to render the different values for your measurement. If you
-choose "gray", the image will label each of the bins with the
-actual image measurement.""",
-            ),
-        )
-
-        group.append(
-            "wants_to_save_display",
-            Binary(
-                "Save display as image?",
-                False,
-                doc="""\
-This setting allows you to save the heatmap display as an image that can
-be output using the **SaveImages** module. Choose *{YES}* to save the
-display or *{NO}* if the display is not needed.
-""".format(
-                    **{"YES": "Yes", "NO": "No"}
-                ),
-            ),
-        )
-
-        group.append(
-            "display_name",
-            ImageName(
-                "Output image name",
-                "Heatmap",
-                doc="""\
-*(Only used if “Save display as image?” is “{YES}”)*
-
-This setting names the heatmap image so that the name you enter here can
-be selected in a later **SaveImages** or other module.
-""".format(
-                    **{"YES": "Yes"}
-                ),
-            ),
-        )
-
-        group.append(
-            "remover",
-            RemoveSettingButton(
-                "", "Remove this heatmap display", self.heatmaps, group
-            ),
-        )
-
-        self.heatmaps.append(group)
-
-    def validate_module(self, pipeline):
-        images = set()
-        if len(self.images_list.value) == 0:
-            raise ValidationError("No images selected", self.images_list)
-        for image_name in self.images_list.value:
-            if image_name in images:
-                raise ValidationError(
-                    "%s has already been selected" % image_name, image_name
-                )
-            images.add(image_name)
-
-        objects = set()
-        for group in self.objects:
-            if group.object_name.value in objects:
-                raise ValidationError(
-                    "{} has already been selected".format(group.object_name.value),
-                    group.object_name,
-                )
-            objects.add(group.object_name.value)
-
-        bins = set()
-        for group in self.bin_counts:
-            if group.bin_count.value in bins:
-                raise ValidationError(
-                    "{} has already been selected".format(group.bin_count.value),
-                    group.bin_count,
-                )
-            bins.add(group.bin_count.value)
-
     def settings(self):
         result = [
             self.images_list,
@@ -564,86 +302,6 @@ be selected in a later **SaveImages** or other module.
             self.wants_zernikes,
             self.zernike_degree,
         ]
-
-        for x in (self.objects, self.bin_counts, self.heatmaps):
-            for settings in x:
-                temp = settings.pipeline_settings()
-                result += temp
-
-        return result
-
-    def visible_settings(self):
-        result = [self.wants_zernikes]
-
-        if self.wants_zernikes != Z_NONE:
-            result.append(self.zernike_degree)
-
-        result += [self.images_list, self.spacer_1]
-
-        for settings in self.objects:
-            temp = settings.visible_settings()
-
-            if settings.center_choice.value == C_SELF:
-                temp.remove(settings.center_object_name)
-
-            result += temp
-
-        result += [self.add_object_button, self.spacer_2]
-
-        for settings in self.bin_counts:
-            result += [settings.wants_scaled, settings.bin_count]
-
-            if not settings.wants_scaled:
-                result += [settings.maximum_radius]
-
-            if settings.can_remove:
-                result += [settings.remover]
-
-        result += [self.add_bin_count_button, self.spacer_3]
-
-        for settings in self.heatmaps:
-            if hasattr(settings, "divider"):
-                result.append(settings.divider)
-
-            if settings.image_name.is_visible():
-                result.append(settings.image_name)
-
-            if settings.object_name.is_visible():
-                result.append(settings.object_name)
-
-            if len(self.bin_counts) > 1:
-                result.append(settings.bin_count)
-
-            result += [
-                settings.measurement,
-                settings.colormap,
-                settings.wants_to_save_display,
-            ]
-
-            if settings.wants_to_save_display:
-                result.append(settings.display_name)
-
-            result.append(settings.remover)
-
-        result += [self.add_heatmap_button]
-
-        return result
-
-    def prepare_settings(self, setting_values):
-        objects_count, bin_counts_count, heatmap_count = [
-            int(x) for x in setting_values[1:4]
-        ]
-
-        for sequence, add_fn, count in (
-            (self.objects, self.add_object, objects_count),
-            (self.bin_counts, self.add_bin_count, bin_counts_count),
-            (self.heatmaps, self.add_heatmap, heatmap_count),
-        ):
-            while len(sequence) > count:
-                del sequence[-1]
-
-            while len(sequence) < count:
-                add_fn()
 
     def run(self, workspace):
         header = (
@@ -722,80 +380,6 @@ be selected in a later **SaveImages** or other module.
 
                     workspace.image_set.add(img_name, output_img)
 
-    def display(self, workspace, figure):
-        header = workspace.display_data.header
-
-        stats = workspace.display_data.stats
-
-        n_plots = len(workspace.display_data.heatmaps) + 1
-
-        n_vert = int(numpy.sqrt(n_plots))
-
-        n_horiz = int(numpy.ceil(float(n_plots) / n_vert))
-
-        if len(self.heatmaps) > 0:
-            helptext = "short"
-        else:
-            helptext = "default"
-
-        figure.set_subplots((n_horiz, n_vert))
-
-        figure.subplot_table(0, 0, stats, col_labels=header, title=helptext)
-
-        idx = 1
-
-        sharexy = None
-
-        for heatmap, (heatmap_img, mask) in zip(
-            self.heatmaps, workspace.display_data.heatmaps
-        ):
-
-            heatmap_img = numpy.ma.array(heatmap_img, mask=~mask)
-
-            if heatmap_img is not None:
-                title = "{} {} {}".format(
-                    heatmap.image_name.get_image_name(),
-                    heatmap.object_name.get_objects_name(),
-                    heatmap.measurement.value,
-                )
-
-                x = idx % n_horiz
-
-                y = int(idx / n_horiz)
-
-                colormap = heatmap.colormap.value
-
-                if colormap == "Default":
-                    colormap = get_default_colormap()
-
-                if sharexy is None:
-                    sharexy = figure.subplot_imshow(
-                        x,
-                        y,
-                        heatmap_img,
-                        title=title,
-                        colormap=colormap,
-                        normalize=False,
-                        vmin=numpy.min(heatmap_img),
-                        vmax=numpy.max(heatmap_img),
-                        colorbar=False,
-                    )
-                else:
-                    figure.subplot_imshow(
-                        x,
-                        y,
-                        heatmap_img,
-                        title=title,
-                        colormap=colormap,
-                        colorbar=False,
-                        normalize=False,
-                        vmin=numpy.min(heatmap_img),
-                        vmax=numpy.max(heatmap_img),
-                        sharexy=sharexy,
-                    )
-
-                idx += 1
-
     def do_measurements(
         self,
         workspace,
@@ -836,45 +420,6 @@ be selected in a later **SaveImages** or other module.
         nobjects = numpy.max(objects.segmented)
 
         measurements = workspace.measurements
-
-        heatmaps = {}
-
-        for heatmap in self.heatmaps:
-            if (
-                heatmap.object_name.get_objects_name() == object_name
-                and image_name == heatmap.image_name.get_image_name()
-                and heatmap.get_number_of_bins() == bin_count
-            ):
-
-                dd[id(heatmap)] = heatmaps[
-                    MEASUREMENT_ALIASES[heatmap.measurement.value]
-                ] = numpy.zeros(labels.shape)
-
-        if nobjects == 0:
-            for bin_index in range(1, bin_count + 1):
-                for feature in (F_FRAC_AT_D, F_MEAN_FRAC, F_RADIAL_CV):
-                    feature_name = (feature + FF_GENERIC) % (
-                        image_name,
-                        bin_index,
-                        bin_count,
-                    )
-
-                    measurements.add_measurement(
-                        object_name,
-                        "_".join([M_CATEGORY, feature_name]),
-                        numpy.zeros(0),
-                    )
-
-                    if not wants_scaled:
-                        measurement_name = "_".join(
-                            [M_CATEGORY, feature, image_name, FF_OVERFLOW]
-                        )
-
-                        measurements.add_measurement(
-                            object_name, measurement_name, numpy.zeros(0)
-                        )
-
-            return [(image_name, object_name, "no objects", "-", "-", "-", "-")]
 
         name = (
             object_name
@@ -1015,11 +560,6 @@ be selected in a later **SaveImages** or other module.
                     cl[mask] = l[mask]
 
             good_mask = cl > 0
-
-            if center_choice == C_EDGES_OF_OTHER:
-                # Exclude pixels within the centering objects
-                # when performing calculations from the centers
-                good_mask = good_mask & (center_labels == 0)
 
             i_center = numpy.zeros(cl.shape)
 
@@ -1169,126 +709,109 @@ be selected in a later **SaveImages** or other module.
 
         return statistics
 
-    def calculate_zernikes(self, workspace):
-        zernike_indexes = centrosome.zernike.get_zernike_indexes(
-            self.zernike_degree.value + 1
+def calculate_zernikes(pixels, mask, zernike_degree: int):
+    zernike_indexes = centrosome.zernike.get_zernike_indexes(
+        zernike_degree + 1
+    )
+
+    labels = mask.astype(int) # Convert boolean mask to labels
+    for o in self.objects:
+        object_name = o.object_name.value
+
+        objects = workspace.object_set.get_objects(object_name)
+
+        #
+        # First, get a table of centers and radii of minimum enclosing
+        # circles per object
+        #
+        # ij = numpy.zeros((objects.count + 1, 2))
+
+        # r = numpy.zeros(objects.count + 1)
+
+        # MODIFIED: Delegate index generation to the minimum_enclosing_circle
+        # TODO: Check that this has the correct dimensions
+        ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels)
+
+            # ij[indexes] = ij_
+
+            # r[indexes] = r_
+
+        #
+        # Then compute x and y, the position of each labeled pixel
+        # within a unit circle around the object
+        #
+        ijv = boolean_mask_to_ijv(mask)
+
+        yx = (ijv[:, :2] - ij) / r
+
+        z = centrosome.zernike.construct_zernike_polynomials(
+            yx[:, 1], yx[:, 0], zernike_indexes
         )
 
-        meas = workspace.measurements
+        area = mask.sum()
 
-        for o in self.objects:
-            object_name = o.object_name.value
-
-            objects = workspace.object_set.get_objects(object_name)
-
-            #
-            # First, get a table of centers and radii of minimum enclosing
-            # circles per object
-            #
-            ij = numpy.zeros((objects.count + 1, 2))
-
-            r = numpy.zeros(objects.count + 1)
-
-            for labels, indexes in objects.get_labels():
-                ij_, r_ = centrosome.cpmorphology.minimum_enclosing_circle(
-                    labels, indexes
-                )
-
-                ij[indexes] = ij_
-
-                r[indexes] = r_
-
-            #
-            # Then compute x and y, the position of each labeled pixel
-            # within a unit circle around the object
-            #
-            ijv = objects.ijv
-
-            l = ijv[:, 2]
-
-            yx = (ijv[:, :2] - ij[l, :]) / r[l, numpy.newaxis]
-
-            z = centrosome.zernike.construct_zernike_polynomials(
-                yx[:, 1], yx[:, 0], zernike_indexes
+        results = {}
+        for i, (n, m) in enumerate(zernike_indexes):
+            vr = scipy.ndimage.sum(
+                pixels[ijv[:, 0], ijv[:, 1]] * z_[:, i].real,
+                # FIXME replace functionality of labels and index
+                # labels=l_,
+                # index=objects.indices,
             )
 
-            for image_name in self.images_list.value:
-                image = workspace.image_set.get_image(
-                    image_name, must_be_grayscale=True
-                )
+            vi = scipy.ndimage.sum(
+                pixels[ijv[mask, 0], ijv[mask, 1]] * z_[:, i].imag,
+                # labels=l_,
+                # index=objects.indices,
+            )
 
-                pixels = image.pixel_data
+            magnitude = numpy.sqrt(vr * vr + vi * vi) / area
 
-                mask = (ijv[:, 0] < pixels.shape[0]) & (ijv[:, 1] < pixels.shape[1])
+            # ftr = self.get_zernike_magnitude_name(image_name, n, m)
 
-                mask[mask] = image.mask[ijv[mask, 0], ijv[mask, 1]]
+            # meas[object_name, ftr] = magnitude
+            results[f"ZernikeMagnitude_{n}_{m}"] = magnitude
+             
+            if self.wants_zernikes == Z_MAGNITUDES_AND_PHASE:
+                phase = numpy.arctan2(vr, vi)
 
-                yx_ = yx[mask, :]
+                ftr = self.get_zernike_phase_name(image_name, n, m)
 
-                l_ = l[mask]
+                meas[object_name, ftr] = phase
+        return results
+                        
+def boolean_mask_to_ijv(mask:numpy.ndarray) -> numpy.ndarray:
+    """
+    input: 2d boolean array
+    output: (n, 3) integer array following (i,j,1)
+    """
 
-                z_ = z[mask, :]
+    # Extract coordinates of object from boolean mask
+    i,j = numpy.where(mask)
+    n = len(i)
+    ijv = np.ones((n,n,n), dtype=int)
+    ijv[:,0] = i
+    ijv[:,1] = j
+    return ijv
+            
 
-                if len(l_) == 0:
-                    for i, (n, m) in enumerate(zernike_indexes):
-                        ftr = self.get_zernike_magnitude_name(image_name, n, m)
+def get_zernike_magnitude_name(image_name, n, m):
+    """The feature name of the magnitude of a Zernike moment
 
-                        meas[object_name, ftr] = numpy.zeros(0)
+    image_name - the name of the image being measured
+    n - the radial moment of the Zernike
+    m - the azimuthal moment of the Zernike
+    """
+    return "_".join((M_CATEGORY, FF_ZERNIKE_MAGNITUDE, image_name, str(n), str(m)))
 
-                        if self.wants_zernikes == Z_MAGNITUDES_AND_PHASE:
-                            ftr = self.get_zernike_phase_name(image_name, n, m)
+def get_zernike_phase_name(image_name, n, m):
+    """The feature name of the phase of a Zernike moment
 
-                            meas[object_name, ftr] = numpy.zeros(0)
-
-                    continue
-
-                areas = scipy.ndimage.sum(
-                    numpy.ones(l_.shape, int), labels=l_, index=objects.indices
-                )
-
-                for i, (n, m) in enumerate(zernike_indexes):
-                    vr = scipy.ndimage.sum(
-                        pixels[ijv[mask, 0], ijv[mask, 1]] * z_[:, i].real,
-                        labels=l_,
-                        index=objects.indices,
-                    )
-
-                    vi = scipy.ndimage.sum(
-                        pixels[ijv[mask, 0], ijv[mask, 1]] * z_[:, i].imag,
-                        labels=l_,
-                        index=objects.indices,
-                    )
-
-                    magnitude = numpy.sqrt(vr * vr + vi * vi) / areas
-
-                    ftr = self.get_zernike_magnitude_name(image_name, n, m)
-
-                    meas[object_name, ftr] = magnitude
-
-                    if self.wants_zernikes == Z_MAGNITUDES_AND_PHASE:
-                        phase = numpy.arctan2(vr, vi)
-
-                        ftr = self.get_zernike_phase_name(image_name, n, m)
-
-                        meas[object_name, ftr] = phase
-
-    def get_zernike_magnitude_name(self, image_name, n, m):
-        """The feature name of the magnitude of a Zernike moment
-
-        image_name - the name of the image being measured
-        n - the radial moment of the Zernike
-        m - the azimuthal moment of the Zernike
-        """
-        return "_".join((M_CATEGORY, FF_ZERNIKE_MAGNITUDE, image_name, str(n), str(m)))
-
-    def get_zernike_phase_name(self, image_name, n, m):
-        """The feature name of the phase of a Zernike moment
-
-        image_name - the name of the image being measured
-        n - the radial moment of the Zernike
-        m - the azimuthal moment of the Zernike
-        """
-        return "_".join((M_CATEGORY, FF_ZERNIKE_PHASE, image_name, str(n), str(m)))
+    image_name - the name of the image being measured
+    n - the radial moment of the Zernike
+    m - the azimuthal moment of the Zernike
+    """
+    return "_".join((M_CATEGORY, FF_ZERNIKE_PHASE, image_name, str(n), str(m)))
 
     def get_measurement_columns(self, pipeline):
         columns = []
@@ -1318,7 +841,11 @@ be selected in a later **SaveImages** or other module.
 
                         if not wants_scaling:
                             columns.append(
-                                (object_name, ofeature % image_name, COLTYPE_FLOAT,)
+                                (
+                                    object_name,
+                                    ofeature % image_name,
+                                    COLTYPE_FLOAT,
+                                )
                             )
 
                     if self.wants_zernikes != Z_NONE:
@@ -1335,7 +862,13 @@ be selected in a later **SaveImages** or other module.
                             ):
                                 ftr = name_fn(image_name, n, m)
 
-                                columns.append((object_name, ftr, COLTYPE_FLOAT,))
+                                columns.append(
+                                    (
+                                        object_name,
+                                        ftr,
+                                        COLTYPE_FLOAT,
+                                    )
+                                )
 
         return columns
 
@@ -1390,132 +923,3 @@ be selected in a later **SaveImages** or other module.
             return result
 
         return []
-
-    def upgrade_settings(self, setting_values, variable_revision_number, module_name):
-        if variable_revision_number == 1:
-            n_images, n_objects, n_bins = [
-                int(setting) for setting in setting_values[:3]
-            ]
-
-            off_bins = (
-                SETTINGS_STATIC_COUNT
-                + n_images * SETTINGS_IMAGE_GROUP_COUNT
-                + n_objects * SETTINGS_OBJECT_GROUP_COUNT
-            )
-
-            new_setting_values = setting_values[:off_bins]
-
-            for bin_count in setting_values[off_bins:]:
-                new_setting_values += ["Yes", bin_count, "100"]
-
-            setting_values = new_setting_values
-
-            variable_revision_number = 2
-
-        if variable_revision_number == 2:
-            n_images, n_objects = [int(setting) for setting in setting_values[:2]]
-
-            off_objects = SETTINGS_STATIC_COUNT + n_images * SETTINGS_IMAGE_GROUP_COUNT
-
-            setting_values = list(setting_values)
-
-            for i in range(n_objects):
-                offset = (
-                    off_objects
-                    + i * SETTINGS_OBJECT_GROUP_COUNT
-                    + SETTINGS_CENTER_CHOICE_OFFSET
-                )
-
-                if setting_values[offset] == C_CENTERS_OF_OTHER_V2:
-                    setting_values[offset] = C_CENTERS_OF_OTHER
-
-            variable_revision_number = 3
-
-        if variable_revision_number == 3:
-            # added heatmaps
-            # Need a heatmap_count = 0
-            #
-            setting_values = setting_values[:3] + ["0"] + setting_values[3:]
-
-            variable_revision_number = 4
-
-        if variable_revision_number == 4:
-            #
-            # Added zernikes
-            #
-            setting_values = setting_values[:4] + [Z_NONE, "9"] + setting_values[4:]
-
-            variable_revision_number = 5
-
-        if variable_revision_number == 5:
-            n_images = int(setting_values[0])
-            mid = setting_values[1:6]
-            end = setting_values[6 + n_images :]
-
-            images_set = set(setting_values[6 : 6 + n_images])
-            if "None" in images_set:
-                images_set.remove("None")
-            images_string = ", ".join(map(str, images_set))
-
-            setting_values = [images_string] + mid + end
-
-            variable_revision_number = 6
-
-        return setting_values, variable_revision_number
-
-
-class MORDObjectNameSubscriber(LabelSubscriber):
-    """An object name subscriber limited by the objects in the objects' group"""
-
-    def set_module(self, module):
-        assert isinstance(module, MeasureObjectIntensityDistribution)
-        self.__module = module
-
-    def __is_valid_choice(self, choice_tuple):
-        for object_group in self.__module.objects:
-            if choice_tuple[0] == object_group.object_name:
-                return True
-        return False
-
-    def get_choices(self, pipeline):
-        super_choices = super(self.__class__, self).get_choices(pipeline)
-        return list(filter(self.__is_valid_choice, super_choices))
-
-    def is_visible(self):
-        """Return True if a choice should be displayed"""
-        return len(self.__module.objects) > 1
-
-    def get_objects_name(self):
-        """Return the name of the objects to use in the display"""
-        if len(self.__module.objects) == 1:
-            return self.__module.objects[0].object_name.value
-        return self.value
-
-
-class MORDImageNameSubscriber(ImageSubscriber):
-    """An image name subscriber limited by the images in the image group"""
-
-    def set_module(self, module):
-        assert isinstance(module, MeasureObjectIntensityDistribution)
-        self.__module = module
-
-    def __is_valid_choice(self, choice_tuple):
-        for image_name in self.__module.images_list.value:
-            if choice_tuple[0] == image_name:
-                return True
-        return False
-
-    def get_choices(self, pipeline):
-        super_choices = super(self.__class__, self).get_choices(pipeline)
-
-        return list(filter(self.__is_valid_choice, super_choices))
-
-    def is_visible(self):
-        """Return True if a choice should be displayed"""
-        return len(self.__module.images_list.value) > 1
-
-    def get_image_name(self):
-        """Return the name of the image to use in the display"""
-        if len(self.__module.images_list.value) == 1:
-            return self.__module.images_list.value[0]
-        return self.value
