@@ -1,38 +1,12 @@
 import centrosome.cpmorphology
 import centrosome.propagate
 import centrosome.zernike
-import matplotlib.cm
 import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
 
-# from cellprofiler_core.constants.measurement import COLTYPE_FLOAT
-# from cellprofiler_core.image import Image
-# from cellprofiler_core.module import Module
-# from cellprofiler_core.preferences import get_default_colormap
-# from cellprofiler_core.setting import (
-#     Binary,
-#     Divider,
-#     HiddenCount,
-#     SettingsGroup,
-#     ValidationError,
-# )
-# from cellprofiler_core.setting.choice import Choice, Colormap
-# from cellprofiler_core.setting.do_something import DoSomething, RemoveSettingButton
-# from cellprofiler_core.setting.subscriber import (
-#     ImageListSubscriber,
-#     ImageSubscriber,
-#     LabelSubscriber,
-# )
-# from cellprofiler_core.setting.text import ImageName, Integer
-# from cellprofiler_core.utilities.core.object import (
-#     crop_labels_and_image,
-#     size_similarly,
-# )
-
-# |
-"""
+""""
 ============ ============ ===============
 Supports 2D? Supports 3D? Respects masks?
 ============ ============ ===============
