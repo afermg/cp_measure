@@ -5,6 +5,7 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
+from utils import boolean_mask_to_ijv
 
 """"
 ============ ============ ===============
@@ -339,18 +340,3 @@ def get_zernikes(pixels, mask, zernike_degree: int = 9):
         results[f"{M_CATEGORY}_ZernikePhase_{n}_{m}"] = phase
 
     return results
-
-
-def boolean_mask_to_ijv(mask: numpy.ndarray) -> numpy.ndarray:
-    """
-    input: 2d boolean array
-    output: (n, 3) integer array following (i,j,1)
-    """
-
-    # Extract coordinates of object from boolean mask
-    i, j = numpy.where(mask)
-    n = len(i)
-    ijv = numpy.ones((n, 3), dtype=int)
-    ijv[:, 0] = i
-    ijv[:, 1] = j
-    return ijv
