@@ -85,6 +85,7 @@ LOWER_QUARTILE_INTENSITY = "LowerQuartileIntensity"
 MEDIAN_INTENSITY = "MedianIntensity"
 MAD_INTENSITY = "MADIntensity"
 UPPER_QUARTILE_INTENSITY = "UpperQuartileIntensity"
+C_LOCATION = "Location"
 LOC_CMI_X = "CenterMassIntensity_X"
 LOC_CMI_Y = "CenterMassIntensity_Y"
 LOC_CMI_Z = "CenterMassIntensity_Z"
@@ -370,13 +371,12 @@ def get_intensity(pixels: numpy.ndarray, mask: numpy.ndarray):
         (INTENSITY, MEDIAN_INTENSITY, median_intensity),
         (INTENSITY, MAD_INTENSITY, mad_intensity),
         (INTENSITY, UPPER_QUARTILE_INTENSITY, upper_quartile_intensity),
-        # FIXME: Find out what this is, maybe location?
-        # (C_LOCATION, LOC_CMI_X, cmi_x),
-        # (C_LOCATION, LOC_CMI_Y, cmi_y),
-        # (C_LOCATION, LOC_CMI_Z, cmi_z),
-        # (C_LOCATION, LOC_MAX_X, max_x),
-        # (C_LOCATION, LOC_MAX_Y, max_y),
-        # (C_LOCATION, LOC_MAX_Z, max_z),
+        (C_LOCATION, LOC_CMI_X, cmi_x),
+        (C_LOCATION, LOC_CMI_Y, cmi_y),
+        (C_LOCATION, LOC_CMI_Z, cmi_z),
+        (C_LOCATION, LOC_MAX_X, max_x),
+        (C_LOCATION, LOC_MAX_Y, max_y),
+        (C_LOCATION, LOC_MAX_Z, max_z),
     ):
         measurement_name = "{}_{}".format(category, feature_name)
         # MODIFIED: Selected first
