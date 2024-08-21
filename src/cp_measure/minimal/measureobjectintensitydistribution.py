@@ -5,7 +5,8 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
-from utils import boolean_mask_to_ijv
+
+from cp_measure.minimal.utils import boolean_mask_to_ijv
 
 """"
 ============ ============ ===============
@@ -291,7 +292,7 @@ def get_radial_distribution(
     return results
 
 
-def get_zernikes(pixels, mask, zernike_degree: int = 9):
+def get_radial_zernikes(pixels, mask, zernike_degree: int = 9):
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
     labels = mask.astype(int)  # Convert boolean mask to labels

@@ -153,7 +153,7 @@ InverseDifferenceMoment SumAverage SumVariance SumEntropy Entropy
 DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
 
 
-def measure_texture(
+def get_texture(
     pixels: numpy.ndarray,
     mask: numpy.ndarray = None,  # MODIFIED: if mask is not provided do whole image
     scale: int = 3,

@@ -68,7 +68,7 @@ References
 """
 
 
-def measure_granularity(
+def get_granularity(
     pixels: numpy.ndarray,
     mask: numpy.ndarray,
     subsample_size: float = 0.25,

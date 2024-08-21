@@ -3,7 +3,8 @@ import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
-from utils import boolean_mask_to_ijv
+
+from cp_measure.minimal.utils import boolean_mask_to_ijv
 
 __doc__ = """\
 MeasureObjectSizeShape
@@ -569,7 +570,7 @@ def get_sizeshape(
             results[F_SOLIDITY] = props["solidity"]
 
     # MODIFIED: Squeeze the only value returned per feature
-    return {k:v[0] for k,v in results.items()}
+    return {k: v[0] for k, v in results.items()}
 
 
 def get_zernike(pixels: numpy.ndarray, mask: numpy.ndarray, zernike_numbers: int = 9):
