@@ -1,5 +1,6 @@
 """
-Wrapper to fetch measurement functions in bulk
+Wrapper to fetch measurement functions in bulk. We are keeping the ugly filenames to
+match the original names. This may change in the future.
 """
 
 from typing import Callable

@@ -345,6 +345,7 @@ def linear_costes(
     fi: numpy.ndarray,
     si: numpy.ndarray,
     scale_max: int = 255,
+    fast_costes: str = M_FASTER,
 ):
     """
     Finds the Costes Automatic Threshold for colocalization using a linear algorithm.
@@ -538,13 +539,13 @@ def get_correlation_overlap(
         )
         / numpy.array(spsq)
     )
-    
+
     # MODIFIED: Returning only first element
     return {
-            F_OVERLAP_FORMAT: overlap[0],
-            f"{F_K_FORMAT}_1": K1[0],
-            f"{F_K_FORMAT}_2": K2[0],
-            }
+        F_OVERLAP_FORMAT: overlap[0],
+        f"{F_K_FORMAT}_1": K1[0],
+        f"{F_K_FORMAT}_2": K2[0],
+    }
 
 
 # MODIFIED: This reproduces the behaviour of the block at
