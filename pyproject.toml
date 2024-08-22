@@ -13,7 +13,7 @@ requires = ["setuptools>=64.0.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cellprofiler-library"
+name = "cp_measure" # A temporary repo that will be added to cellprofiler-library
 authors = [
     {name = "Anne Carpenter"},
     {name = "Thouis (Ray) Jones"},
