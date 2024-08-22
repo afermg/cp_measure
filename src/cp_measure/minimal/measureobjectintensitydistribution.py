@@ -90,8 +90,8 @@ MEASUREMENT_ALIASES = {
 
 
 def get_radial_distribution(
-    pixels: numpy.ndarray,
     mask: numpy.ndarray,
+    pixels: numpy.ndarray,
     scaled: bool = True,
     bin_count: int = 4,
     maximum_radius: int = 100,

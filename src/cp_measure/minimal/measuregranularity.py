@@ -69,8 +69,8 @@ References
 
 
 def get_granularity(
-    pixels: numpy.ndarray,
     mask: numpy.ndarray,
+    pixels: numpy.ndarray,
     subsample_size: float = 0.25,
     image_sample_size: float = 0.25,
     element_size: int = 10,

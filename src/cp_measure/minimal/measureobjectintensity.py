@@ -120,7 +120,7 @@ ALL_LOCATION_MEASUREMENTS = [
 ]
 
 
-def get_intensity(pixels: numpy.ndarray, mask: numpy.ndarray):
+def get_intensity(mask: numpy.ndarray, pixels: numpy.ndarray):
     masked_image = pixels
     image_mask = numpy.ones_like(pixels, dtype=bool)
 

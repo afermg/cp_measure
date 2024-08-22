@@ -364,7 +364,7 @@ calculate_zernikes : int, optional
 
 
 def get_sizeshape(
-    pixels: numpy.ndarray, mask: numpy.ndarray, calculate_advanced: bool = True
+    mask: numpy.ndarray, pixels: numpy.ndarray, calculate_advanced: bool = True
 ):
     """Computing the measurements for a single map of objects"""
     # Determine which properties we're measuring.
@@ -573,7 +573,7 @@ def get_sizeshape(
     return {k: v[0] for k, v in results.items()}
 
 
-def get_zernike(pixels: numpy.ndarray, mask: numpy.ndarray, zernike_numbers: int = 9):
+def get_zernike(mask: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int = 9):
     #
     # Zernike features
     #
@@ -590,7 +590,7 @@ def get_zernike(pixels: numpy.ndarray, mask: numpy.ndarray, zernike_numbers: int
     return {k: v[0] for k, v in results.items()}
 
 
-def get_ferret(pixels: numpy.ndarray, mask: numpy.ndarray):
+def get_ferret(mask: numpy.ndarray, pixels: numpy.ndarray):
     ijv = boolean_mask_to_ijv(mask)
     indices = numpy.unique(ijv[:, 2])
     indices = indices[indices > 0]
