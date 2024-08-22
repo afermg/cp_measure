@@ -292,7 +292,7 @@ def get_radial_distribution(
     return results
 
 
-def get_radial_zernikes(pixels, mask, zernike_degree: int = 9):
+def get_radial_zernikes(mask, pixels, zernike_degree: int = 9):
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
     labels = mask.astype(int)  # Convert boolean mask to labels

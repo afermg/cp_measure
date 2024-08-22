@@ -154,7 +154,7 @@ DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
 
 
 def get_texture(
-    mask: numpy.ndarray = None,  # MODIFIED: if mask is not provided do whole image
+        mask: numpy.ndarray,
     pixels: numpy.ndarray,
     scale: int = 3,
     gray_levels: int = 256,

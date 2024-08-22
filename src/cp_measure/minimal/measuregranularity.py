@@ -243,7 +243,7 @@ def get_granularity(
         footprint = skimage.morphology.disk(1, dtype=bool)
     else:
         footprint = skimage.morphology.ball(1, dtype=bool)
-    measurement = {}
+    results = {}
     for i in range(1, ng + 1):
         prevmean = currentmean
         ero_mask = numpy.zeros_like(ero)
@@ -252,7 +252,7 @@ def get_granularity(
         rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
         currentmean = numpy.mean(rec[mask])
         gs = (prevmean - currentmean) * 100 / startmean
-        measurement[f"Granularity_{str(i)}"] = gs
+        results[f"Granularity_{str(i)}"] = gs
         # Restore the reconstructed image to the shape of the
         # original image so we can match against object labels
         #
