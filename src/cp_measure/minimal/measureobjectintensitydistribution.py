@@ -250,7 +250,6 @@ def get_radial_distribution(
     results = {}
 
     for bin in range(bin_count + (0 if scaled else 1)):
-        print(bin)
         bin_mask = good_mask & (bin_indexes == bin)
 
         bin_pixels = numpy.sum(bin_mask)
