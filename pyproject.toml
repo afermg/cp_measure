@@ -36,7 +36,7 @@ maintainers = [
     {name = "Nodar Gogoberidze", email = "ngogober@broadinstitute.org"},
 ]
 description = """
-cellprofiler-library implements CellProfiler's image processing \
+cp-measure implements CellProfiler Measurements. It will be incorporated into cellprofiler-library in the future. cellprofiler-library implements CellProfiler's image processing \
 and mathematical code, and is usable as a standalone library"""
 readme = "README.md"
 # we don't place upper bound pin for python:
@@ -105,6 +105,7 @@ dev-dependencies = [
 # include = ["cellprofiler_library*"]
 # # enable PEP 420 namespace packages for cellprofiler/data dir
 # namespaces = true
+dynamic = ["version"]
 
 # [tool.setuptools.package-data]
 # # PEP 561
