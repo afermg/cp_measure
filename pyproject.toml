@@ -28,7 +28,8 @@ authors = [
     {name = "David Stirling", email = "dstirling@glencoesoftware.com"},
     {name = "Alice Lucas"},
     {name = "Nodar Gogoberidze", email = "ngogober@broadinstitute.org"},
-    {name = "Callum Tromans-Coia"},
+  {name = "Callum Tromans-Coia"},
+  {name = "Alan F. Munoz"}
 ]
 maintainers = [
     {name = "Beth Cimini", email = "bcimini@broadinstitute.org"},
@@ -64,7 +65,7 @@ dependencies = [
     "matplotlib>=3.1.3,<4",
     #    "packaging>=20.0",
 ]
-dynamic = ["version"]
+version = "0.1.1"
 
 [project.optional-dependencies]
 dev = [

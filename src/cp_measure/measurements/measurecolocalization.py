@@ -355,8 +355,6 @@ def linear_costes(
     """
     i_step = 1 / scale_max
     non_zero = (fi > 0) | (si > 0)
-    print(fi)
-    print(non_zero)
     xvar = numpy.var(fi[non_zero], axis=0, ddof=1)
     yvar = numpy.var(si[non_zero], axis=0, ddof=1)
 

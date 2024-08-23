@@ -11,7 +11,7 @@
 
 -e file:.
 centrosome==1.2.3
-    # via cellprofiler-library
+    # via cp-measure
 contourpy==1.1.1
     # via centrosome
     # via matplotlib
@@ -21,25 +21,25 @@ deprecation==2.1.0
     # via centrosome
 fonttools==4.53.1
     # via matplotlib
-imageio==2.35.0
+imageio==2.35.1
     # via scikit-image
-importlib-resources==6.4.2
+importlib-resources==6.4.3
     # via matplotlib
 kiwisolver==1.4.5
     # via matplotlib
 lazy-loader==0.4
     # via scikit-image
 mahotas==1.4.18
-    # via cellprofiler-library
+    # via cp-measure
 matplotlib==3.7.5
-    # via cellprofiler-library
     # via centrosome
+    # via cp-measure
 networkx==3.2.1
     # via scikit-image
 numpy==1.24.4
-    # via cellprofiler-library
     # via centrosome
     # via contourpy
+    # via cp-measure
     # via imageio
     # via mahotas
     # via matplotlib
@@ -64,11 +64,11 @@ pywavelets==1.4.1
     # via centrosome
     # via scikit-image
 scikit-image==0.20.0
-    # via cellprofiler-library
     # via centrosome
+    # via cp-measure
 scipy==1.9.1
-    # via cellprofiler-library
     # via centrosome
+    # via cp-measure
     # via scikit-image
 six==1.16.0
     # via python-dateutil
