@@ -1,8 +1,4 @@
-import numpy
-import scipy.ndimage
-import skimage.morphology
-
-__doc__ = """\
+"""\
 MeasureGranularity
 ==================
 **MeasureGranularity** outputs spectra of size measurements of the
@@ -24,18 +20,6 @@ i.e. The first time it removes one pixel from all bright areas in the image,
 (effectively deleting those that are only 1 pixel in size) and then reports what % of the signal was lost.
 It then takes the first-iteration image and repeats the removal and reporting (effectively reporting
 the amount of signal that is two pixels in size). etc.
-
-|MeasureGranularity_example|
-
-As of **CellProfiler 4.0** the settings for this module have been changed to simplify
-configuration. A single set of parameters is now applied to all images and objects within the module,
-rather than each image needing individual configuration.
-Pipelines from older versions will be converted to match this format. If multiple sets of parameters
-were defined CellProfiler will apply the first set from the older pipeline version.
-Specifying multiple sets of parameters can still be achieved by running multiple copies of this module.
-
-
-|
 
 ============ ============ ===============
 Supports 2D? Supports 3D? Respects masks?
@@ -67,6 +51,10 @@ References
    Statistics, Moskow, (in Russian)
 """
 
+import numpy
+import scipy.ndimage
+import skimage.morphology
+
 
 def get_granularity(
     mask: numpy.ndarray,
@@ -75,7 +63,7 @@ def get_granularity(
     image_sample_size: float = 0.25,
     element_size: int = 10,
     granular_spectrum_length: int = 16,
-):
+) -> dict[str, float]:
     """
     Parameters
     ----------
