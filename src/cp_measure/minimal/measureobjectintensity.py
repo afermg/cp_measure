@@ -344,17 +344,17 @@ def get_intensity(mask: numpy.ndarray, pixels: numpy.ndarray):
             )
         )
 
-    min_intensity_edge[lindexes - 1] = (
-        centrosome.cpmorphology.fixup_scipy_ndimage_result(
-            scipy.ndimage.minimum(eimg, elabels, lindexes)
+        min_intensity_edge[lindexes - 1] = (
+            centrosome.cpmorphology.fixup_scipy_ndimage_result(
+                scipy.ndimage.minimum(eimg, elabels, lindexes)
+            )
         )
-    )
 
-    max_intensity_edge[lindexes - 1] = (
-        centrosome.cpmorphology.fixup_scipy_ndimage_result(
-            scipy.ndimage.maximum(eimg, elabels, lindexes)
+        max_intensity_edge[lindexes - 1] = (
+            centrosome.cpmorphology.fixup_scipy_ndimage_result(
+                scipy.ndimage.maximum(eimg, elabels, lindexes)
+            )
         )
-    )
     for category, feature_name, measurement in (
         (INTENSITY, INTEGRATED_INTENSITY, integrated_intensity),
         (INTENSITY, MEAN_INTENSITY, mean_intensity),
