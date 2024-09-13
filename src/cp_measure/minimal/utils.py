@@ -8,16 +8,21 @@ def get_test_pixels_mask():
     return pixels, mask
 
 
-def boolean_mask_to_ijv(mask: numpy.ndarray) -> numpy.ndarray:
+def masks_to_ijv(masks: numpy.ndarray) -> numpy.ndarray:
     """
     input: 2d boolean array
     output: (n, 3) integer array following (i,j,1)
     """
 
     # Extract coordinates of object from boolean mask
-    i, j = numpy.where(mask)
-    n = len(i)
-    ijv = numpy.ones((n, 3), dtype=int)
-    ijv[:, 0] = i
-    ijv[:, 1] = j
-    return ijv
+    final_ijv = np.empty((0,3), dtype=int)
+    for label in range(masks.max()):
+        i, j = numpy.where(mask==label+1)
+        n = len(i)
+        ijv = numpy.ones((n, 3), dtype=int)
+        ijv[:, 0] = i
+        ijv[:, 1] = j
+        ijv[:,2] = label
+
+    
+    return final_ijv
