@@ -409,7 +409,7 @@ def get_sizeshape(
     labels = masks
     nobjects = len(np.unique(masks))-1
     results = {}
-    if mask.ndim == 2:
+    if labels.ndim == 2:
         props = skimage.measure.regionprops_table(labels, properties=desired_properties)
 
         formfactor = 4.0 * numpy.pi * props["area"] / props["perimeter"] ** 2
@@ -517,7 +517,7 @@ def get_sizeshape(
             }.items():
                 results[k] = v
 
-    else:  # FIXME: Support 3D pixels
+    else: 
         props = skimage.measure.regionprops_table(labels, properties=desired_properties)
 
         # SurfaceArea
