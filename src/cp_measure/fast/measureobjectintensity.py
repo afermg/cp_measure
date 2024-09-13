@@ -120,7 +120,10 @@ ALL_LOCATION_MEASUREMENTS = [
 ]
 
 
-def get_intensity(mask: numpy.ndarray, pixels: numpy.ndarray):
+def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
+    """
+    masks is a labeled array where 0 are background images.
+    """
     masked_image = pixels
     image_mask = numpy.ones_like(pixels, dtype=bool)
 
@@ -129,7 +132,9 @@ def get_intensity(mask: numpy.ndarray, pixels: numpy.ndarray):
         masked_image = img
 
     # MODIFIED: Provided directly
-    nobjects = 1
+    unique_vals = np.unique(masks) 
+    nobjects = len(unique_vals)-1
+    
     integrated_intensity = numpy.zeros((nobjects,))
     integrated_intensity_edge = numpy.zeros((nobjects,))
     mean_intensity = numpy.zeros((nobjects,))
@@ -152,9 +157,14 @@ def get_intensity(mask: numpy.ndarray, pixels: numpy.ndarray):
     max_y = numpy.zeros((nobjects,))
     max_z = numpy.zeros((nobjects,))
 
-    # Modified: Passed single mask directly
+    label_matrices = np.zeros((nobjects, *masks.shape), dtype=int) # N,Y,X
+    unique_labels = unique_vals[unique_vals>0]
+    for i, label in enumerate(unique_labels): # Assumes all labels from 1 to nobjects are present
+        label_matrices[i][masks==label] = label
+        
     result = {}
-    for labels, lindexes in ((mask.astype(int), numpy.array([1])),):
+    # for labels, lindexes in ((mask, numpy.array([1])),):
+    for labels, lindexes in zip(label_matrices, unique_labels):
         lindexes = lindexes[lindexes != 0]
 
         if pixels.ndim == 2:
@@ -380,6 +390,6 @@ def get_intensity(mask: numpy.ndarray, pixels: numpy.ndarray):
     ):
         measurement_name = "{}_{}".format(category, feature_name)
         # MODIFIED: Selected first
-        result[measurement_name] = measurement[0]
+        result[measurement_name] = measurement
 
     return result
