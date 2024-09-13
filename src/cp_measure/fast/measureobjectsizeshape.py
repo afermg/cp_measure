@@ -364,9 +364,9 @@ calculate_zernikes : int, optional
 
 
 def get_sizeshape(
-    mask: numpy.ndarray, pixels: numpy.ndarray, calculate_advanced: bool = True
+    masks: numpy.ndarray, pixels: numpy.ndarray, calculate_advanced: bool = True
 ):
-    """Computing the measurements for a single map of objects"""
+    """Compute the measurements for multiple object masks."""
     # Determine which properties we're measuring.
     desired_properties = [
         "image",
@@ -406,8 +406,8 @@ def get_sizeshape(
             "solidity",
         ]
 
-    labels = mask.astype(int)
-    nobjects = 1
+    labels = masks
+    nobjects = len(np.unique(masks))-1
     results = {}
     if mask.ndim == 2:
         props = skimage.measure.regionprops_table(labels, properties=desired_properties)
@@ -569,8 +569,7 @@ def get_sizeshape(
         if calculate_advanced:
             results[F_SOLIDITY] = props["solidity"]
 
-    # MODIFIED: Squeeze the only value returned per feature
-    return {k: v[0] for k, v in results.items()}
+    return results
 
 
 def get_zernike(mask: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int = 9):
