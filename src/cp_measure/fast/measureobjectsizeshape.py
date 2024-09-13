@@ -589,8 +589,8 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
     return results
 
 
-def get_ferret(mask: numpy.ndarray, pixels: numpy.ndarray):
-    ijv = boolean_mask_to_ijv(mask)
+def get_ferret(masks: numpy.ndarray, pixels: numpy.ndarray):
+    ijv = boolean_masks_to_ijv(masks)
     indices = numpy.unique(ijv[:, 2])
     indices = indices[indices > 0]
     chulls, chull_counts = centrosome.cpmorphology.convex_hull_ijv(ijv, indices)
@@ -607,5 +607,4 @@ def get_ferret(mask: numpy.ndarray, pixels: numpy.ndarray):
         F_MAX_FERET_DIAMETER: max_feret_diameter,
     }
 
-    # MODIFIED: Squeeze the only value returned per feature
-    return {k: v[0] for k, v in features_to_record.items()}
+    return features_to_record
