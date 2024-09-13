@@ -407,7 +407,7 @@ def get_sizeshape(
         ]
 
     labels = masks
-    nobjects = len(np.unique(masks))-1
+    nobjects = len(np.unique(masks)) - 1
     results = {}
     if labels.ndim == 2:
         props = skimage.measure.regionprops_table(labels, properties=desired_properties)
@@ -517,7 +517,7 @@ def get_sizeshape(
             }.items():
                 results[k] = v
 
-    else: 
+    else:
         props = skimage.measure.regionprops_table(labels, properties=desired_properties)
 
         # SurfaceArea
@@ -572,12 +572,13 @@ def get_sizeshape(
     return results
 
 
-def get_zernike(mask: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int = 9):
+def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int = 9):
     #
     # Zernike features
     #
-    indices = [1]
-    labels = mask.astype(int)
+    unique_indices = np.unique(mask)
+    indices = list(range(1,len(unique_indices) + 1))
+    labels = masks
     zernike_numbers = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
 
     zf_l = centrosome.zernike.zernike(zernike_numbers, labels, indices)
@@ -585,8 +586,7 @@ def get_zernike(mask: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int
     for (n, m), z in zip(zernike_numbers, zf_l.transpose()):
         results[f"Zernike_{n}_{m}"] = z
 
-    # MODIFIED: Squeeze the only value returned per feature
-    return {k: v[0] for k, v in results.items()}
+    return results
 
 
 def get_ferret(mask: numpy.ndarray, pixels: numpy.ndarray):
