@@ -28,10 +28,6 @@
               config.allowUnfree = true;
             };
 
-            mpkgs = import inputs.nixpkgs_master {
-              system = system;
-              config.allowUnfree = true;
-            };
           in
           {
             default = devenv.lib.mkShell {
@@ -50,7 +46,6 @@
                   packages = with pkgs; [
                     poetry
                     python310
-                    which
                     ruff
                     pyright
                   ];

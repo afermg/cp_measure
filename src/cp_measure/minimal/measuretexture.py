@@ -154,7 +154,7 @@ DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
 
 
 def get_texture(
-        mask: numpy.ndarray,
+    mask: numpy.ndarray,
     pixels: numpy.ndarray,
     scale: int = 3,
     gray_levels: int = 256,
@@ -221,8 +221,8 @@ def get_texture(
         # MODIFIED: Reconstructed name:
         # Texture_{X}_{scale}_{distance_id}_{graylevels}
     results = {}
-    for feature_name, values in zip(F_HARALICK, features):
-        for distance_i, value in enumerate(values):
+    for direction_i, direction_feaures in enumerate(features):
+        for feature_name, values in zip(F_HARALICK, direction_features):
             results[
                 "{}_{:d}_{:02d}_{:d}".format(
                     feature_name,
