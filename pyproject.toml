@@ -9,7 +9,7 @@ cp-measure implements CellProfiler Measurements. It will be incorporated into ce
 and mathematical code, and is usable as a standalone library"""
 authors = ["Alan Munoz"]
 readme = "README.org"
-packages = [{include = "src"}]
+packages = [{include = "cp_measure", from = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.12"
