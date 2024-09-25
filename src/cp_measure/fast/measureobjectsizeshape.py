@@ -4,7 +4,7 @@ import numpy
 import scipy.ndimage
 import skimage.measure
 
-from cp_measure.minimal.utils import boolean_mask_to_ijv
+from cp_measure.fast.utils import masks_to_ijv
 
 __doc__ = """\
 MeasureObjectSizeShape
@@ -385,7 +385,7 @@ def get_sizeshape(
         "solidity",
     ]
 
-    if mask.ndim == 2:
+    if masks.ndim == 2:
         desired_properties += [
             "eccentricity",
             "orientation",
@@ -407,7 +407,7 @@ def get_sizeshape(
         ]
 
     labels = masks
-    nobjects = len(np.unique(masks)) - 1
+    nobjects = (numpy.unique(masks)>0).sum()
     results = {}
     if labels.ndim == 2:
         props = skimage.measure.regionprops_table(labels, properties=desired_properties)
@@ -576,7 +576,7 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
     #
     # Zernike features
     #
-    unique_indices = np.unique(mask)
+    unique_indices = numpy.unique(masks)
     indices = list(range(1,len(unique_indices) + 1))
     labels = masks
     zernike_numbers = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
@@ -590,7 +590,7 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
 
 
 def get_ferret(masks: numpy.ndarray, pixels: numpy.ndarray):
-    ijv = boolean_masks_to_ijv(masks)
+    ijv = masks_to_ijv(masks)
     indices = numpy.unique(ijv[:, 2])
     indices = indices[indices > 0]
     chulls, chull_counts = centrosome.cpmorphology.convex_hull_ijv(ijv, indices)

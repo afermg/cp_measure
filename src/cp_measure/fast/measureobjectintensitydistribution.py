@@ -287,7 +287,7 @@ def get_radial_distribution(
             else:
                 measurement_name = feature % (bin + 1, bin_count)
 
-            results[measurement_name] = measurement[0]
+            results[measurement_name] = measurement
 
     return results
 
