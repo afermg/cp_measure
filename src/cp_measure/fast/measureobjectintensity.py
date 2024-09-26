@@ -131,9 +131,9 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
         img = pixels.reshape(1, *pixels.shape)
         masked_image = img
 
-    # MODIFIED: Provided directly
-    unique_vals = np.unique(masks)
-    nobjects = len(unique_vals) - 1
+    unique_vals = numpy.unique(masks)
+    # MODIFIED: Extract the number of objects by explicitly removing 0s
+    nobjects = (unique_vals>0).sum()
 
     integrated_intensity = numpy.zeros((nobjects,))
     integrated_intensity_edge = numpy.zeros((nobjects,))
@@ -157,7 +157,7 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
     max_y = numpy.zeros((nobjects,))
     max_z = numpy.zeros((nobjects,))
 
-    label_matrices = np.zeros((nobjects, *masks.shape), dtype=int)  # N,Y,X
+    label_matrices = numpy.zeros((nobjects, *masks.shape), dtype=int)  # N,Y,X
     unique_labels = unique_vals[unique_vals > 0]
     for i, label in enumerate(
         unique_labels
