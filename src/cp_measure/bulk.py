@@ -35,7 +35,6 @@ def get_fast_measurements() -> dict[str, Callable]:
         measuretexture,
     )
 
-
     return {
         "radial_distribution": measureobjectintensitydistribution.get_radial_distribution,
         "radial_zernikes": measureobjectintensitydistribution.get_radial_zernikes,
@@ -46,4 +45,15 @@ def get_fast_measurements() -> dict[str, Callable]:
         "texture": measuretexture.get_texture,        
         "granularity": measuregranularity.get_granularity,
 
+    }
+
+def get_correlation_measurements() -> dict[str, Callable]:
+    from cp_measure.fast import measurecolocalization
+    
+    return {
+        "costes": measurecolocalization.get_correlation_costes,
+        "pearson": measurecolocalization.get_correlation_pearson,
+        "pearson": measurecolocalization.get_correlation_pearson,
+        "manders_fold": measurecolocalization.get_correlation_manders_fold,
+        "rwc": measurecolocalization.get_correlation_rwc,
     }
