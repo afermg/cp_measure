@@ -5,14 +5,21 @@ Do you need to use [[https://github.com/CellProfiler][CellProfiler]] features, b
 * Quick overview
 ** Installation
 #+begin_src bash
-pip install cp-measure
+  pip install cp-measure
+#+end_src
+*** Poetry
+If you want a development environment.
+#+begin_src bash
+  git clone git@github.com:afermg/cp_measure.git
+  cd cp_measure
+  poetry install 
 #+end_src
 
 ** Usage
 Commonly users want to calculate all the features. There are four type of measurements, based on their inputs:
 - Type 1: 1 image + 1 set of masks (e.g., intensity)
 - Type 2: 2 images + 1 set of masks (e.g., colocalization)
-- Type 3: 2 sets of masks (e.g., Number of neighbors)
+- Type 3: 2 sets of masks (e.g., number of neighbors)
 - Type 4: 1 image + 2 sets of masks  (e.g., skeleton)
   
 This shows the simplest way to use the first set (1 image, 1 mask set), which currently follows the style of the scikit-image syule (1 image, 1 matrix with non-overlapping labels).
@@ -23,7 +30,7 @@ from cp_measure.bulk import get_fast_measurements
 
 measurements = get_fast_measurements()
 print(measurements.keys())
-# dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'ferret', 'granularity', 'texture'])
+# dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'ferret', 'texture', 'granularity'])
 
 size = 200
 rng = np.random.default_rng(42)
@@ -157,24 +164,32 @@ If you need a specific measurement/feature you can just import it. Note that mea
   import numpy as np
 
   from cp_measure.minimal.measureobjectsizeshape import get_sizeshape
-  #       "radial_distribution": measureobjectintensitydistribution.get_radial_distribution,
-  #       "radial_zernikes": measureobjectintensitydistribution.get_radial_zernikes,
-  #       "intensity": measureobjectintensity.get_intensity,
-  #       "zernike": measureobjectsizeshape.get_zernike,
-  #       "ferret": measureobjectsizeshape.get_ferret,
-  #       "granularity": measuregranularity.get_granularity,
-  #       "texture": measuretexture.get_texture,
   
-  mask = np.zeros((50, 50), dtype=bool)
-  mask[5:-6, 5:-6] = True
+  mask = np.zeros((50, 50))
+  mask[5:-6, 5:-6] = 1
   get_sizeshape(mask, None) # pixels, the second argument, is not necessary for this measurement
 #+end_src
+
+The other available functions are as follows:
+- measureobjectintensitydistribution.get_radial_zernikes,
+- measureobjectintensity.get_intensity,
+- measureobjectsizeshape.get_zernike,
+- measureobjectsizeshape.get_ferret,
+- measuregranularity.get_granularity,
+- measuretexture.get_texture,
+
+And for Type 2 functions:
+- measurecolocalization.get_correlation_pearson
+- measurecolocalization.get_correlation_manders_fold
+- measurecolocalization.get_correlation_rwc
+- measurecolocalization.get_correlation_costes
+- measurecolocalization.get_correlation_overlap
+  
 
 * Pending measurements 
 You can follow progress [[https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing][here]].
 
 *** Done
-- Type 1 and 2 measurements in a 1-mask format (See =src/cp_measure/minimal=)
 - Type 1 and 2 measurements in sklearn style (process multiple masks per image)
 *** Pending
 - Type 3 and 4 measurements
