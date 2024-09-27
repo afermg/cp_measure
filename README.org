@@ -9,98 +9,146 @@ pip install cp-measure
 #+end_src
 
 ** Usage
-Commonly users want to calculate all the features. This shows the simplest way to do it.
+Commonly users want to calculate all the features. There are four type of measurements, based on their inputs:
+- Type 1: 1 image + 1 set of masks (e.g., intensity)
+- Type 2: 2 images + 1 set of masks (e.g., colocalization)
+- Type 3: 2 sets of masks (e.g., Number of neighbors)
+- Type 4: 1 image + 2 sets of masks  (e.g., skeleton)
+  
+This shows the simplest way to use the first set (1 image, 1 mask set), which currently follows the style of the scikit-image syule (1 image, 1 matrix with non-overlapping labels).
 #+begin_src python
 import numpy as np
 
-from cp_measure.bulk import get_all_measurements
+from cp_measure.bulk import get_fast_measurements
 
-measurements = get_all_measurements()
+measurements = get_fast_measurements()
 print(measurements.keys())
 # dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'ferret', 'granularity', 'texture'])
 
 size = 200
-rng = numpy.random.default_rng(42)
+rng = np.random.default_rng(42)
 pixels = rng.integers(low=0, high=10, size=(size, size))
 
-mask = np.zeros_like(pixels, dtype=bool)
-mask[5:-6, 5:-6] = True
+masks = np.zeros_like(pixels)
+masks[5:-6, 5:-6] = 1
 
 results = {}
-for name, v in get_all_measurements().items():
-    results = {**results, **v(mask, pixels)}
+for name, v in measurements.items():
+    results = {**results, **v(masks, pixels)}
 
-print(measurements)
-
-# Skipped some lines to avoid repetition
-# {
-# 'RadialDistribution_ZernikeMagnitude_4_0': 0.3135676575501373,
-# 'RadialDistribution_ZernikePhase_4_0': -1.5707963267948966,
-# ...
-# 'RadialDistribution_ZernikeMagnitude_9_9': 0.0025004179581405678,
-# 'RadialDistribution_ZernikePhase_9_9': -2.8100218596190443,
-# 'Intensity_IntegratedIntensity': 160425.0,
-# 'Intensity_MeanIntensity': 4.491055681531872,
-# 'Intensity_StdIntensity': 2.869878495344839,
-# 'Intensity_MinIntensity': 0.0,
-# 'Intensity_MaxIntensity': 9.0,
-# 'Intensity_IntegratedIntensityEdge': 3253.0,
-# 'Intensity_MeanIntensityEdge': 4.325797872340425,
-# 'Intensity_StdIntensityEdge': 2.8725543532431024,
-# 'Intensity_MinIntensityEdge': 0.0,
-# 'Intensity_MaxIntensityEdge': 9.0,
-# 'Intensity_MassDisplacement': 0.3611233465245226,
-# 'Intensity_LowerQuartileIntensity': 2.0,
-# 'Intensity_MedianIntensity': 4.0,
-# 'Intensity_MADIntensity': 2.0,
-# 'Intensity_UpperQuartileIntensity': 7.0,
-# 'Location_CenterMassIntensity_X': 98.79390369331463,
-# 'Location_CenterMassIntensity_Y': 99.29653732273648,
-# 'Location_CenterMassIntensity_Z': 0.0,
-# 'Location_MaxIntensity_X': 5.0,
-# 'Location_MaxIntensity_Y': 5.0,
-# 'Location_MaxIntensity_Z': 0.0,
-# 'SpatialMoment_0_0': 35721.0,
-# ...
-# 'SpatialMoment_2_3': 704675332061064.0,
-# 'CentralMoment_0_0': 35721.0,
-# 'CentralMoment_0_1': 0.0,
-# ...
-# 'CentralMoment_2_3': 0.0,
-# 'NormalizedMoment_0_0': nan,
-# 'NormalizedMoment_0_1': nan,
-# 'NormalizedMoment_0_2': 0.08333100043858421,
-# ...
-# 'NormalizedMoment_3_3': 0.0,
-# 'HuMoment_0': 0.16666200087716843,
-# ...
-# 'HuMoment_6': 0.0,
-# 'InertiaTensor_0_0': 2976.6666666666665,
-# 'InertiaTensor_0_1': -0.0,
-# 'InertiaTensor_1_0': -0.0,
-# 'InertiaTensor_1_1': 2976.6666666666665,
-# 'InertiaTensorEigenvalues_0': 2976.6666666666665,
-# 'InertiaTensorEigenvalues_1': 2976.6666666666665,
-# 'Zernike_0_0': 0.6433382868281151,
-# ...
-# 'Zernike_9_9': 3.9043711966673347e-19,
-# 'MinFeretDiameter': 188.0,
-# 'MaxFeretDiameter': 265.87214972614186,
-# 'Granularity_1': 24.19935948759008,
-# ...
-# 'Granularity_16': 0.0,
-# 'AngularSecondMoment_3_00_256': 0.012370162781177797,
-# ...
-# 'AngularSecondMoment_3_12_256': 0.047711060488654665,
-# 'Contrast_3_00_256': 0.012376329691736127,
-# ...
-# 'Contrast_3_12_256': 0.05146775986581612,
-# 'Correlation_3_00_256': 0.01237206590950822,
-# ...
-# 'Correlation_3_12_256': 0.0488404814927021,
-# 'Variance_3_00_256': 0.01236480273597283,
-# ...
-# 'Variance_3_12_256': 0.03896703820222742}
+"""
+{'RadialDistribution_FracAtD_1of4': array([0.0477544]),
+ 'RadialDistribution_MeanFrac_1of4': array([0.98888986]),
+ 'RadialDistribution_RadialCV_1of4': array([0.04705031]),
+ ...
+ 'RadialDistribution_ZernikeMagnitude_0_0': array([4.49027183]),
+ 'RadialDistribution_ZernikePhase_0_0': array([1.57079633]),
+ ..
+ 'RadialDistribution_ZernikeMagnitude_9_9': array([0.00250042]),
+ 'RadialDistribution_ZernikePhase_9_9': array([-2.81002186]),
+ 'Intensity_IntegratedIntensity': array([160425.]),
+ 'Intensity_MeanIntensity': array([4.49105568]),
+ 'Intensity_StdIntensity': array([2.8698785]),
+ 'Intensity_MinIntensity': array([0.]),
+ 'Intensity_MaxIntensity': array([9.]),
+ 'Intensity_IntegratedIntensityEdge': array([3253.]),
+ 'Intensity_MeanIntensityEdge': array([4.32579787]),
+ 'Intensity_StdIntensityEdge': array([2.87255435]),
+ 'Intensity_MinIntensityEdge': array([0.]),
+ 'Intensity_MaxIntensityEdge': array([9.]),
+ 'Intensity_MassDisplacement': array([0.36112335]),
+ 'Intensity_LowerQuartileIntensity': array([2.]),
+ 'Intensity_MedianIntensity': array([4.]),
+ 'Intensity_MADIntensity': array([2.]),
+ 'Intensity_UpperQuartileIntensity': array([7.]),
+ 'Location_CenterMassIntensity_X': array([98.79390369]),
+ 'Location_CenterMassIntensity_Y': array([99.29653732]),
+ 'Location_CenterMassIntensity_Z': array([0.]),
+ 'Location_MaxIntensity_X': array([5.]),
+ 'Location_MaxIntensity_Y': array([5.]),
+ 'Location_MaxIntensity_Z': array([0.]),
+ 'SpatialMoment_0_0': array([35721.]),
+ 'SpatialMoment_0_1': array([3357774.]),
+ ...
+ 'SpatialMoment_2_3': array([7.04675332e+14]),
+ 'CentralMoment_0_0': array([35721.]),
+ 'CentralMoment_0_1': array([0.]),
+ ...
+ 'CentralMoment_2_3': array([0.]),
+ 'NormalizedMoment_0_0': array([nan]),
+ 'NormalizedMoment_0_1': array([nan]),
+ 'NormalizedMoment_0_2': array([0.083331]),
+ ...
+ 'NormalizedMoment_3_3': array([0.]),
+ 'HuMoment_0': array([0.166662]),
+ ...
+ 'InertiaTensor_0_0': array([2976.66666667]),
+ 'InertiaTensor_0_1': array([-0.]),
+ 'InertiaTensor_1_0': array([-0.]),
+ 'InertiaTensor_1_1': array([2976.66666667]),
+ 'InertiaTensorEigenvalues_0': array([2976.66666667]),
+ 'InertiaTensorEigenvalues_1': array([2976.66666667]),
+ 'Zernike_0_0': array([0.64333829]),
+ ...
+ 'Zernike_9_9': array([3.9043712e-19]),
+ 'MinFeretDiameter': array([188.]),
+ 'MaxFeretDiameter': array([265.87214973]),
+ 'AngularSecondMoment_3_00_256': array([0.01237016]),
+ 'Contrast_3_00_256': array([13.32731615]),
+ 'Correlation_3_00_256': array([0.00052763]),
+ 'Variance_3_00_256': array([6.66717588]),
+ 'InverseDifferenceMoment_3_00_256': array([0.27445799]),
+ 'SumAverage_3_00_256': array([9.97394114]),
+ 'SumVariance_3_00_256': array([13.34138738]),
+ 'SumEntropy_3_00_256': array([3.87614681]),
+ 'Entropy_3_00_256': array([6.33842161]),
+ 'DifferenceVariance_3_00_256': array([0.00372448]),
+ 'DifferenceEntropy_3_00_256': array([2.98563863]),
+ 'InfoMeas1_3_00_256': array([-0.00035948]),
+ 'InfoMeas2_3_00_256': array([0.04771106]),
+ 'AngularSecondMoment_3_01_256': array([0.01237633]),
+ 'Contrast_3_01_256': array([13.34467007]),
+ 'Correlation_3_01_256': array([0.00074894]),
+ 'Variance_3_01_256': array([6.67733598]),
+ 'InverseDifferenceMoment_3_01_256': array([0.27467073]),
+ 'SumAverage_3_01_256': array([9.96441954]),
+ 'SumVariance_3_01_256': array([13.36467386]),
+ 'SumEntropy_3_01_256': array([3.87774892]),
+ 'Entropy_3_01_256': array([6.33805833]),
+ 'DifferenceVariance_3_01_256': array([0.00361481]),
+ 'DifferenceEntropy_3_01_256': array([2.9890093]),
+ 'InfoMeas1_3_01_256': array([-0.00041841]),
+ 'InfoMeas2_3_01_256': array([0.05146776]),
+ 'AngularSecondMoment_3_02_256': array([0.01237207]),
+ 'Contrast_3_02_256': array([13.36134306]),
+ 'Correlation_3_02_256': array([-0.0008637]),
+ 'Variance_3_02_256': array([6.67490643]),
+ 'InverseDifferenceMoment_3_02_256': array([0.27233695]),
+ 'SumAverage_3_02_256': array([9.95842397]),
+ 'SumVariance_3_02_256': array([13.33828266]),
+ 'SumEntropy_3_02_256': array([3.87581509]),
+ 'Entropy_3_02_256': array([6.33830874]),
+ 'DifferenceVariance_3_02_256': array([0.00369281]),
+ 'DifferenceEntropy_3_02_256': array([2.98609235]),
+ 'InfoMeas1_3_02_256': array([-0.00037672]),
+ 'InfoMeas2_3_02_256': array([0.04884048]),
+ 'AngularSecondMoment_3_03_256': array([0.0123648]),
+ 'Contrast_3_03_256': array([13.28753834]),
+ 'Correlation_3_03_256': array([0.00346848]),
+ 'Variance_3_03_256': array([6.66689316]),
+ 'InverseDifferenceMoment_3_03_256': array([0.27439131]),
+ 'SumAverage_3_03_256': array([9.97160996]),
+ 'SumVariance_3_03_256': array([13.38003429]),
+ 'SumEntropy_3_03_256': array([3.87790345]),
+ 'Entropy_3_03_256': array([6.33872973]),
+ 'DifferenceVariance_3_03_256': array([0.0036703]),
+ 'DifferenceEntropy_3_03_256': array([2.98626744]),
+ 'InfoMeas1_3_03_256': array([-0.0002397]),
+ 'InfoMeas2_3_03_256': array([0.03896704]),
+ 'Granularity_1': array([23.96446938]),
+ ...
+ 'Granularity_16': array([100.])}
+"""
 #+end_src
 
 *** Call specific measurements
@@ -123,9 +171,18 @@ If you need a specific measurement/feature you can just import it. Note that mea
 #+end_src
 
 * Pending measurements 
-You can follow progress [[https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing][here]]. The Image-wide functions will not be implemented directly, as they were originally implemented as additional functions to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
+You can follow progress [[https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing][here]].
+
+*** Done
+- Type 1 and 2 measurements in a 1-mask format (See =src/cp_measure/minimal=)
+- Type 1 and 2 measurements in sklearn style (process multiple masks per image)
+*** Pending
+- Type 3 and 4 measurements
+  
+*** Additional notes
+The Image-wide functions will not be implemented directly, as they were originally implemented as additional functions to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
+
 
 * Additional notes
-- This is a temporary library. The final goal is to integrate this on 'cellprofiler-library', containing all the functional components of CellProfilers isolated from the user interface to facilitate automation.
 - This is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
 - The functions exposed perform minimal checks. They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
