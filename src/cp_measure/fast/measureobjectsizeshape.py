@@ -577,6 +577,7 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
     # Zernike features
     #
     unique_indices = numpy.unique(masks)
+    unique_indices = unique_indices[unique_indices>0]
     indices = list(range(1,len(unique_indices) + 1))
     labels = masks
     zernike_numbers = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
