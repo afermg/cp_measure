@@ -54,7 +54,7 @@ References
 import numpy
 import scipy.ndimage
 import skimage.morphology
-
+from centrosome.cpmorphology import fixup_scipy_ndimage_result as fix
 
 def get_granularity(
     mask: numpy.ndarray,
@@ -240,18 +240,31 @@ def get_granularity(
     else:
         footprint = skimage.morphology.ball(1, dtype=bool)
         
-    results = {}
     
+    unique_labels = numpy.unique(mask)
+    unique_labels = unique_labels[unique_labels>0]
+
+    # Info on objects
+    range_ = numpy.arange(1, numpy.max(mask) + 1)
+    labels = mask.copy()
+    current_mean = fix(scipy.ndimage.mean(pixels, labels, range_))
+    start_mean = numpy.maximum(
+                current_mean, numpy.finfo(float).eps
+            )
+
+    results = {}
     for granularity_id in range(1, ng + 1):
-        # MODIFIED: Many things were outcommented because they pertain to Image calculation
-        # prevmean = currentmean
-        ero_mask = numpy.zeros_like(ero)
+        # NOTE: This seems to be an iterative process of sequential
+        # erosions and reconstructions
+        prevmean = currentmean
+        # ero_mask = numpy.zeros_like(ero)
         # ero_mask[mask == True] = ero[mask == True]
+        ero_mask = ero.copy()
         # Shrink bright regions
         ero = skimage.morphology.erosion(ero_mask, footprint=footprint)
         # Use a mask (footprint) to make bright sections bigger
         rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
-        # currentmean = numpy.mean(rec[mask])
+        #currentmean = numpy.mean(rec[mask])
         currentmean = numpy.mean(rec)
         # gs is the image granularity
         # gs = (prevmean - currentmean) * 100 / startmean
@@ -281,27 +294,20 @@ def get_granularity(
             rec = scipy.ndimage.map_coordinates(rec, (k, i, j), order=1)
             
         # Calculate the means for the objects
-        unique_labels = numpy.unique(mask)
-        unique_labels = unique_labels[unique_labels>0]
         gss = numpy.zeros((0,))
         if unique_labels.any():
             #
             # Calculate the means for the objects
             #
-            range_ = numpy.arange(1, numpy.max(mask) + 1)
-            labels = mask.copy()
             # MODIFIED: These metrics were defined inside ObjectRecord originally
          
-            current_mean = scipy.ndimage.mean(pixels, labels, range_)
-            start_mean = numpy.maximum(
-                        current_mean, numpy.finfo(float).eps
-                    )
-            new_mean = scipy.ndimage.mean(rec, labels, range_)
+            new_mean = fix(scipy.ndimage.mean(rec, labels, range_))
             gss = (
                 (current_mean - new_mean)
                 * 100
                 / start_mean
             )
+
         results[f"Granularity_{granularity_id}"] = gss
 
     return results
