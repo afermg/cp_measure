@@ -151,10 +151,9 @@ def extract_pixels(
 ):
     fi = pixels_1[mask]
     si = pixels_2[mask]
-    labels = mask.astype(int)[mask]
-    lrange = numpy.arange(1, dtype=numpy.int32) + 1
+    labels = mask[mask]
+    lrange = numpy.arange(max(labels), dtype=numpy.int32) + 1
     return fi, si, labels, lrange
-
 
 def calculate_threshold(
     pixels_1: numpy.ndarray,
@@ -269,7 +268,6 @@ def get_correlation_rwc_ind(
         scipy.ndimage.sum(si_thresh * weight_thresh, labels[combined_thresh], lrange)
     ) / numpy.array(tot_si_thr)
 
-    # MODIFIED: Returning only first element
     return {
         f"{F_RWC_FORMAT}_1": RWC1[0],
         f"{F_RWC_FORMAT}_2": RWC2[0],
@@ -327,14 +325,15 @@ def get_correlation_costes_ind(
         )
 
     # Costes Automated Threshold
-    C1 = numpy.array(
+    C1, C2 = ([0.], [0.]) # Cover fringe case of no pixels above threshold
+    if len(fi_thresh_c) and len(si_thresh_c):
+        C1 = numpy.array(
         scipy.ndimage.sum(fi_thresh_c, labels[combined_thresh_c], lrange)
     ) / numpy.array(tot_fi_thr_c)
-    C2 = numpy.array(
+        C2 = numpy.array(
         scipy.ndimage.sum(si_thresh_c, labels[combined_thresh_c], lrange)
     ) / numpy.array(tot_si_thr_c)
 
-    # MODIFIED: Returning only first element
     return {
         f"{F_COSTES_FORMAT}_1": C1[0],
         f"{F_COSTES_FORMAT}_2": C2[0],
@@ -494,7 +493,7 @@ def bisection_costes(
 
 
 def get_correlation_overlap_ind(
-    pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray
+        pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray, thr: int = 15,
 ):
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
@@ -540,7 +539,6 @@ def get_correlation_overlap_ind(
         / numpy.array(spsq)
     )
 
-    # MODIFIED: Returning only first element
     return {
         F_OVERLAP_FORMAT: overlap[0],
         f"{F_K_FORMAT}_1": K1[0],
@@ -578,8 +576,8 @@ def get_correlation_rwc(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: 
 def get_correlation_costes(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: numpy.ndarray, fast_costes: str = M_FASTER, thr: int = 15):
     return apply_correlation_fun(get_correlation_costes_ind, pixels_1, pixels_2, masks, fast_costes=fast_costes, thr = thr)
 
-def get_correlation_pearson(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: numpy.ndarray):
-    return apply_correlation_fun(get_correlation_pearson_ind, pixels_1, pixels_2, masks)
+def get_correlation_overlap(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: numpy.ndarray, thr: int = 15):
+    return apply_correlation_fun(get_correlation_overlap_ind, pixels_1, pixels_2, masks)
 
 # Helper functions
 
