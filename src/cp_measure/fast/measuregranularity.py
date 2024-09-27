@@ -242,7 +242,7 @@ def get_granularity(
         
     results = {}
     
-    for i in range(1, ng + 1):
+    for granularity_id in range(1, ng + 1):
         # MODIFIED: Many things were outcommented because they pertain to Image calculation
         # prevmean = currentmean
         ero_mask = numpy.zeros_like(ero)
@@ -302,6 +302,6 @@ def get_granularity(
                 * 100
                 / start_mean
             )
-        results[f"Granularity_{i}"] = gss
+        results[f"Granularity_{granularity_id}"] = gss
 
     return results
