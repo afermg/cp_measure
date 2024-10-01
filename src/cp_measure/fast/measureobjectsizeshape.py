@@ -529,11 +529,11 @@ def get_sizeshape(
                 F_INERTIA_TENSOR_EIGENVALUES_1: props["inertia_tensor_eigvals-1"],
             }
            
-      if new_features:   
-          new_results = { 
-             F_PERIMETER_CROFTON: props["perimeter_crofton"],
-             F_FILLED_AREA: props["area_filled"] 
-          }
+        if new_features:   
+            new_results = { 
+               F_PERIMETER_CROFTON: props["perimeter_crofton"],
+               F_FILLED_AREA: props["area_filled"] 
+            }
 
     else:
         props = skimage.measure.regionprops_table(labels, pixels, properties=desired_properties)
