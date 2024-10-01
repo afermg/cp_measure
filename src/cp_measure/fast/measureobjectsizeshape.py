@@ -350,7 +350,7 @@ F_STANDARD = [
 ]
 
 """
-calculate_advanced : int, optional
+calculate_advanced : bool, optional
     If True calculate additional statistics for object moments 
     and intertia tensors in **2D mode**. These features should not require much 
     additional time to calculate, but do add many additional columns to the 
@@ -359,16 +359,19 @@ calculate_advanced : int, optional
     For 3D images this setting enables the Solidity measurement, which can be 
     time-consuming to calculate.
     
-calculate_zernikes : int, optional
+calculate_zernikes : bool, optional
     If True calculate the Zernike shape features. Because the first 10 
     Zernike polynomials (from order 0 to order 9) are calculated, this operation 
     can be time consuming if the image contains a lot of objects. Set as False
     if you are measuring 3D objects with this module.
+    
+new_features : bool, optional
+   If true calculate additional features not present in CellProfiler4 (e.g., perimeter_crofton).
 """
 
 
 def get_sizeshape(
-    masks: numpy.ndarray, pixels: numpy.ndarray, calculate_advanced: bool = True, spacing: Optional[tuple] = None
+    masks: numpy.ndarray, pixels: numpy.ndarray, calculate_advanced: bool = True, new_features:bool = True, spacing: Optional[tuple] = None
 ):
     """Compute the measurements for multiple object masks."""
     # Properties available for both 2d and 3d
@@ -388,15 +391,20 @@ def get_sizeshape(
         "solidity",
     ]
 
+   # Features not in CellProfiler4
+    if new_features:
+       desired_properties += [ "area_filled" ]
+       
     # 2d specific properties
     if masks.ndim == 2:
         desired_properties += [
             "eccentricity",
             "orientation",
             "perimeter",
-            "perimeter_crofton"
         ]
-        
+        if new_features:
+           desired_properties += [ "perimeter_crofton" ]
+           
     if calculate_advanced:
         desired_properties += [
             "inertia_tensor",
@@ -433,15 +441,14 @@ def get_sizeshape(
             median_radius[index] = centrosome.cpmorphology.median_of_labels(
                 distances, mini_image.astype("int"), [1]
             )
-
-        results = results | {
+   
+        results |=  {
             F_AREA: props["area"],
             F_BBOX_AREA: props["area_bbox"],
             F_CONVEX_AREA: props["area_convex"],
             F_FILLED_AREA: props["area_filled"],
             F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
             F_PERIMETER: props["perimeter"],
-            F_PERIMETER_CROFTON: props["perimeter_crofton"],
             F_MAJOR_AXIS_LENGTH: props["axis_major_length"],
             F_MINOR_AXIS_LENGTH: props["axis_minor_length"],
             F_ECCENTRICITY: props["eccentricity"],
@@ -462,8 +469,11 @@ def get_sizeshape(
             F_MEAN_RADIUS: mean_radius,
             F_MEDIAN_RADIUS: median_radius,
         }
+        if new_features:
+            results |= { F_FILLED_AREA: props["area_filled"] }
+
         if calculate_advanced:
-            results = results | {
+            results |= {
                 F_SPATIAL_MOMENT_0_0: props["moments-0-0"],
                 F_SPATIAL_MOMENT_0_1: props["moments-0-1"],
                 F_SPATIAL_MOMENT_0_2: props["moments-0-2"],
@@ -518,6 +528,12 @@ def get_sizeshape(
                 F_INERTIA_TENSOR_EIGENVALUES_0: props["inertia_tensor_eigvals-0"],
                 F_INERTIA_TENSOR_EIGENVALUES_1: props["inertia_tensor_eigvals-1"],
             }
+           
+      if new_features:   
+          new_results = { 
+             F_PERIMETER_CROFTON: props["perimeter_crofton"],
+             F_FILLED_AREA: props["area_filled"] 
+          }
 
     else:
         props = skimage.measure.regionprops_table(labels, pixels, properties=desired_properties)
