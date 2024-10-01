@@ -1,3 +1,5 @@
+from typing import Optional
+
 import centrosome.cpmorphology
 import centrosome.zernike
 import numpy
@@ -165,11 +167,13 @@ ZERNIKE_N = 9
 
 F_AREA = "Area"
 F_PERIMETER = "Perimeter"
+F_PERIMETER_CROFTON = "PerimeterCrofton"
 F_VOLUME = "Volume"
 F_SURFACE_AREA = "SurfaceArea"
 F_ECCENTRICITY = "Eccentricity"
 F_SOLIDITY = "Solidity"
 F_CONVEX_AREA = "ConvexArea"
+F_FILLED_AREA = "FilledArea"
 F_EXTENT = "Extent"
 F_CENTER_X = "Center_X"
 F_CENTER_Y = "Center_Y"
@@ -364,53 +368,50 @@ calculate_zernikes : int, optional
 
 
 def get_sizeshape(
-    masks: numpy.ndarray, pixels: numpy.ndarray, calculate_advanced: bool = True
+    masks: numpy.ndarray, pixels: numpy.ndarray, calculate_advanced: bool = True, spacing: Optional[tuple] = None
 ):
     """Compute the measurements for multiple object masks."""
-    # Determine which properties we're measuring.
+    # Properties available for both 2d and 3d
     desired_properties = [
         "image",
         "area",
+        "area_bbox",
+        "area_convex",
+        "area_filled",
+        "equivalent_diameter_area",
         "bbox",
-        "bbox_area",
         "centroid",
-        "convex_area",
-        "equivalent_diameter",
         "euler_number",
         "extent",
-        "major_axis_length",
-        "minor_axis_length",
-        "orientation",
-        "perimeter",
+        "axis_major_length",
+        "axis_minor_length",
         "solidity",
     ]
 
+    # 2d specific properties
     if masks.ndim == 2:
         desired_properties += [
             "eccentricity",
             "orientation",
             "perimeter",
+            "perimeter_crofton"
         ]
-        if calculate_advanced:
-            desired_properties += [
-                "inertia_tensor",
-                "inertia_tensor_eigvals",
-                "moments",
-                "moments_central",
-                "moments_hu",
-                "moments_normalized",
-            ]
-
-    elif calculate_advanced:
+        
+    if calculate_advanced:
         desired_properties += [
-            "solidity",
+            "inertia_tensor",
+            "inertia_tensor_eigvals",
+            "moments",
+            "moments_central",
+            "moments_hu",
+            "moments_normalized",
         ]
 
     labels = masks
     nobjects = (numpy.unique(masks)>0).sum()
     results = {}
     if labels.ndim == 2:
-        props = skimage.measure.regionprops_table(labels, properties=desired_properties)
+        props = skimage.measure.regionprops_table(labels, pixels, properties=desired_properties)
 
         formfactor = 4.0 * numpy.pi * props["area"] / props["perimeter"] ** 2
         denom = [max(x, 1) for x in 4.0 * numpy.pi * props["area"]]
@@ -419,8 +420,6 @@ def get_sizeshape(
         max_radius = numpy.zeros(nobjects)
         median_radius = numpy.zeros(nobjects)
         mean_radius = numpy.zeros(nobjects)
-        min_feret_diameter = numpy.zeros(nobjects)
-        max_feret_diameter = numpy.zeros(nobjects)
         for index, mini_image in enumerate(props["image"]):
             # Pad image to assist distance tranform
             mini_image = numpy.pad(mini_image, 1)
@@ -434,16 +433,22 @@ def get_sizeshape(
             median_radius[index] = centrosome.cpmorphology.median_of_labels(
                 distances, mini_image.astype("int"), [1]
             )
-        features_to_record = {
+
+        results = results | {
             F_AREA: props["area"],
+            F_BBOX_AREA: props["area_bbox"],
+            F_CONVEX_AREA: props["area_convex"],
+            F_FILLED_AREA: props["area_filled"],
+            F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
             F_PERIMETER: props["perimeter"],
-            F_MAJOR_AXIS_LENGTH: props["major_axis_length"],
-            F_MINOR_AXIS_LENGTH: props["minor_axis_length"],
+            F_PERIMETER_CROFTON: props["perimeter_crofton"],
+            F_MAJOR_AXIS_LENGTH: props["axis_major_length"],
+            F_MINOR_AXIS_LENGTH: props["axis_minor_length"],
             F_ECCENTRICITY: props["eccentricity"],
             F_ORIENTATION: props["orientation"] * (180 / numpy.pi),
             F_CENTER_X: props["centroid-1"],
             F_CENTER_Y: props["centroid-0"],
-            F_BBOX_AREA: props["bbox_area"],
+            F_BBOX_AREA: props["area_bbox"],
             F_MIN_X: props["bbox-1"],
             F_MAX_X: props["bbox-3"],
             F_MIN_Y: props["bbox-0"],
@@ -456,11 +461,9 @@ def get_sizeshape(
             F_MAXIMUM_RADIUS: max_radius,
             F_MEAN_RADIUS: mean_radius,
             F_MEDIAN_RADIUS: median_radius,
-            F_CONVEX_AREA: props["convex_area"],
-            F_EQUIVALENT_DIAMETER: props["equivalent_diameter"],
         }
         if calculate_advanced:
-            for k, v in {
+            results = results | {
                 F_SPATIAL_MOMENT_0_0: props["moments-0-0"],
                 F_SPATIAL_MOMENT_0_1: props["moments-0-1"],
                 F_SPATIAL_MOMENT_0_2: props["moments-0-2"],
@@ -514,11 +517,10 @@ def get_sizeshape(
                 F_INERTIA_TENSOR_1_1: props["inertia_tensor-1-1"],
                 F_INERTIA_TENSOR_EIGENVALUES_0: props["inertia_tensor_eigvals-0"],
                 F_INERTIA_TENSOR_EIGENVALUES_1: props["inertia_tensor_eigvals-1"],
-            }.items():
-                results[k] = v
+            }
 
     else:
-        props = skimage.measure.regionprops_table(labels, properties=desired_properties)
+        props = skimage.measure.regionprops_table(labels, pixels, properties=desired_properties)
 
         # SurfaceArea
         surface_areas = numpy.zeros(len(props["label"]))
@@ -537,17 +539,16 @@ def get_sizeshape(
                 ),
             ]
             volume = volume == label
-            verts, faces, _normals, _values = skimage.measure.marching_cubes(
+            spacing = spacing if spacing is not None else (1.0,) * labels.ndim
+            verts, faces, _, _ = skimage.measure.marching_cubes(
                 volume,
                 method="lewiner",
-                spacing=objects.parent_image.spacing
-                if objects.has_parent_image
-                else (1.0,) * labels.ndim,
+                spacing=spacing,
                 level=0,
             )
             surface_areas[index] = skimage.measure.mesh_surface_area(verts, faces)
 
-        features_to_record = {
+        results = results | {
             F_VOLUME: props["area"],
             F_SURFACE_AREA: surface_areas,
             F_MAJOR_AXIS_LENGTH: props["major_axis_length"],
