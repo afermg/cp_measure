@@ -619,7 +619,6 @@ def get_sizeshape(
                     "inertia_tensor",
                     "inertia_tensor_eigvals",
                     "moments",
-                    "moments_hu",
                     "moments_central",
                     "moments_normalized",
                 ]
