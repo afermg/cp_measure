@@ -169,6 +169,8 @@ F_AREA = "Area"
 F_PERIMETER = "Perimeter"
 F_PERIMETER_CROFTON = "PerimeterCrofton"
 F_VOLUME = "Volume"
+F_CONVEX_VOLUME = "ConvexArea"
+F_FILLED_VOLUME = "FilledArea"
 F_SURFACE_AREA = "SurfaceArea"
 F_ECCENTRICITY = "Eccentricity"
 F_SOLIDITY = "Solidity"
@@ -221,10 +223,16 @@ F_HU_MOMENT_5 = "HuMoment_5"
 F_HU_MOMENT_6 = "HuMoment_6"
 F_INERTIA_TENSOR_0_0 = "InertiaTensor_0_0"
 F_INERTIA_TENSOR_0_1 = "InertiaTensor_0_1"
+F_INERTIA_TENSOR_0_2 = "InertiaTensor_0_2"
 F_INERTIA_TENSOR_1_0 = "InertiaTensor_1_0"
 F_INERTIA_TENSOR_1_1 = "InertiaTensor_1_1"
+F_INERTIA_TENSOR_1_2 = "InertiaTensor_1_2"
+F_INERTIA_TENSOR_2_0 = "InertiaTensor_2_0"
+F_INERTIA_TENSOR_2_1 = "InertiaTensor_2_1"
+F_INERTIA_TENSOR_2_2 = "InertiaTensor_2_2"
 F_INERTIA_TENSOR_EIGENVALUES_0 = "InertiaTensorEigenvalues_0"
 F_INERTIA_TENSOR_EIGENVALUES_1 = "InertiaTensorEigenvalues_1"
+F_INERTIA_TENSOR_EIGENVALUES_2 = "InertiaTensorEigenvalues_2"
 F_NORMALIZED_MOMENT_0_0 = "NormalizedMoment_0_0"
 F_NORMALIZED_MOMENT_0_1 = "NormalizedMoment_0_1"
 F_NORMALIZED_MOMENT_0_2 = "NormalizedMoment_0_2"
@@ -253,6 +261,193 @@ F_SPATIAL_MOMENT_2_0 = "SpatialMoment_2_0"
 F_SPATIAL_MOMENT_2_1 = "SpatialMoment_2_1"
 F_SPATIAL_MOMENT_2_2 = "SpatialMoment_2_2"
 F_SPATIAL_MOMENT_2_3 = "SpatialMoment_2_3"
+
+F_SPATIAL_MOMENT_0_0_0 = "SpatialMoment_0_0_0"
+F_SPATIAL_MOMENT_0_0_1 = "SpatialMoment_0_0_1"
+F_SPATIAL_MOMENT_0_0_2 = "SpatialMoment_0_0_2"
+F_SPATIAL_MOMENT_0_0_3 = "SpatialMoment_0_0_3"
+F_SPATIAL_MOMENT_0_1_0 = "SpatialMoment_0_1_0"
+F_SPATIAL_MOMENT_0_1_1 = "SpatialMoment_0_1_1"
+F_SPATIAL_MOMENT_0_1_2 = "SpatialMoment_0_1_2"
+F_SPATIAL_MOMENT_0_1_3 = "SpatialMoment_0_1_3"
+F_SPATIAL_MOMENT_0_2_0 = "SpatialMoment_0_2_0"
+F_SPATIAL_MOMENT_0_2_1 = "SpatialMoment_0_2_1"
+F_SPATIAL_MOMENT_0_2_2 = "SpatialMoment_0_2_2"
+F_SPATIAL_MOMENT_0_2_3 = "SpatialMoment_0_2_3"
+F_SPATIAL_MOMENT_0_3_0 = "SpatialMoment_0_3_0"
+F_SPATIAL_MOMENT_0_3_1 = "SpatialMoment_0_3_1"
+F_SPATIAL_MOMENT_0_3_2 = "SpatialMoment_0_3_2"
+F_SPATIAL_MOMENT_0_3_3 = "SpatialMoment_0_3_3"
+F_SPATIAL_MOMENT_1_0_0 = "SpatialMoment_1_0_0"
+F_SPATIAL_MOMENT_1_0_1 = "SpatialMoment_1_0_1"
+F_SPATIAL_MOMENT_1_0_2 = "SpatialMoment_1_0_2"
+F_SPATIAL_MOMENT_1_0_3 = "SpatialMoment_1_0_3"
+F_SPATIAL_MOMENT_1_1_0 = "SpatialMoment_1_1_0"
+F_SPATIAL_MOMENT_1_1_1 = "SpatialMoment_1_1_1"
+F_SPATIAL_MOMENT_1_1_2 = "SpatialMoment_1_1_2"
+F_SPATIAL_MOMENT_1_1_3 = "SpatialMoment_1_1_3"
+F_SPATIAL_MOMENT_1_2_0 = "SpatialMoment_1_2_0"
+F_SPATIAL_MOMENT_1_2_1 = "SpatialMoment_1_2_1"
+F_SPATIAL_MOMENT_1_2_2 = "SpatialMoment_1_2_2"
+F_SPATIAL_MOMENT_1_2_3 = "SpatialMoment_1_2_3"
+F_SPATIAL_MOMENT_1_3_0 = "SpatialMoment_1_3_0"
+F_SPATIAL_MOMENT_1_3_1 = "SpatialMoment_1_3_1"
+F_SPATIAL_MOMENT_1_3_2 = "SpatialMoment_1_3_2"
+F_SPATIAL_MOMENT_1_3_3 = "SpatialMoment_1_3_3"
+F_SPATIAL_MOMENT_2_0_0 = "SpatialMoment_2_0_0"
+F_SPATIAL_MOMENT_2_0_1 = "SpatialMoment_2_0_1"
+F_SPATIAL_MOMENT_2_0_2 = "SpatialMoment_2_0_2"
+F_SPATIAL_MOMENT_2_0_3 = "SpatialMoment_2_0_3"
+F_SPATIAL_MOMENT_2_1_0 = "SpatialMoment_2_1_0"
+F_SPATIAL_MOMENT_2_1_1 = "SpatialMoment_2_1_1"
+F_SPATIAL_MOMENT_2_1_2 = "SpatialMoment_2_1_2"
+F_SPATIAL_MOMENT_2_1_3 = "SpatialMoment_2_1_3"
+F_SPATIAL_MOMENT_2_2_0 = "SpatialMoment_2_2_0"
+F_SPATIAL_MOMENT_2_2_1 = "SpatialMoment_2_2_1"
+F_SPATIAL_MOMENT_2_2_2 = "SpatialMoment_2_2_2"
+F_SPATIAL_MOMENT_2_2_3 = "SpatialMoment_2_2_3"
+F_SPATIAL_MOMENT_2_3_0 = "SpatialMoment_2_3_0"
+F_SPATIAL_MOMENT_2_3_1 = "SpatialMoment_2_3_1"
+F_SPATIAL_MOMENT_2_3_2 = "SpatialMoment_2_3_2"
+F_SPATIAL_MOMENT_2_3_3 = "SpatialMoment_2_3_3"
+F_SPATIAL_MOMENT_3_0_0 = "SpatialMoment_3_0_0"
+F_SPATIAL_MOMENT_3_0_1 = "SpatialMoment_3_0_1"
+F_SPATIAL_MOMENT_3_0_2 = "SpatialMoment_3_0_2"
+F_SPATIAL_MOMENT_3_0_3 = "SpatialMoment_3_0_3"
+F_SPATIAL_MOMENT_3_1_0 = "SpatialMoment_3_1_0"
+F_SPATIAL_MOMENT_3_1_1 = "SpatialMoment_3_1_1"
+F_SPATIAL_MOMENT_3_1_2 = "SpatialMoment_3_1_2"
+F_SPATIAL_MOMENT_3_1_3 = "SpatialMoment_3_1_3"
+F_SPATIAL_MOMENT_3_2_0 = "SpatialMoment_3_2_0"
+F_SPATIAL_MOMENT_3_2_1 = "SpatialMoment_3_2_1"
+F_SPATIAL_MOMENT_3_2_2 = "SpatialMoment_3_2_2"
+F_SPATIAL_MOMENT_3_2_3 = "SpatialMoment_3_2_3"
+F_SPATIAL_MOMENT_3_3_0 = "SpatialMoment_3_3_0"
+F_SPATIAL_MOMENT_3_3_1 = "SpatialMoment_3_3_1"
+F_SPATIAL_MOMENT_3_3_2 = "SpatialMoment_3_3_2"
+F_SPATIAL_MOMENT_3_3_3 = "SpatialMoment_3_3_3"
+
+F_NORMALIZED_MOMENT_0_0_0 = "NormalizedMoment_0_0_0"
+F_NORMALIZED_MOMENT_0_0_1 = "NormalizedMoment_0_0_1"
+F_NORMALIZED_MOMENT_0_0_2 = "NormalizedMoment_0_0_2"
+F_NORMALIZED_MOMENT_0_0_3 = "NormalizedMoment_0_0_3"
+F_NORMALIZED_MOMENT_0_1_0 = "NormalizedMoment_0_1_0"
+F_NORMALIZED_MOMENT_0_1_1 = "NormalizedMoment_0_1_1"
+F_NORMALIZED_MOMENT_0_1_2 = "NormalizedMoment_0_1_2"
+F_NORMALIZED_MOMENT_0_1_3 = "NormalizedMoment_0_1_3"
+F_NORMALIZED_MOMENT_0_2_0 = "NormalizedMoment_0_2_0"
+F_NORMALIZED_MOMENT_0_2_1 = "NormalizedMoment_0_2_1"
+F_NORMALIZED_MOMENT_0_2_2 = "NormalizedMoment_0_2_2"
+F_NORMALIZED_MOMENT_0_2_3 = "NormalizedMoment_0_2_3"
+F_NORMALIZED_MOMENT_1_0_0 = "NormalizedMoment_1_0_0"
+F_NORMALIZED_MOMENT_1_0_1 = "NormalizedMoment_1_0_1"
+F_NORMALIZED_MOMENT_1_0_2 = "NormalizedMoment_1_0_2"
+F_NORMALIZED_MOMENT_1_0_3 = "NormalizedMoment_1_0_3"
+F_NORMALIZED_MOMENT_1_1_0 = "NormalizedMoment_1_1_0"
+F_NORMALIZED_MOMENT_1_1_1 = "NormalizedMoment_1_1_1"
+F_NORMALIZED_MOMENT_1_1_2 = "NormalizedMoment_1_1_2"
+F_NORMALIZED_MOMENT_1_1_3 = "NormalizedMoment_1_1_3"
+F_NORMALIZED_MOMENT_1_2_0 = "NormalizedMoment_1_2_0"
+F_NORMALIZED_MOMENT_1_2_1 = "NormalizedMoment_1_2_1"
+F_NORMALIZED_MOMENT_1_2_2 = "NormalizedMoment_1_2_2"
+F_NORMALIZED_MOMENT_1_2_3 = "NormalizedMoment_1_2_3"
+F_NORMALIZED_MOMENT_1_3_0 = "NormalizedMoment_1_3_0"
+F_NORMALIZED_MOMENT_1_3_1 = "NormalizedMoment_1_3_1"
+F_NORMALIZED_MOMENT_1_3_2 = "NormalizedMoment_1_3_2"
+F_NORMALIZED_MOMENT_1_3_3 = "NormalizedMoment_1_3_3"
+F_NORMALIZED_MOMENT_2_0_0 = "NormalizedMoment_2_0_0"
+F_NORMALIZED_MOMENT_2_0_1 = "NormalizedMoment_2_0_1"
+F_NORMALIZED_MOMENT_2_0_2 = "NormalizedMoment_2_0_2"
+F_NORMALIZED_MOMENT_2_0_3 = "NormalizedMoment_2_0_3"
+F_NORMALIZED_MOMENT_2_1_0 = "NormalizedMoment_2_1_0"
+F_NORMALIZED_MOMENT_2_1_1 = "NormalizedMoment_2_1_1"
+F_NORMALIZED_MOMENT_2_1_2 = "NormalizedMoment_2_1_2"
+F_NORMALIZED_MOMENT_2_1_3 = "NormalizedMoment_2_1_3"
+F_NORMALIZED_MOMENT_2_2_0 = "NormalizedMoment_2_2_0"
+F_NORMALIZED_MOMENT_2_2_1 = "NormalizedMoment_2_2_1"
+F_NORMALIZED_MOMENT_2_2_2 = "NormalizedMoment_2_2_2"
+F_NORMALIZED_MOMENT_2_2_3 = "NormalizedMoment_2_2_3"
+F_NORMALIZED_MOMENT_2_3_0 = "NormalizedMoment_2_3_0"
+F_NORMALIZED_MOMENT_2_3_1 = "NormalizedMoment_2_3_1"
+F_NORMALIZED_MOMENT_2_3_2 = "NormalizedMoment_2_3_2"
+F_NORMALIZED_MOMENT_2_3_3 = "NormalizedMoment_2_3_3"
+F_NORMALIZED_MOMENT_3_0_0 = "NormalizedMoment_3_0_0"
+F_NORMALIZED_MOMENT_3_0_1 = "NormalizedMoment_3_0_1"
+F_NORMALIZED_MOMENT_3_0_2 = "NormalizedMoment_3_0_2"
+F_NORMALIZED_MOMENT_3_0_3 = "NormalizedMoment_3_0_3"
+F_NORMALIZED_MOMENT_3_1_0 = "NormalizedMoment_3_1_0"
+F_NORMALIZED_MOMENT_3_1_1 = "NormalizedMoment_3_1_1"
+F_NORMALIZED_MOMENT_3_1_2 = "NormalizedMoment_3_1_2"
+F_NORMALIZED_MOMENT_3_1_3 = "NormalizedMoment_3_1_3"
+F_NORMALIZED_MOMENT_3_2_0 = "NormalizedMoment_3_2_0"
+F_NORMALIZED_MOMENT_3_2_1 = "NormalizedMoment_3_2_1"
+F_NORMALIZED_MOMENT_3_2_2 = "NormalizedMoment_3_2_2"
+F_NORMALIZED_MOMENT_3_2_3 = "NormalizedMoment_3_2_3"
+F_NORMALIZED_MOMENT_3_3_0 = "NormalizedMoment_3_3_0"
+F_NORMALIZED_MOMENT_3_3_1 = "NormalizedMoment_3_3_1"
+F_NORMALIZED_MOMENT_3_3_2 = "NormalizedMoment_3_3_2"
+F_NORMALIZED_MOMENT_3_3_3 = "NormalizedMoment_3_3_3"
+
+F_CENTRAL_MOMENT_0_0_0 = "CentralMoment_0_0_0"
+F_CENTRAL_MOMENT_0_0_1 = "CentralMoment_0_0_1"
+F_CENTRAL_MOMENT_0_0_2 = "CentralMoment_0_0_2"
+F_CENTRAL_MOMENT_0_0_3 = "CentralMoment_0_0_3"
+F_CENTRAL_MOMENT_0_1_0 = "CentralMoment_0_1_0"
+F_CENTRAL_MOMENT_0_1_1 = "CentralMoment_0_1_1"
+F_CENTRAL_MOMENT_0_1_2 = "CentralMoment_0_1_2"
+F_CENTRAL_MOMENT_0_1_3 = "CentralMoment_0_1_3"
+F_CENTRAL_MOMENT_0_2_0 = "CentralMoment_0_2_0"
+F_CENTRAL_MOMENT_0_2_1 = "CentralMoment_0_2_1"
+F_CENTRAL_MOMENT_0_2_2 = "CentralMoment_0_2_2"
+F_CENTRAL_MOMENT_0_2_3 = "CentralMoment_0_2_3"
+F_CENTRAL_MOMENT_1_0_0 = "CentralMoment_1_0_0"
+F_CENTRAL_MOMENT_1_0_1 = "CentralMoment_1_0_1"
+F_CENTRAL_MOMENT_1_0_2 = "CentralMoment_1_0_2"
+F_CENTRAL_MOMENT_1_0_3 = "CentralMoment_1_0_3"
+F_CENTRAL_MOMENT_1_1_0 = "CentralMoment_1_1_0"
+F_CENTRAL_MOMENT_1_1_1 = "CentralMoment_1_1_1"
+F_CENTRAL_MOMENT_1_1_2 = "CentralMoment_1_1_2"
+F_CENTRAL_MOMENT_1_1_3 = "CentralMoment_1_1_3"
+F_CENTRAL_MOMENT_1_2_0 = "CentralMoment_1_2_0"
+F_CENTRAL_MOMENT_1_2_1 = "CentralMoment_1_2_1"
+F_CENTRAL_MOMENT_1_2_2 = "CentralMoment_1_2_2"
+F_CENTRAL_MOMENT_1_2_3 = "CentralMoment_1_2_3"
+F_CENTRAL_MOMENT_1_3_0 = "CentralMoment_1_3_0"
+F_CENTRAL_MOMENT_1_3_1 = "CentralMoment_1_3_1"
+F_CENTRAL_MOMENT_1_3_2 = "CentralMoment_1_3_2"
+F_CENTRAL_MOMENT_1_3_3 = "CentralMoment_1_3_3"
+F_CENTRAL_MOMENT_2_0_0 = "CentralMoment_2_0_0"
+F_CENTRAL_MOMENT_2_0_1 = "CentralMoment_2_0_1"
+F_CENTRAL_MOMENT_2_0_2 = "CentralMoment_2_0_2"
+F_CENTRAL_MOMENT_2_0_3 = "CentralMoment_2_0_3"
+F_CENTRAL_MOMENT_2_1_0 = "CentralMoment_2_1_0"
+F_CENTRAL_MOMENT_2_1_1 = "CentralMoment_2_1_1"
+F_CENTRAL_MOMENT_2_1_2 = "CentralMoment_2_1_2"
+F_CENTRAL_MOMENT_2_1_3 = "CentralMoment_2_1_3"
+F_CENTRAL_MOMENT_2_2_0 = "CentralMoment_2_2_0"
+F_CENTRAL_MOMENT_2_2_1 = "CentralMoment_2_2_1"
+F_CENTRAL_MOMENT_2_2_2 = "CentralMoment_2_2_2"
+F_CENTRAL_MOMENT_2_2_3 = "CentralMoment_2_2_3"
+F_CENTRAL_MOMENT_2_3_0 = "CentralMoment_2_3_0"
+F_CENTRAL_MOMENT_2_3_1 = "CentralMoment_2_3_1"
+F_CENTRAL_MOMENT_2_3_2 = "CentralMoment_2_3_2"
+F_CENTRAL_MOMENT_2_3_3 = "CentralMoment_2_3_3"
+F_CENTRAL_MOMENT_3_0_0 = "CentralMoment_3_0_0"
+F_CENTRAL_MOMENT_3_0_1 = "CentralMoment_3_0_1"
+F_CENTRAL_MOMENT_3_0_2 = "CentralMoment_3_0_2"
+F_CENTRAL_MOMENT_3_0_3 = "CentralMoment_3_0_3"
+F_CENTRAL_MOMENT_3_1_0 = "CentralMoment_3_1_0"
+F_CENTRAL_MOMENT_3_1_1 = "CentralMoment_3_1_1"
+F_CENTRAL_MOMENT_3_1_2 = "CentralMoment_3_1_2"
+F_CENTRAL_MOMENT_3_1_3 = "CentralMoment_3_1_3"
+F_CENTRAL_MOMENT_3_2_0 = "CentralMoment_3_2_0"
+F_CENTRAL_MOMENT_3_2_1 = "CentralMoment_3_2_1"
+F_CENTRAL_MOMENT_3_2_2 = "CentralMoment_3_2_2"
+F_CENTRAL_MOMENT_3_2_3 = "CentralMoment_3_2_3"
+F_CENTRAL_MOMENT_3_3_0 = "CentralMoment_3_3_0"
+F_CENTRAL_MOMENT_3_3_1 = "CentralMoment_3_3_1"
+F_CENTRAL_MOMENT_3_3_2 = "CentralMoment_3_3_2"
+F_CENTRAL_MOMENT_3_3_3 = "CentralMoment_3_3_3"
 
 """The non-Zernike features"""
 F_STD_2D = [
@@ -406,12 +601,13 @@ def get_sizeshape(
            desired_properties += [ "perimeter_crofton" ]
            
     if calculate_advanced:
+        if masks.ndim == 2:
+            desired_properties += [ "moments_hu" ]
         desired_properties += [
             "inertia_tensor",
             "inertia_tensor_eigvals",
             "moments",
             "moments_central",
-            "moments_hu",
             "moments_normalized",
         ]
 
@@ -530,7 +726,7 @@ def get_sizeshape(
             }
            
         if new_features:   
-            new_results = { 
+            results |= { 
                F_PERIMETER_CROFTON: props["perimeter_crofton"],
                F_FILLED_AREA: props["area_filled"] 
             }
@@ -539,22 +735,16 @@ def get_sizeshape(
         props = skimage.measure.regionprops_table(labels, pixels, properties=desired_properties)
 
         # SurfaceArea
-        surface_areas = numpy.zeros(len(props["label"]))
-        for index, label in enumerate(props["label"]):
+        distinct_labels = numpy.unique(labels[labels > 0])
+        surface_areas = numpy.zeros(len(distinct_labels))
+        for idx, label in enumerate(distinct_labels):
             # this seems less elegant than you might wish, given that regionprops returns a slice,
             # but we need to expand the slice out by one voxel in each direction, or surface area freaks out
-            volume = labels[
-                max(props["bbox-0"][index] - 1, 0) : min(
-                    props["bbox-3"][index] + 1, labels.shape[0]
-                ),
-                max(props["bbox-1"][index] - 1, 0) : min(
-                    props["bbox-4"][index] + 1, labels.shape[1]
-                ),
-                max(props["bbox-2"][index] - 1, 0) : min(
-                    props["bbox-5"][index] + 1, labels.shape[2]
-                ),
-            ]
-            volume = volume == label
+            slices = tuple(
+                slice(max(props[f"bbox-{i}"][idx] - 1, 0), min(props[f"bbox-{i+3}"][idx] + 1, labels.shape[i]))
+                for i in range(3)
+            )
+            volume = labels[slices] == label
             spacing = spacing if spacing is not None else (1.0,) * labels.ndim
             verts, faces, _, _ = skimage.measure.marching_cubes(
                 volume,
@@ -562,17 +752,17 @@ def get_sizeshape(
                 spacing=spacing,
                 level=0,
             )
-            surface_areas[index] = skimage.measure.mesh_surface_area(verts, faces)
+            surface_areas[idx] = skimage.measure.mesh_surface_area(verts, faces)
 
         results = results | {
             F_VOLUME: props["area"],
             F_SURFACE_AREA: surface_areas,
-            F_MAJOR_AXIS_LENGTH: props["major_axis_length"],
-            F_MINOR_AXIS_LENGTH: props["minor_axis_length"],
+            F_MAJOR_AXIS_LENGTH: props["axis_major_length"],
+            F_MINOR_AXIS_LENGTH: props["axis_minor_length"],
             F_CENTER_X: props["centroid-2"],
             F_CENTER_Y: props["centroid-1"],
             F_CENTER_Z: props["centroid-0"],
-            F_BBOX_VOLUME: props["bbox_area"],
+            F_BBOX_VOLUME: props["area_bbox"],
             F_MIN_X: props["bbox-2"],
             F_MAX_X: props["bbox-5"],
             F_MIN_Y: props["bbox-1"],
@@ -580,11 +770,210 @@ def get_sizeshape(
             F_MIN_Z: props["bbox-0"],
             F_MAX_Z: props["bbox-3"],
             F_EXTENT: props["extent"],
+            F_SOLIDITY: props["solidity"],
             F_EULER_NUMBER: props["euler_number"],
-            F_EQUIVALENT_DIAMETER: props["equivalent_diameter"],
+            F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
         }
         if calculate_advanced:
-            results[F_SOLIDITY] = props["solidity"]
+            results |= {
+                F_SPATIAL_MOMENT_0_0_0: props["moments-0-0-0"],
+                F_SPATIAL_MOMENT_0_0_1: props["moments-0-0-1"],
+                F_SPATIAL_MOMENT_0_0_2: props["moments-0-0-2"],
+                F_SPATIAL_MOMENT_0_0_3: props["moments-0-0-3"],
+                F_SPATIAL_MOMENT_0_1_0: props["moments-0-1-0"],
+                F_SPATIAL_MOMENT_0_1_1: props["moments-0-1-1"],
+                F_SPATIAL_MOMENT_0_1_2: props["moments-0-1-2"],
+                F_SPATIAL_MOMENT_0_1_3: props["moments-0-1-3"],
+                F_SPATIAL_MOMENT_0_2_0: props["moments-0-2-0"],
+                F_SPATIAL_MOMENT_0_2_1: props["moments-0-2-1"],
+                F_SPATIAL_MOMENT_0_2_2: props["moments-0-2-2"],
+                F_SPATIAL_MOMENT_0_2_3: props["moments-0-2-3"],
+                F_SPATIAL_MOMENT_1_0_0: props["moments-1-0-0"],
+                F_SPATIAL_MOMENT_1_0_1: props["moments-1-0-1"],
+                F_SPATIAL_MOMENT_1_0_2: props["moments-1-0-2"],
+                F_SPATIAL_MOMENT_1_0_3: props["moments-1-0-3"],
+                F_SPATIAL_MOMENT_1_1_0: props["moments-1-1-0"],
+                F_SPATIAL_MOMENT_1_1_1: props["moments-1-1-1"],
+                F_SPATIAL_MOMENT_1_1_2: props["moments-1-1-2"],
+                F_SPATIAL_MOMENT_1_1_3: props["moments-1-1-3"],
+                F_SPATIAL_MOMENT_1_2_0: props["moments-1-2-0"],
+                F_SPATIAL_MOMENT_1_2_1: props["moments-1-2-1"],
+                F_SPATIAL_MOMENT_1_2_2: props["moments-1-2-2"],
+                F_SPATIAL_MOMENT_1_2_3: props["moments-1-2-3"],
+                F_SPATIAL_MOMENT_1_3_0: props["moments-1-3-0"],
+                F_SPATIAL_MOMENT_1_3_1: props["moments-1-3-1"],
+                F_SPATIAL_MOMENT_1_3_2: props["moments-1-3-2"],
+                F_SPATIAL_MOMENT_1_3_3: props["moments-1-3-3"],
+                F_SPATIAL_MOMENT_2_0_0: props["moments-2-0-0"],
+                F_SPATIAL_MOMENT_2_0_1: props["moments-2-0-1"],
+                F_SPATIAL_MOMENT_2_0_2: props["moments-2-0-2"],
+                F_SPATIAL_MOMENT_2_0_3: props["moments-2-0-3"],
+                F_SPATIAL_MOMENT_2_1_0: props["moments-2-1-0"],
+                F_SPATIAL_MOMENT_2_1_1: props["moments-2-1-1"],
+                F_SPATIAL_MOMENT_2_1_2: props["moments-2-1-2"],
+                F_SPATIAL_MOMENT_2_1_3: props["moments-2-1-3"],
+                F_SPATIAL_MOMENT_2_2_0: props["moments-2-2-0"],
+                F_SPATIAL_MOMENT_2_2_1: props["moments-2-2-1"],
+                F_SPATIAL_MOMENT_2_2_2: props["moments-2-2-2"],
+                F_SPATIAL_MOMENT_2_2_3: props["moments-2-2-3"],
+                F_SPATIAL_MOMENT_2_3_0: props["moments-2-3-0"],
+                F_SPATIAL_MOMENT_2_3_1: props["moments-2-3-1"],
+                F_SPATIAL_MOMENT_2_3_2: props["moments-2-3-2"],
+                F_SPATIAL_MOMENT_2_3_3: props["moments-2-3-3"],
+                F_SPATIAL_MOMENT_3_0_0: props["moments-3-0-0"],
+                F_SPATIAL_MOMENT_3_0_1: props["moments-3-0-1"],
+                F_SPATIAL_MOMENT_3_0_2: props["moments-3-0-2"],
+                F_SPATIAL_MOMENT_3_0_3: props["moments-3-0-3"],
+                F_SPATIAL_MOMENT_3_1_0: props["moments-3-1-0"],
+                F_SPATIAL_MOMENT_3_1_1: props["moments-3-1-1"],
+                F_SPATIAL_MOMENT_3_1_2: props["moments-3-1-2"],
+                F_SPATIAL_MOMENT_3_1_3: props["moments-3-1-3"],
+                F_SPATIAL_MOMENT_3_2_0: props["moments-3-2-0"],
+                F_SPATIAL_MOMENT_3_2_1: props["moments-3-2-1"],
+                F_SPATIAL_MOMENT_3_2_2: props["moments-3-2-2"],
+                F_SPATIAL_MOMENT_3_2_3: props["moments-3-2-3"],
+                F_SPATIAL_MOMENT_3_3_0: props["moments-3-3-0"],
+                F_SPATIAL_MOMENT_3_3_1: props["moments-3-3-1"],
+                F_SPATIAL_MOMENT_3_3_2: props["moments-3-3-2"],
+                F_SPATIAL_MOMENT_3_3_3: props["moments-3-3-3"],
+                F_CENTRAL_MOMENT_0_0_0: props["moments_central-0-0-0"],
+                F_CENTRAL_MOMENT_0_0_1: props["moments_central-0-0-1"],
+                F_CENTRAL_MOMENT_0_0_2: props["moments_central-0-0-2"],
+                F_CENTRAL_MOMENT_0_0_3: props["moments_central-0-0-3"],
+                F_CENTRAL_MOMENT_0_1_0: props["moments_central-0-1-0"],
+                F_CENTRAL_MOMENT_0_1_1: props["moments_central-0-1-1"],
+                F_CENTRAL_MOMENT_0_1_2: props["moments_central-0-1-2"],
+                F_CENTRAL_MOMENT_0_1_3: props["moments_central-0-1-3"],
+                F_CENTRAL_MOMENT_0_2_0: props["moments_central-0-2-0"],
+                F_CENTRAL_MOMENT_0_2_1: props["moments_central-0-2-1"],
+                F_CENTRAL_MOMENT_0_2_2: props["moments_central-0-2-2"],
+                F_CENTRAL_MOMENT_0_2_3: props["moments_central-0-2-3"],
+                F_CENTRAL_MOMENT_1_0_0: props["moments_central-1-0-0"],
+                F_CENTRAL_MOMENT_1_0_1: props["moments_central-1-0-1"],
+                F_CENTRAL_MOMENT_1_0_2: props["moments_central-1-0-2"],
+                F_CENTRAL_MOMENT_1_0_3: props["moments_central-1-0-3"],
+                F_CENTRAL_MOMENT_1_1_0: props["moments_central-1-1-0"],
+                F_CENTRAL_MOMENT_1_1_1: props["moments_central-1-1-1"],
+                F_CENTRAL_MOMENT_1_1_2: props["moments_central-1-1-2"],
+                F_CENTRAL_MOMENT_1_1_3: props["moments_central-1-1-3"],
+                F_CENTRAL_MOMENT_1_2_0: props["moments_central-1-2-0"],
+                F_CENTRAL_MOMENT_1_2_1: props["moments_central-1-2-1"],
+                F_CENTRAL_MOMENT_1_2_2: props["moments_central-1-2-2"],
+                F_CENTRAL_MOMENT_1_2_3: props["moments_central-1-2-3"],
+                F_CENTRAL_MOMENT_1_3_0: props["moments_central-1-3-0"],
+                F_CENTRAL_MOMENT_1_3_1: props["moments_central-1-3-1"],
+                F_CENTRAL_MOMENT_1_3_2: props["moments_central-1-3-2"],
+                F_CENTRAL_MOMENT_1_3_3: props["moments_central-1-3-3"],
+                F_CENTRAL_MOMENT_2_0_0: props["moments_central-2-0-0"],
+                F_CENTRAL_MOMENT_2_0_1: props["moments_central-2-0-1"],
+                F_CENTRAL_MOMENT_2_0_2: props["moments_central-2-0-2"],
+                F_CENTRAL_MOMENT_2_0_3: props["moments_central-2-0-3"],
+                F_CENTRAL_MOMENT_2_1_0: props["moments_central-2-1-0"],
+                F_CENTRAL_MOMENT_2_1_1: props["moments_central-2-1-1"],
+                F_CENTRAL_MOMENT_2_1_2: props["moments_central-2-1-2"],
+                F_CENTRAL_MOMENT_2_1_3: props["moments_central-2-1-3"],
+                F_CENTRAL_MOMENT_2_2_0: props["moments_central-2-2-0"],
+                F_CENTRAL_MOMENT_2_2_1: props["moments_central-2-2-1"],
+                F_CENTRAL_MOMENT_2_2_2: props["moments_central-2-2-2"],
+                F_CENTRAL_MOMENT_2_2_3: props["moments_central-2-2-3"],
+                F_CENTRAL_MOMENT_2_3_0: props["moments_central-2-3-0"],
+                F_CENTRAL_MOMENT_2_3_1: props["moments_central-2-3-1"],
+                F_CENTRAL_MOMENT_2_3_2: props["moments_central-2-3-2"],
+                F_CENTRAL_MOMENT_2_3_3: props["moments_central-2-3-3"],
+                F_CENTRAL_MOMENT_3_0_0: props["moments_central-3-0-0"],
+                F_CENTRAL_MOMENT_3_0_1: props["moments_central-3-0-1"],
+                F_CENTRAL_MOMENT_3_0_2: props["moments_central-3-0-2"],
+                F_CENTRAL_MOMENT_3_0_3: props["moments_central-3-0-3"],
+                F_CENTRAL_MOMENT_3_1_0: props["moments_central-3-1-0"],
+                F_CENTRAL_MOMENT_3_1_1: props["moments_central-3-1-1"],
+                F_CENTRAL_MOMENT_3_1_2: props["moments_central-3-1-2"],
+                F_CENTRAL_MOMENT_3_1_3: props["moments_central-3-1-3"],
+                F_CENTRAL_MOMENT_3_2_0: props["moments_central-3-2-0"],
+                F_CENTRAL_MOMENT_3_2_1: props["moments_central-3-2-1"],
+                F_CENTRAL_MOMENT_3_2_2: props["moments_central-3-2-2"],
+                F_CENTRAL_MOMENT_3_2_3: props["moments_central-3-2-3"],
+                F_CENTRAL_MOMENT_3_3_0: props["moments_central-3-3-0"],
+                F_CENTRAL_MOMENT_3_3_1: props["moments_central-3-3-1"],
+                F_CENTRAL_MOMENT_3_3_2: props["moments_central-3-3-2"],
+                F_CENTRAL_MOMENT_3_3_3: props["moments_central-3-3-3"],
+                F_NORMALIZED_MOMENT_0_0_0: props["moments_normalized-0-0-0"],
+                F_NORMALIZED_MOMENT_0_0_1: props["moments_normalized-0-0-1"],
+                F_NORMALIZED_MOMENT_0_0_2: props["moments_normalized-0-0-2"],
+                F_NORMALIZED_MOMENT_0_0_3: props["moments_normalized-0-0-3"],
+                F_NORMALIZED_MOMENT_0_1_0: props["moments_normalized-0-1-0"],
+                F_NORMALIZED_MOMENT_0_1_1: props["moments_normalized-0-1-1"],
+                F_NORMALIZED_MOMENT_0_1_2: props["moments_normalized-0-1-2"],
+                F_NORMALIZED_MOMENT_0_1_3: props["moments_normalized-0-1-3"],
+                F_NORMALIZED_MOMENT_0_2_0: props["moments_normalized-0-2-0"],
+                F_NORMALIZED_MOMENT_0_2_1: props["moments_normalized-0-2-1"],
+                F_NORMALIZED_MOMENT_0_2_2: props["moments_normalized-0-2-2"],
+                F_NORMALIZED_MOMENT_0_2_3: props["moments_normalized-0-2-3"],
+                F_NORMALIZED_MOMENT_1_0_0: props["moments_normalized-1-0-0"],
+                F_NORMALIZED_MOMENT_1_0_1: props["moments_normalized-1-0-1"],
+                F_NORMALIZED_MOMENT_1_0_2: props["moments_normalized-1-0-2"],
+                F_NORMALIZED_MOMENT_1_0_3: props["moments_normalized-1-0-3"],
+                F_NORMALIZED_MOMENT_1_1_0: props["moments_normalized-1-1-0"],
+                F_NORMALIZED_MOMENT_1_1_1: props["moments_normalized-1-1-1"],
+                F_NORMALIZED_MOMENT_1_1_2: props["moments_normalized-1-1-2"],
+                F_NORMALIZED_MOMENT_1_1_3: props["moments_normalized-1-1-3"],
+                F_NORMALIZED_MOMENT_1_2_0: props["moments_normalized-1-2-0"],
+                F_NORMALIZED_MOMENT_1_2_1: props["moments_normalized-1-2-1"],
+                F_NORMALIZED_MOMENT_1_2_2: props["moments_normalized-1-2-2"],
+                F_NORMALIZED_MOMENT_1_2_3: props["moments_normalized-1-2-3"],
+                F_NORMALIZED_MOMENT_1_3_0: props["moments_normalized-1-3-0"],
+                F_NORMALIZED_MOMENT_1_3_1: props["moments_normalized-1-3-1"],
+                F_NORMALIZED_MOMENT_1_3_2: props["moments_normalized-1-3-2"],
+                F_NORMALIZED_MOMENT_1_3_3: props["moments_normalized-1-3-3"],
+                F_NORMALIZED_MOMENT_2_0_0: props["moments_normalized-2-0-0"],
+                F_NORMALIZED_MOMENT_2_0_1: props["moments_normalized-2-0-1"],
+                F_NORMALIZED_MOMENT_2_0_2: props["moments_normalized-2-0-2"],
+                F_NORMALIZED_MOMENT_2_0_3: props["moments_normalized-2-0-3"],
+                F_NORMALIZED_MOMENT_2_1_0: props["moments_normalized-2-1-0"],
+                F_NORMALIZED_MOMENT_2_1_1: props["moments_normalized-2-1-1"],
+                F_NORMALIZED_MOMENT_2_1_2: props["moments_normalized-2-1-2"],
+                F_NORMALIZED_MOMENT_2_1_3: props["moments_normalized-2-1-3"],
+                F_NORMALIZED_MOMENT_2_2_0: props["moments_normalized-2-2-0"],
+                F_NORMALIZED_MOMENT_2_2_1: props["moments_normalized-2-2-1"],
+                F_NORMALIZED_MOMENT_2_2_2: props["moments_normalized-2-2-2"],
+                F_NORMALIZED_MOMENT_2_2_3: props["moments_normalized-2-2-3"],
+                F_NORMALIZED_MOMENT_2_3_0: props["moments_normalized-2-3-0"],
+                F_NORMALIZED_MOMENT_2_3_1: props["moments_normalized-2-3-1"],
+                F_NORMALIZED_MOMENT_2_3_2: props["moments_normalized-2-3-2"],
+                F_NORMALIZED_MOMENT_2_3_3: props["moments_normalized-2-3-3"],
+                F_NORMALIZED_MOMENT_3_0_0: props["moments_normalized-3-0-0"],
+                F_NORMALIZED_MOMENT_3_0_1: props["moments_normalized-3-0-1"],
+                F_NORMALIZED_MOMENT_3_0_2: props["moments_normalized-3-0-2"],
+                F_NORMALIZED_MOMENT_3_0_3: props["moments_normalized-3-0-3"],
+                F_NORMALIZED_MOMENT_3_1_0: props["moments_normalized-3-1-0"],
+                F_NORMALIZED_MOMENT_3_1_1: props["moments_normalized-3-1-1"],
+                F_NORMALIZED_MOMENT_3_1_2: props["moments_normalized-3-1-2"],
+                F_NORMALIZED_MOMENT_3_1_3: props["moments_normalized-3-1-3"],
+                F_NORMALIZED_MOMENT_3_2_0: props["moments_normalized-3-2-0"],
+                F_NORMALIZED_MOMENT_3_2_1: props["moments_normalized-3-2-1"],
+                F_NORMALIZED_MOMENT_3_2_2: props["moments_normalized-3-2-2"],
+                F_NORMALIZED_MOMENT_3_2_3: props["moments_normalized-3-2-3"],
+                F_NORMALIZED_MOMENT_3_3_0: props["moments_normalized-3-3-0"],
+                F_NORMALIZED_MOMENT_3_3_1: props["moments_normalized-3-3-1"],
+                F_NORMALIZED_MOMENT_3_3_2: props["moments_normalized-3-3-2"],
+                F_NORMALIZED_MOMENT_3_3_3: props["moments_normalized-3-3-3"],
+                F_INERTIA_TENSOR_0_0: props["inertia_tensor-0-0"],
+                F_INERTIA_TENSOR_0_1: props["inertia_tensor-0-1"],
+                F_INERTIA_TENSOR_0_2: props["inertia_tensor-0-2"],
+                F_INERTIA_TENSOR_1_0: props["inertia_tensor-1-0"],
+                F_INERTIA_TENSOR_1_1: props["inertia_tensor-1-1"],
+                F_INERTIA_TENSOR_1_2: props["inertia_tensor-1-2"],
+                F_INERTIA_TENSOR_2_0: props["inertia_tensor-2-0"],
+                F_INERTIA_TENSOR_2_1: props["inertia_tensor-2-1"],
+                F_INERTIA_TENSOR_2_2: props["inertia_tensor-2-2"],
+                F_INERTIA_TENSOR_EIGENVALUES_0: props["inertia_tensor_eigvals-0"],
+                F_INERTIA_TENSOR_EIGENVALUES_1: props["inertia_tensor_eigvals-1"],
+                F_INERTIA_TENSOR_EIGENVALUES_2: props["inertia_tensor_eigvals-2"],
+            }
+        if new_features:
+            results |= {
+                F_FILLED_VOLUME: props["area_filled"],
+                F_CONVEX_VOLUME: props["area_convex"]
+            }
 
     return results
 
