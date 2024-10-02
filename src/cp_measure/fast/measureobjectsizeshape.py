@@ -575,7 +575,6 @@ def get_sizeshape(
         "area",
         "area_bbox",
         "area_convex",
-        "area_filled",
         "equivalent_diameter_area",
         "bbox",
         "centroid",
@@ -583,10 +582,9 @@ def get_sizeshape(
         "extent",
         "axis_major_length",
         "axis_minor_length",
-        "solidity",
     ]
 
-   # Features not in CellProfiler4
+   # Features not in CellProfiler 4
     if new_features:
        desired_properties += [ "area_filled" ]
        
@@ -596,21 +594,36 @@ def get_sizeshape(
             "eccentricity",
             "orientation",
             "perimeter",
+            "solidity",
         ]
         if new_features:
            desired_properties += [ "perimeter_crofton" ]
            
     if calculate_advanced:
         if masks.ndim == 2:
-            desired_properties += [ "moments_hu" ]
-        desired_properties += [
-            "inertia_tensor",
-            "inertia_tensor_eigvals",
-            "moments",
-            "moments_central",
-            "moments_normalized",
-        ]
+            desired_properties += [
+                "inertia_tensor",
+                "inertia_tensor_eigvals",
+                "moments",
+                "moments_hu",
+                "moments_central",
+                "moments_normalized",
+            ]
 
+        else:
+            desired_properties += [ "solidity" ]
+            
+            # These advanced props were not in CP4 for 3D images
+            if new_features:
+                desired_properties += [
+                    "inertia_tensor",
+                    "inertia_tensor_eigvals",
+                    "moments",
+                    "moments_hu",
+                    "moments_central",
+                    "moments_normalized",
+                ]
+                
     labels = masks
     nobjects = (numpy.unique(masks)>0).sum()
     results = {}
@@ -642,7 +655,6 @@ def get_sizeshape(
             F_AREA: props["area"],
             F_BBOX_AREA: props["area_bbox"],
             F_CONVEX_AREA: props["area_convex"],
-            F_FILLED_AREA: props["area_filled"],
             F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
             F_PERIMETER: props["perimeter"],
             F_MAJOR_AXIS_LENGTH: props["axis_major_length"],
@@ -651,7 +663,6 @@ def get_sizeshape(
             F_ORIENTATION: props["orientation"] * (180 / numpy.pi),
             F_CENTER_X: props["centroid-1"],
             F_CENTER_Y: props["centroid-0"],
-            F_BBOX_AREA: props["area_bbox"],
             F_MIN_X: props["bbox-1"],
             F_MAX_X: props["bbox-3"],
             F_MIN_Y: props["bbox-0"],
@@ -665,9 +676,14 @@ def get_sizeshape(
             F_MEAN_RADIUS: mean_radius,
             F_MEDIAN_RADIUS: median_radius,
         }
+        
         if new_features:
-            results |= { F_FILLED_AREA: props["area_filled"] }
+            results |= {
+                F_CONVEX_AREA: props["area_convex"],
+                F_FILLED_AREA: props["area_filled"],
+            }
 
+        
         if calculate_advanced:
             results |= {
                 F_SPATIAL_MOMENT_0_0: props["moments-0-0"],
@@ -770,12 +786,12 @@ def get_sizeshape(
             F_MIN_Z: props["bbox-0"],
             F_MAX_Z: props["bbox-3"],
             F_EXTENT: props["extent"],
-            F_SOLIDITY: props["solidity"],
             F_EULER_NUMBER: props["euler_number"],
             F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
         }
         if calculate_advanced:
             results |= {
+                F_SOLIDITY: props["solidity"],
                 F_SPATIAL_MOMENT_0_0_0: props["moments-0-0-0"],
                 F_SPATIAL_MOMENT_0_0_1: props["moments-0-0-1"],
                 F_SPATIAL_MOMENT_0_0_2: props["moments-0-0-2"],
