@@ -3,7 +3,7 @@ Homepage = "https://github.com/broadinstitute/"
 
 [tool.poetry]
 name = "cp_measure"
-version = "0.1.3"
+version = "0.1.4"
 description = """
 cp-measure implements CellProfiler Measurements. You can integrate them to your workflow or use them from CellProfiler 5 once they are integrated there."""
 authors = ["Alan Munoz"]
