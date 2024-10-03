@@ -13,8 +13,8 @@ packages = [{include = "cp_measure", from = "src"}]
 [tool.poetry.dependencies]
 python = ">=3.9,<3.12"
 numpy = "^1.24.4"
-scikit-image = "^0.20.0"
-scipy = ">=1.9.1,<1.11"
+scikit-image = ">=0.20.0"
+scipy = ">=1.9.1"
 mahotas = "^1.4.13"
 centrosome = ">=1.2.3"
 
