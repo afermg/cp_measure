@@ -1,9 +1,9 @@
 [project.urls]
-Homepage = "https://github.com/broadinstitute/"
+Homepage = "https://github.com/afermg/cp_measure"
 
 [tool.poetry]
 name = "cp_measure"
-version = "0.1.4"
+version = "0.1.6"
 description = """
 cp-measure implements CellProfiler Measurements. You can integrate them to your workflow or use them from CellProfiler 5 once they are integrated there."""
 authors = ["Alan Munoz"]
@@ -24,3 +24,6 @@ jupyter = "^1.0.0"
 jupytext = "^1.15.0"
 pytest = "^7.4.1"
 
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

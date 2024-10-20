@@ -16,7 +16,7 @@ If you want a development environment.
 #+end_src
 
 ** Usage
-Commonly users want to calculate all the features. There are four type of measurements, based on their inputs:
+Users usually want to calculate all the features. There are four type of measurements, based on their inputs:
 - Type 1: 1 image + 1 set of masks (e.g., intensity)
 - Type 2: 2 images + 1 set of masks (e.g., colocalization)
 - Type 3: 2 sets of masks (e.g., number of neighbors)
@@ -183,8 +183,7 @@ And for Type 2 functions:
 - measurecolocalization.get_correlation_manders_fold
 - measurecolocalization.get_correlation_rwc
 - measurecolocalization.get_correlation_costes
-- measurecolocalization.get_correlation_overlap
-  
+- measurecolocalization.get_correlation_overlap  
 
 * Pending measurements 
 You can follow progress [[https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing][here]].
@@ -194,8 +193,9 @@ You can follow progress [[https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MU
 *** Pending
 - Type 3 and 4 measurements
   
+  
 *** Additional notes
-The Image-wide functions will not be implemented directly, as they were originally implemented as additional functions to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
+The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
 
 
 * Additional notes
