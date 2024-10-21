@@ -132,6 +132,9 @@ def get_radial_distribution(
         radius will be counted in an overflow bin. The radius is measured in pixels.
     """
 
+    if labels.dtype == bool:
+        labels = labels.astype(numpy.integer)
+
     unique_labels = numpy.unique(labels)
     nobjects = len(unique_labels[unique_labels>0])
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
