@@ -5,7 +5,7 @@ MeasureObjectNeighbors
 **MeasureObjectNeighbors** calculates how many neighbors each object
 has and records various properties about the neighbors’ relationships,
 including the percentage of an object’s edge pixels that touch a
-neighbor. Please note that the distances reported for object 
+neighbor. Please note that the distances reported for object
 measurements are center-to-center distances, not edge-to-edge distances.
 
 Given an image with objects identified (e.g., nuclei or cells), this
@@ -64,7 +64,6 @@ will be positive, but there may not be a corresponding
 
 """
 
-import matplotlib.cm
 import numpy
 import scipy
 import scipy.ndimage
@@ -102,8 +101,9 @@ S_EXPANDED = "Expanded"
 S_ADJACENT = "Adjacent"
 
 
-
-def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_method: str, distance: int):
+def measureobjectneighbors(
+    masks1: numpy.ndarray, masks2: numpy.ndarray, distance_method: str, distance: int
+):
     """
     Calculate neighbors of objects based on different methods.
 
@@ -122,8 +122,8 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
            any of their boundary pixels are adjacent after expansion.
         -  *%(D_WITHIN)s:* Each object is expanded by the number of pixels you
            specify. Two objects are neighbors if they have adjacent pixels after
-           expansion. Note that *all* objects are expanded by this amount (e.g., 
-           if this distance is set to 10, a pair of objects will count as 
+           expansion. Note that *all* objects are expanded by this amount (e.g.,
+           if this distance is set to 10, a pair of objects will count as
            neighbors if their edges are 20 pixels apart or closer).
 
         For *%(D_ADJACENT)s* and *%(D_EXPAND)s*, the
@@ -142,10 +142,10 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
     Returns
     -------
     List of dictionaries with overlap features.
-    
+
     """
 
-    dimensions = masks1.ndim 
+    dimensions = masks1.ndim
     # has_pixels = masks.any()
     labels = masks1
     neighbor_labels = masks2
@@ -153,7 +153,7 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
     # neighbor_labels = neighbor_objects.small_removed_segmented
     # # neighbor_kept_labels = neighbor_objects.segmented
     # assert isinstance(neighbor_objects, Objects)
-    
+
     nobjects = numpy.max(labels)
     nneighbors = numpy.max(neighbor_labels)
 
@@ -167,7 +167,8 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
     second_y_vector = numpy.zeros((nobjects,))
     angle = numpy.zeros((nobjects,))
     percent_touching = numpy.zeros((nobjects,))
-    expanded_labels = None
+    # expanded_labels = None
+
     if distance_method == D_EXPAND:
         # Find the i,j coordinates of the nearest foreground point
         # to every background point
@@ -185,19 +186,20 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
             labels = labels[k, i, j]
         # expanded_labels = labels  # for display
         distance = 1  # dilate once to make touching edges overlap
-        scale = S_EXPANDED
-        # if neighbors_are_objects:
-        #     neighbor_labels = labels.copy()
+    # These scale assignments are never used
+    # scale = S_EXPANDED
+    # if neighbors_are_objects:
+    #     neighbor_labels = labels.copy()
     elif distance_method == D_WITHIN:
         distance = distance
-        scale = str(distance)
+        # scale = str(distance)
     elif distance_method == D_ADJACENT:
         distance = 1
-        scale = S_ADJACENT
+        # scale = S_ADJACENT
     else:
         raise ValueError("Unknown distance method: %s" % distance_method)
     # if nneighbors > (1 if neighbors_are_objects else 0):
-    if nneighbors > (1 if neighbors_are_objects else 0):
+    if nneighbors > 1:
         first_objects = []
         second_objects = []
         object_indexes = numpy.arange(nobjects, dtype=numpy.int32) + 1
@@ -207,10 +209,9 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
         # nearest neighbors
         #
         ocenters = centers_of_labels(labels).transpose()
-        ncenters = centers_of_labels(neighbor_objects).transpose()
-        areas = fix(
-            scipy.ndimage.sum(numpy.ones(labels.shape), labels, object_indexes)
-        )
+        ncenters = centers_of_labels(neighbor_labels).transpose()
+        # This is not used even in original implementation
+        # areas = fix(scipy.ndimage.sum(numpy.ones(labels.shape), labels, object_indexes))
         perimeter_outlines = outline(labels)
         perimeters = fix(
             scipy.ndimage.sum(
@@ -228,11 +229,14 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
         # (0, 1, 2) unless there are less than 3 neighbors
         partition_keys = tuple(range(min(nneighbors, 3)))
         for i in range(nobjects):
-            dr = numpy.sqrt((ocenters[i, 0] - ncenters[j, 0])**2 + (ocenters[i, 1] - ncenters[j, 1])**2)
+            dr = numpy.sqrt(
+                (ocenters[i, 0] - ncenters[j, 0]) ** 2
+                + (ocenters[i, 1] - ncenters[j, 1]) ** 2
+            )
             order[i, :] = numpy.argpartition(dr, partition_keys)[:3]
 
         # first_neighbor = 1 if neighbors_are_objects else 0
-        # neighbors are objects because 
+        # neighbors are objects because
         first_neighbor = 1
         first_object_index = order[:, first_neighbor]
         first_x_vector = ncenters[first_object_index, 1] - ocenters[:, 1]
@@ -247,7 +251,7 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
             # Project the unit vector v1 against the unit vector v2
             #
             dot = numpy.sum(v1 * v2, 0) / numpy.sqrt(
-                numpy.sum(v1 ** 2, 0) * numpy.sum(v2 ** 2, 0)
+                numpy.sum(v1**2, 0) * numpy.sum(v2**2, 0)
             )
             angle = numpy.arccos(dot) * 180.0 / numpy.pi
 
@@ -318,6 +322,11 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
         # Calculate which ones overlap "index"
         # Calculate how much overlap there is of others to "index"
         #
+
+        # This originally linked labels to post-filter labels
+        # TODO replace with simpler procedure
+        _, object_numbers = relate_labels(labels, labels)
+        _, neighbor_numbers = relate_labels(neighbor_labels, neighbor_labels)
         for object_number in object_numbers:
             if object_number == 0:
                 #
@@ -360,7 +369,7 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
             neighbors = numpy.unique(npatch[extended])
             neighbors = neighbors[neighbors != 0]
             # if neighbors_are_objects:
-                # neighbors = neighbors[neighbors != object_number]
+            # neighbors = neighbors[neighbors != object_number]
             neighbors = neighbors[neighbors != object_number]
             nc = len(neighbors)
             neighbor_count[index] = nc
@@ -390,31 +399,27 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
                     ]
                     == object_number
                 )
-            if neighbors_are_objects:
-                extendme = (patch != 0) & (patch != object_number)
-                if distance <= 5:
-                    extended = scipy.ndimage.binary_dilation(
-                        extendme, strel_touching
-                    )
-                else:
-                    extended = (
-                        scipy.signal.fftconvolve(
-                            extendme, strel_touching, mode="same"
-                        )
-                        > 0.5
-                    )
+            # if neighbors_are_objects:
+            extendme = (patch != 0) & (patch != object_number)
+            if distance <= 5:
+                extended = scipy.ndimage.binary_dilation(extendme, strel_touching)
             else:
-                if distance <= 5:
-                    extended = scipy.ndimage.binary_dilation(
-                        (npatch != 0), strel_touching
-                    )
-                else:
-                    extended = (
-                        scipy.signal.fftconvolve(
-                            (npatch != 0), strel_touching, mode="same"
-                        )
-                        > 0.5
-                    )
+                extended = (
+                    scipy.signal.fftconvolve(extendme, strel_touching, mode="same")
+                    > 0.5
+                )
+            # else:
+            #     if distance <= 5:
+            #         extended = scipy.ndimage.binary_dilation(
+            #             (npatch != 0), strel_touching
+            #         )
+            #     else:
+            #         extended = (
+            #             scipy.signal.fftconvolve(
+            #                 (npatch != 0), strel_touching, mode="same"
+            #             )
+            #             > 0.5
+            #         )
             overlap = numpy.sum(outline_patch & extended)
             pixel_count[index] = overlap
         if sum([len(x) for x in first_objects]) > 0:
@@ -468,13 +473,14 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
         # order[:,1] should be the nearest neighbor
         # order[:,2] should be the next nearest neighbor
         #
-        order = numpy.lexsort([distance_matrix]).astype(
-            first_object_number.dtype
-        )
+        order = numpy.lexsort([distance_matrix]).astype(first_object_number.dtype)
+        # Outcomments are due to these conditions being assumed
         # if neighbors_are_objects:
-        first_object_number[has_pixels] = order[has_pixels, 1] + 1
-        # if nkept_objects > 2:
-        second_object_number[has_pixels] = order[has_pixels, 2] + 1
+        # first_object_number[has_pixels] = order[has_pixels, 1] + 1
+        first_object_number = order[:, 1] + 1
+        # if nkept_objects > :2
+        # second_object_number[has_pixels] = order[has_pixels, 2] + 1
+        second_object_number = order[:, 2] + 1
         # else:
         #     first_object_number[has_pixels] = order[has_pixels, 0] + 1
         #     if order.shape[1] > 1:
@@ -489,9 +495,9 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
     # the final number set.
     #
     neighbor_count = neighbor_count[object_indexes]
-    neighbor_count[~has_pixels] = 0
+    # neighbor_count[~has_pixels] = 0
     percent_touching = percent_touching[object_indexes]
-    percent_touching[~has_pixels] = 0
+    # percent_touching[~has_pixels] = 0
     first_x_vector = first_x_vector[object_indexes]
     second_x_vector = second_x_vector[object_indexes]
     first_y_vector = first_y_vector[object_indexes]
@@ -500,182 +506,66 @@ def measureobjectneighbors(masks1:numpy.ndarray, masks2:numpy.ndarray, distance_
     #
     # Record the measurements
     #
-    assert isinstance(workspace, Workspace)
-    m = workspace.measurements
-    assert isinstance(m, Measurements)
-    image_set = workspace.image_set
+    # assert isinstance(workspace, Workspace)
+    # m = workspace.measurements
+    # assert isinstance(m, Measurements)
+    # image_set = workspace.image_set
     features_and_data = [
         (M_NUMBER_OF_NEIGHBORS, neighbor_count),
         (M_FIRST_CLOSEST_OBJECT_NUMBER, first_object_number),
         (
             M_FIRST_CLOSEST_DISTANCE,
-            numpy.sqrt(first_x_vector ** 2 + first_y_vector ** 2),
+            numpy.sqrt(first_x_vector**2 + first_y_vector**2),
         ),
         (M_SECOND_CLOSEST_OBJECT_NUMBER, second_object_number),
         (
             M_SECOND_CLOSEST_DISTANCE,
-            numpy.sqrt(second_x_vector ** 2 + second_y_vector ** 2),
+            numpy.sqrt(second_x_vector**2 + second_y_vector**2),
         ),
         (M_ANGLE_BETWEEN_NEIGHBORS, angle),
         (M_PERCENT_TOUCHING, percent_touching),
     ]
+    result = {}
     for feature_name, data in features_and_data:
-        m.add_measurement(
-            self.object_name.value, self.get_measurement_name(feature_name), data
-        )
-    if len(first_objects) > 0:
-        m.add_relate_measurement(
-            self.module_num,
-            NEIGHBORS,
-            self.object_name.value,
-            self.object_name.value
-            if neighbors_are_objects
-            else self.neighbors_name.value,
-            m.image_set_number * numpy.ones(first_objects.shape, int),
-            first_objects,
-            m.image_set_number * numpy.ones(second_objects.shape, int),
-            second_objects,
-        )
+        result[get_measurement_name(feature_name, distance_method, distance)] = data
+    # TODO add related measurements
+    # if len(first_objects) > 0:
+    #     m.add_relate_measurement(
+    #         self.module_num,
+    #         NEIGHBORS,
+    #         self.object_name.value,
+    #         self.object_name.value
+    #         if neighbors_are_objects
+    #         else self.neighbors_name.value,
+    #         m.image_set_number * numpy.ones(first_objects.shape, int),
+    #         first_objects,
+    #         m.image_set_number * numpy.ones(second_objects.shape, int),
+    #         second_objects,
+    #     )
 
-    labels = kept_labels
-    neighbor_labels = neighbor_kept_labels
+    # labels = kept_labels
+    # neighbor_labels = neighbor_kept_labels
+    return result
 
-    neighbor_count_image = numpy.zeros(labels.shape, int)
-    object_mask = objects.segmented != 0
-    object_indexes = objects.segmented[object_mask] - 1
-    neighbor_count_image[object_mask] = neighbor_count[object_indexes]
-    workspace.display_data.neighbor_count_image = neighbor_count_image
 
-    percent_touching_image = numpy.zeros(labels.shape)
-    percent_touching_image[object_mask] = percent_touching[object_indexes]
-    workspace.display_data.percent_touching_image = percent_touching_image
-
-    image_set = workspace.image_set
-    if self.wants_count_image.value:
-        neighbor_cm_name = self.count_colormap.value
-        neighbor_cm = get_colormap(neighbor_cm_name)
-        sm = matplotlib.cm.ScalarMappable(cmap=neighbor_cm)
-        img = sm.to_rgba(neighbor_count_image)[:, :, :3]
-        img[:, :, 0][~object_mask] = 0
-        img[:, :, 1][~object_mask] = 0
-        img[:, :, 2][~object_mask] = 0
-        count_image = Image(img, masking_objects=objects)
-        image_set.add(self.count_image_name.value, count_image)
-    else:
-        neighbor_cm_name = "Blues"
-        neighbor_cm = matplotlib.cm.get_cmap(neighbor_cm_name)
-    if self.wants_percent_touching_image:
-        percent_touching_cm_name = self.touching_colormap.value
-        percent_touching_cm = get_colormap(percent_touching_cm_name)
-        sm = matplotlib.cm.ScalarMappable(cmap=percent_touching_cm)
-        img = sm.to_rgba(percent_touching_image)[:, :, :3]
-        img[:, :, 0][~object_mask] = 0
-        img[:, :, 1][~object_mask] = 0
-        img[:, :, 2][~object_mask] = 0
-        touching_image = Image(img, masking_objects=objects)
-        image_set.add(self.touching_image_name.value, touching_image)
-    else:
-        percent_touching_cm_name = "Oranges"
-        percent_touching_cm = matplotlib.cm.get_cmap(percent_touching_cm_name)
-
-    if self.show_window:
-        workspace.display_data.neighbor_cm_name = neighbor_cm_name
-        workspace.display_data.percent_touching_cm_name = percent_touching_cm_name
-        workspace.display_data.orig_labels = objects.segmented
-        workspace.display_data.neighbor_labels = neighbor_labels
-        workspace.display_data.expanded_labels = expanded_labels
-        workspace.display_data.object_mask = object_mask
-        workspace.display_data.dimensions = dimensions
-   def get_measurement_name(self, feature):
-        if self.distance_method == D_EXPAND:
-            scale = S_EXPANDED
-        elif self.distance_method == D_WITHIN:
-            scale = str(self.distance.value)
-        elif self.distance_method == D_ADJACENT:
-            scale = S_ADJACENT
-        if neighbors_are_objects:
-            return "_".join((C_NEIGHBORS, feature, scale))
-        else:
-            return "_".join((C_NEIGHBORS, feature, self.neighbors_name.value, scale))
-
-    def get_measurement_columns(self, pipeline):
-        """Return column definitions for measurements made by this module"""
-        coltypes = dict(
-            [
-                (
-                    feature,
-                    COLTYPE_INTEGER
-                    if feature
-                    in (
-                        M_NUMBER_OF_NEIGHBORS,
-                        M_FIRST_CLOSEST_OBJECT_NUMBER,
-                        M_SECOND_CLOSEST_OBJECT_NUMBER,
-                    )
-                    else COLTYPE_FLOAT,
-                )
-                for feature in self.all_features
-            ]
-        )
-        return [
-            (
-                self.object_name.value,
-                self.get_measurement_name(feature_name),
-                coltypes[feature_name],
-            )
-            for feature_name in self.all_features
-        ]
-
-    def get_object_relationships(self, pipeline):
-        """Return column definitions for object relationships output by module"""
-        objects_name = self.object_name.value
-        if neighbors_are_objects:
-            neighbors_name = objects_name
-        else:
-            neighbors_name = self.neighbors_name.value
-        return [(NEIGHBORS, objects_name, neighbors_name, MCA_AVAILABLE_EACH_CYCLE,)]
-
-    def get_categories(self, pipeline, object_name):
-        if object_name == self.object_name:
-            return [C_NEIGHBORS]
-        return []
-
-    def get_measurements(self, pipeline, object_name, category):
-        if object_name == self.object_name and category == C_NEIGHBORS:
-            return list(M_ALL)
-        return []
-
-    def get_measurement_objects(self, pipeline, object_name, category, measurement):
-        if neighbors_are_objects or measurement not in self.get_measurements(
-            pipeline, object_name, category
-        ):
-            return []
-        return [self.neighbors_name.value]
-
-    def get_measurement_scales(
-        self, pipeline, object_name, category, measurement, image_name
-    ):
-        if measurement in self.get_measurements(pipeline, object_name, category):
-            if self.distance_method == D_EXPAND:
-                return [S_EXPANDED]
-            elif self.distance_method == D_ADJACENT:
-                return [S_ADJACENT]
-            elif self.distance_method == D_WITHIN:
-                return [str(self.distance.value)]
-            else:
-                raise ValueError(
-                    "Unknown distance method: %s" % self.distance_method.value
-                )
-        return []
+def get_measurement_name(feature: str, distance_method: str, distance: int = 5):
+    if distance_method == D_EXPAND:
+        scale = S_EXPANDED
+    elif distance_method == D_WITHIN:
+        scale = str(distance)
+    elif distance_method == D_ADJACENT:
+        scale = S_ADJACENT
+    return "_".join((C_NEIGHBORS, feature, scale))
 
 
 def find_label_overlaps(parent_labels: numpy.ndarray, child_labels: numpy.ndarray):
     """
     Produces a matrix in which each row is a parent and each column is a child.
 
-    
+
     Ported and modified from https://github.com/cellprofiler/CellProfiler/blob/main/src/subpackages/library/cellprofiler_library/functions/segmentation.py#L654
     """
-    
+
     parent_count = numpy.max(parent_labels)
     child_count = numpy.max(child_labels)
 
@@ -683,7 +573,7 @@ def find_label_overlaps(parent_labels: numpy.ndarray, child_labels: numpy.ndarra
     # Only look at points that are labeled in parent and child
     #
     not_zero = (parent_labels > 0) & (child_labels > 0)
-    not_zero_count = np.sum(not_zero)
+    not_zero_count = numpy.sum(not_zero)
 
     #
     # each row (axis = 0) is a parent
@@ -691,29 +581,50 @@ def find_label_overlaps(parent_labels: numpy.ndarray, child_labels: numpy.ndarra
     #
     return scipy.sparse.coo_matrix(
         (
-            np.ones((not_zero_count,)),
+            numpy.ones((not_zero_count,)),
             (parent_labels[not_zero], child_labels[not_zero]),
         ),
         shape=(parent_count + 1, child_count + 1),
     )
 
-def relate_histogram(histogram: numpy.ndarray)-> tuple[numpy.ndarray, numpy.ndarray]:
+
+def relate_histogram(histogram: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]:
     """Return child counts and parents of children given a histogram
 
     histogram - histogram from histogram_from_ijv or histogram_from_labels
     """
     parent_count = histogram.shape[0] - 1
 
-    parents_of_children = np.asarray(histogram.argmax(axis=0))
+    parents_of_children = numpy.asarray(histogram.argmax(axis=0))
     if len(parents_of_children.shape) == 2:
-        parents_of_children = np.squeeze(parents_of_children, axis=0)
+        parents_of_children = numpy.squeeze(parents_of_children, axis=0)
     #
     # Create a histogram of # of children per parent
-    children_per_parent = np.histogram(
-        parents_of_children[1:], np.arange(parent_count + 2)
+    children_per_parent = numpy.histogram(
+        parents_of_children[1:], numpy.arange(parent_count + 2)
     )[0][1:]
 
     #
     # Make sure to remove the background elements at index 0
     #
     return children_per_parent, parents_of_children[1:]
+
+
+def relate_labels(
+    parent_labels: numpy.ndarray, child_labels: numpy.ndarray
+) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """
+    relate the object numbers in one label to those in another
+
+    parent_labels - 2d label matrix of parent labels
+
+    child_labels - 2d label matrix of child labels
+
+    Returns two 1-d arrays. The first gives the number of children within
+    each parent. The second gives the mapping of each child to its parent's
+    object number.
+
+    Ported from https://github.com/cellprofiler/CellProfiler/blob/main/src/subpackages/core/cellprofiler_core/object/_objects.py#L283
+    """
+    return relate_histogram(find_label_overlaps(parent_labels, child_labels))
+    return relate_histogram(find_label_overlaps(parent_labels, child_labels))
