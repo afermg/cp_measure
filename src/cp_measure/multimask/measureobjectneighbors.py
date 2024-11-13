@@ -627,4 +627,3 @@ def relate_labels(
     Ported from https://github.com/cellprofiler/CellProfiler/blob/main/src/subpackages/core/cellprofiler_core/object/_objects.py#L283
     """
     return relate_histogram(find_label_overlaps(parent_labels, child_labels))
-    return relate_histogram(find_label_overlaps(parent_labels, child_labels))
