@@ -102,7 +102,10 @@ S_ADJACENT = "Adjacent"
 
 
 def measureobjectneighbors(
-    masks1: numpy.ndarray, masks2: numpy.ndarray, distance_method: str, distance: int
+    masks1: numpy.ndarray,
+    masks2: numpy.ndarray,
+    distance_method: str = D_EXPAND,
+    distance: int = 5,
 ):
     """
     Calculate neighbors of objects based on different methods. Supports 3D masks.
@@ -477,10 +480,10 @@ def measureobjectneighbors(
         # Outcomments are due to these conditions being assumed
         # if neighbors_are_objects:
         # first_object_number[has_pixels] = order[has_pixels, 1] + 1
-        first_object_number = order[:, 1] + 1
-        # if nkept_objects > :2
-        # second_object_number[has_pixels] = order[has_pixels, 2] + 1
-        second_object_number = order[:, 2] + 1
+        # TODO check conditions in which they should be 0 and 1 or 0 and 2
+        first_object_number = order[:, 0] + 1
+        if order.shape[1] > 1:
+            second_object_number = order[:, 1] + 1
         # else:
         #     first_object_number[has_pixels] = order[has_pixels, 0] + 1
         #     if order.shape[1] > 1:

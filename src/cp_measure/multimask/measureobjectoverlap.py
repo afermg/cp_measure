@@ -100,7 +100,9 @@ DM_KMEANS = "K Means"
 DM_SKEL = "Skeleton"
 
 
-def nan_divide(numerator: numpy.float64 | float | int, denominator: numpy.float64 | float | int) -> float:
+def nan_divide(
+    numerator: numpy.float64 | float | int, denominator: numpy.float64 | float | int
+) -> float:
     if denominator == 0:
         return numpy.nan
     return float(numerator) / float(denominator)
@@ -287,7 +289,7 @@ def measureobjectoverlap(
         gt_areas = get_areas(objects_GT)
         id_areas = get_areas(objects_ID)
         FN_area = gt_areas[numpy.newaxis, :] - intersect_matrix
-         # all_intersecting_area = numpy.sum(intersect_matrix)
+        # all_intersecting_area = numpy.sum(intersect_matrix)
         # all_intersecting_area = numpy.sum(intersect_matrix)
         dom_ID = []
 
@@ -631,20 +633,20 @@ def compute_emd(
     )
 
 
-def get_skeleton_points(obj, max_points: int):
+def get_skeleton_points(labels: numpy.ndarray, max_points: int):
     """Get points by skeletonizing the objects and decimating"""
-    total_skel = numpy.zeros(obj.shape, bool)
-    # TODO adjust here
-    for labels, indexes in obj.get_labels():
-        colors = centrosome.cpmorphology.color_labels(labels)
-        for color in range(1, numpy.max(colors) + 1):
-            labels_mask = colors == color
-            skel = centrosome.cpmorphology.skeletonize(
-                labels_mask,
-                ordering=scipy.ndimage.distance_transform_edt(labels_mask)
-                * centrosome.filter.poisson_equation(labels_mask),
-            )
-            total_skel = total_skel | skel
+    total_skel = numpy.zeros(labels.shape, bool)
+    # MODIFIED: Obviated get_labels step, which splits overlapping labels
+    # as they are passed as arguments and we assume no support for overlaps
+    colors = centrosome.cpmorphology.color_labels(labels)
+    for color in range(1, numpy.max(colors) + 1):
+        labels_mask = colors == color
+        skel = centrosome.cpmorphology.skeletonize(
+            labels_mask,
+            ordering=scipy.ndimage.distance_transform_edt(labels_mask)
+            * centrosome.filter.poisson_equation(labels_mask),
+        )
+        total_skel = total_skel | skel
     n_pts = numpy.sum(total_skel)
     if n_pts == 0:
         return numpy.zeros(0, numpy.int32), numpy.zeros(0, numpy.int32)
