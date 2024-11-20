@@ -2,7 +2,7 @@ from itertools import product
 
 import numpy
 import pytest
-from cp_measure.bulk import get_fast_measurements
+from cp_measure.bulk import get_core_measurements
 from cp_measure.examples import get_masks, get_pixels
 
 
@@ -20,7 +20,7 @@ def test_measurements(named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarr
         ),
     )
     mask_name, mask = named_mask
-    for name, v in get_fast_measurements().items():
+    for name, v in get_core_measurements().items():
         result = v(mask, pixels.copy())
         if (mask_name, name) not in exceptions:
             text = f"Feature {name} returned zero/null on mask {mask_name}"
