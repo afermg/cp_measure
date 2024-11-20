@@ -156,6 +156,7 @@ def extract_pixels(
     lrange = numpy.arange(max(labels), dtype=numpy.int32) + 1
     return fi, si, labels, lrange
 
+
 def calculate_threshold(
     pixels_1: numpy.ndarray,
     pixels_2: numpy.ndarray,
@@ -326,14 +327,14 @@ def get_correlation_costes_ind(
         )
 
     # Costes Automated Threshold
-    C1, C2 = ([0.], [0.]) # Cover fringe case of no pixels above threshold
+    C1, C2 = ([0.0], [0.0])  # Cover fringe case of no pixels above threshold
     if len(fi_thresh_c) and len(si_thresh_c):
         C1 = numpy.array(
-        scipy.ndimage.sum(fi_thresh_c, labels[combined_thresh_c], lrange)
-    ) / numpy.array(tot_fi_thr_c)
+            scipy.ndimage.sum(fi_thresh_c, labels[combined_thresh_c], lrange)
+        ) / numpy.array(tot_fi_thr_c)
         C2 = numpy.array(
-        scipy.ndimage.sum(si_thresh_c, labels[combined_thresh_c], lrange)
-    ) / numpy.array(tot_si_thr_c)
+            scipy.ndimage.sum(si_thresh_c, labels[combined_thresh_c], lrange)
+        ) / numpy.array(tot_si_thr_c)
 
     return {
         f"{F_COSTES_FORMAT}_1": C1[0],
@@ -494,7 +495,10 @@ def bisection_costes(
 
 
 def get_correlation_overlap_ind(
-        pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray, thr: int = 15,
+    pixels_1: numpy.ndarray,
+    pixels_2: numpy.ndarray,
+    mask: numpy.ndarray,
+    thr: int = 15,
 ):
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
@@ -563,26 +567,73 @@ def infer_scale(data: numpy.ndarray) -> int:
 
     return scale
 
+
 ## Define functions using skimage style
 # The implementation of these correlation functions makes it irrelevant to vectorize the input.
-def get_correlation_pearson(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: numpy.ndarray):
+def get_correlation_pearson(
+    pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, masks: numpy.ndarray
+):
     return apply_correlation_fun(get_correlation_pearson_ind, pixels_1, pixels_2, masks)
-    
-def get_correlation_manders_fold(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: numpy.ndarray, thr: int = 15):
-    return apply_correlation_fun(get_correlation_manders_fold_ind, pixels_1, pixels_2, masks, thr=thr)
 
-def get_correlation_rwc(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: numpy.ndarray, thr: int = 15):
-    return apply_correlation_fun(get_correlation_rwc_ind, pixels_1, pixels_2, masks, thr=thr)
 
-def get_correlation_costes(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: numpy.ndarray, fast_costes: str = M_FASTER, thr: int = 15):
-    return apply_correlation_fun(get_correlation_costes_ind, pixels_1, pixels_2, masks, fast_costes=fast_costes, thr = thr)
+def get_correlation_manders_fold(
+    pixels_1: numpy.ndarray,
+    pixels_2: numpy.ndarray,
+    masks: numpy.ndarray,
+    thr: int = 15,
+):
+    return apply_correlation_fun(
+        get_correlation_manders_fold_ind, pixels_1, pixels_2, masks, thr=thr
+    )
 
-def get_correlation_overlap(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, masks: numpy.ndarray, thr: int = 15):
+
+def get_correlation_rwc(
+    pixels_1: numpy.ndarray,
+    pixels_2: numpy.ndarray,
+    masks: numpy.ndarray,
+    thr: int = 15,
+):
+    return apply_correlation_fun(
+        get_correlation_rwc_ind, pixels_1, pixels_2, masks, thr=thr
+    )
+
+
+def get_correlation_costes(
+    pixels_1: numpy.ndarray,
+    pixels_2: numpy.ndarray,
+    masks: numpy.ndarray,
+    fast_costes: str = M_FASTER,
+    thr: int = 15,
+):
+    return apply_correlation_fun(
+        get_correlation_costes_ind,
+        pixels_1,
+        pixels_2,
+        masks,
+        fast_costes=fast_costes,
+        thr=thr,
+    )
+
+
+def get_correlation_overlap(
+    pixels_1: numpy.ndarray,
+    pixels_2: numpy.ndarray,
+    masks: numpy.ndarray,
+    thr: int = 15,
+):
     return apply_correlation_fun(get_correlation_overlap_ind, pixels_1, pixels_2, masks)
+
 
 # Helper functions
 
-def apply_correlation_fun(corr_function, pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, masks: numpy.ndarray, **kwargs):
+
+def apply_correlation_fun(
+    corr_function,
+    pixels_1: numpy.ndarray,
+    pixels_2: numpy.ndarray,
+    masks: numpy.ndarray,
+    **kwargs,
+):
     """
     Apply `corr_function` to the subsequent args and kwargs. It assumes that pixels (arrays containing images) are passed, as well as
     masks in a 2-d labels format. Any kwargs are passed to corr_functions.
@@ -591,6 +642,5 @@ def apply_correlation_fun(corr_function, pixels_1: numpy.ndarray, pixels_2: nump
     partial_corr_fun = partial(corr_function, pixels_1, pixels_2)
     for mask in labels_to_binmasks(masks):
         results.append(partial_corr_fun(mask, **kwargs))
-        
-    return {k:[item[k] for item in results] for k in results[0]}
-    
+
+    return {k: [item[k] for item in results] for k in results[0]}

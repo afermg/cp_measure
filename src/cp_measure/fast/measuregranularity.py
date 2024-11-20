@@ -56,6 +56,7 @@ import scipy.ndimage
 import skimage.morphology
 from centrosome.cpmorphology import fixup_scipy_ndimage_result as fix
 
+
 def get_granularity(
     mask: numpy.ndarray,
     pixels: numpy.ndarray,
@@ -68,7 +69,7 @@ def get_granularity(
     1. (Outcommented) Subsample image
     2.  Remove background pixels using a greyscale tophat filter
     3.  Calculate granular spectrum (size distribution) for all masks
-    
+
     Parameters
     ----------
     subsample_size : float, optional
@@ -225,13 +226,13 @@ def get_granularity(
     # THIS IMPLEMENTATION INSTEAD OF OPENING USES EROSION FOLLOWED BY RECONSTRUCTION
     #
     ng = granular_spectrum_length
-    #startmean = numpy.mean(pixels[mask])
+    # startmean = numpy.mean(pixels[mask])
     startmean = numpy.mean(pixels)
     ero = pixels.copy()
     # Mask the test image so that masked pixels will have no effect
     # during reconstruction
     #
-    #ero[~mask] = 0
+    # ero[~mask] = 0
     currentmean = startmean
     startmean = max(startmean, numpy.finfo(float).eps)
 
@@ -239,18 +240,15 @@ def get_granularity(
         footprint = skimage.morphology.disk(1, dtype=bool)
     else:
         footprint = skimage.morphology.ball(1, dtype=bool)
-        
-    
+
     unique_labels = numpy.unique(mask)
-    unique_labels = unique_labels[unique_labels>0]
+    unique_labels = unique_labels[unique_labels > 0]
 
     # Info on objects
     range_ = numpy.arange(1, numpy.max(mask) + 1)
     labels = mask.copy()
     current_mean = fix(scipy.ndimage.mean(pixels, labels, range_))
-    start_mean = numpy.maximum(
-                current_mean, numpy.finfo(float).eps
-            )
+    start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
 
     results = {}
     for granularity_id in range(1, ng + 1):
@@ -264,12 +262,12 @@ def get_granularity(
         ero = skimage.morphology.erosion(ero_mask, footprint=footprint)
         # Use a mask (footprint) to make bright sections bigger
         rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
-        #currentmean = numpy.mean(rec[mask])
+        # currentmean = numpy.mean(rec[mask])
         currentmean = numpy.mean(rec)
         # gs is the image granularity
         # gs = (prevmean - currentmean) * 100 / startmean
         # image_granularity = gs
-        
+
         # Restore the reconstructed image to the shape of the
         # original image so we can match against object labels
         #
@@ -292,7 +290,7 @@ def get_granularity(
             i *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
             j *= float(new_shape[2] - 1) / float(orig_shape[2] - 1)
             rec = scipy.ndimage.map_coordinates(rec, (k, i, j), order=1)
-            
+
         # Calculate the means for the objects
         gss = numpy.zeros((0,))
         if unique_labels.any():
@@ -300,13 +298,9 @@ def get_granularity(
             # Calculate the means for the objects
             #
             # MODIFIED: These metrics were defined inside ObjectRecord originally
-         
+
             new_mean = fix(scipy.ndimage.mean(rec, labels, range_))
-            gss = (
-                (current_mean - new_mean)
-                * 100
-                / start_mean
-            )
+            gss = (current_mean - new_mean) * 100 / start_mean
 
         results[f"Granularity_{granularity_id}"] = gss
 

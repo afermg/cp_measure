@@ -134,7 +134,7 @@ def measureobjectoverlap(
     decimation_method: str = DM_KMEANS,
     max_distance: int = 100,
     penalize_missing: bool = False,
-):
+) -> dict[str, float]:
     """
     Assumes 2D masks shown as 
     wants_emd:
@@ -376,7 +376,7 @@ def measureobjectoverlap(
         }
 
         for k, v in measurement_value.items():
-            results[k] = v
+            results[f"{C_IMAGE_OVERLAP}_{k}"] = v
 
         TP_mask = subscripts(1, 1, GT_pixels, ID_pixels)
         FN_mask = subscripts(1, 0, GT_pixels, ID_pixels)
@@ -600,7 +600,7 @@ def compute_emd(
         (src_objects, dest_objects),
         (dest_objects, src_objects),
     ):
-        if angels.count == 0:
+        if angels.max() == 0:
             if penalize_missing:
                 return numpy.sum(get_areas(demons)) * max_distance
             else:

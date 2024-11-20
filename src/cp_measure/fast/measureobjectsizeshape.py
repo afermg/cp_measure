@@ -565,7 +565,11 @@ new_features : bool, optional
 
 
 def get_sizeshape(
-    masks: numpy.ndarray, pixels: numpy.ndarray, calculate_advanced: bool = True, new_features:bool = True, spacing: Optional[tuple] = None
+    masks: numpy.ndarray,
+    pixels: numpy.ndarray,
+    calculate_advanced: bool = True,
+    new_features: bool = True,
+    spacing: Optional[tuple] = None,
 ):
     """Compute the measurements for multiple object masks."""
     # Properties available for both 2d and 3d
@@ -583,10 +587,10 @@ def get_sizeshape(
         "axis_minor_length",
     ]
 
-   # Features not in CellProfiler 4
+    # Features not in CellProfiler 4
     if new_features:
-       desired_properties += [ "area_filled" ]
-       
+        desired_properties += ["area_filled"]
+
     # 2d specific properties
     if masks.ndim == 2:
         desired_properties += [
@@ -596,8 +600,8 @@ def get_sizeshape(
             "solidity",
         ]
         if new_features:
-           desired_properties += [ "perimeter_crofton" ]
-           
+            desired_properties += ["perimeter_crofton"]
+
     if calculate_advanced:
         if masks.ndim == 2:
             desired_properties += [
@@ -610,8 +614,8 @@ def get_sizeshape(
             ]
 
         else:
-            desired_properties += [ "solidity" ]
-            
+            desired_properties += ["solidity"]
+
             # These advanced props were not in CP4 for 3D images
             if new_features:
                 desired_properties += [
@@ -621,12 +625,14 @@ def get_sizeshape(
                     "moments_central",
                     "moments_normalized",
                 ]
-                
+
     labels = masks
-    nobjects = (numpy.unique(masks)>0).sum()
+    nobjects = (numpy.unique(masks) > 0).sum()
     results = {}
     if labels.ndim == 2:
-        props = skimage.measure.regionprops_table(labels, pixels, properties=desired_properties)
+        props = skimage.measure.regionprops_table(
+            labels, pixels, properties=desired_properties
+        )
 
         formfactor = 4.0 * numpy.pi * props["area"] / props["perimeter"] ** 2
         denom = [max(x, 1) for x in 4.0 * numpy.pi * props["area"]]
@@ -648,8 +654,8 @@ def get_sizeshape(
             median_radius[index] = centrosome.cpmorphology.median_of_labels(
                 distances, mini_image.astype("int"), [1]
             )
-   
-        results |=  {
+
+        results |= {
             F_AREA: props["area"],
             F_BBOX_AREA: props["area_bbox"],
             F_CONVEX_AREA: props["area_convex"],
@@ -674,14 +680,13 @@ def get_sizeshape(
             F_MEAN_RADIUS: mean_radius,
             F_MEDIAN_RADIUS: median_radius,
         }
-        
+
         if new_features:
             results |= {
                 F_CONVEX_AREA: props["area_convex"],
                 F_FILLED_AREA: props["area_filled"],
             }
 
-        
         if calculate_advanced:
             results |= {
                 F_SPATIAL_MOMENT_0_0: props["moments-0-0"],
@@ -738,15 +743,17 @@ def get_sizeshape(
                 F_INERTIA_TENSOR_EIGENVALUES_0: props["inertia_tensor_eigvals-0"],
                 F_INERTIA_TENSOR_EIGENVALUES_1: props["inertia_tensor_eigvals-1"],
             }
-           
-        if new_features:   
-            results |= { 
-               F_PERIMETER_CROFTON: props["perimeter_crofton"],
-               F_FILLED_AREA: props["area_filled"] 
+
+        if new_features:
+            results |= {
+                F_PERIMETER_CROFTON: props["perimeter_crofton"],
+                F_FILLED_AREA: props["area_filled"],
             }
 
     else:
-        props = skimage.measure.regionprops_table(labels, pixels, properties=desired_properties)
+        props = skimage.measure.regionprops_table(
+            labels, pixels, properties=desired_properties
+        )
 
         # SurfaceArea
         distinct_labels = numpy.unique(labels[labels > 0])
@@ -755,7 +762,10 @@ def get_sizeshape(
             # this seems less elegant than you might wish, given that regionprops returns a slice,
             # but we need to expand the slice out by one voxel in each direction, or surface area freaks out
             slices = tuple(
-                slice(max(props[f"bbox-{i}"][idx] - 1, 0), min(props[f"bbox-{i+3}"][idx] + 1, labels.shape[i]))
+                slice(
+                    max(props[f"bbox-{i}"][idx] - 1, 0),
+                    min(props[f"bbox-{i+3}"][idx] + 1, labels.shape[i]),
+                )
                 for i in range(3)
             )
             volume = labels[slices] == label
@@ -790,7 +800,7 @@ def get_sizeshape(
         if calculate_advanced:
             results |= {
                 F_SOLIDITY: props["solidity"],
-                }
+            }
             if new_features:
                 results |= {
                     F_SPATIAL_MOMENT_0_0_0: props["moments-0-0-0"],
@@ -989,7 +999,7 @@ def get_sizeshape(
         if new_features:
             results |= {
                 F_FILLED_VOLUME: props["area_filled"],
-                F_CONVEX_VOLUME: props["area_convex"]
+                F_CONVEX_VOLUME: props["area_convex"],
             }
 
     return results
@@ -1000,8 +1010,8 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
     # Zernike features
     #
     unique_indices = numpy.unique(masks)
-    unique_indices = unique_indices[unique_indices>0]
-    indices = list(range(1,len(unique_indices) + 1))
+    unique_indices = unique_indices[unique_indices > 0]
+    indices = list(range(1, len(unique_indices) + 1))
     labels = masks
     zernike_numbers = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
 
