@@ -105,12 +105,12 @@ def measureobjectneighbors(
     masks1: numpy.ndarray, masks2: numpy.ndarray, distance_method: str, distance: int
 ):
     """
-    Calculate neighbors of objects based on different methods.
+    Calculate neighbors of objects based on different methods. Supports 3D masks.
 
     Parameters
     ----------
-    masks1 : bool binary masks to be used as reference
-    masks2 : bool binary masks to be used as potential neighbors
+    masks1 : (array of integers) label masks to be used as reference
+    masks2 : (array of integers) label masks to be used as potential neighbors
     distance_method : str
         There are several methods by which to determine whether objects are
         neighbors:
@@ -142,9 +142,9 @@ def measureobjectneighbors(
     Returns
     -------
     List of dictionaries with overlap features.
-
     """
-
+    dimensions = masks1.ndim
+    # has_pixels = masks.any()
     dimensions = masks1.ndim
     # has_pixels = masks.any()
     labels = masks1
