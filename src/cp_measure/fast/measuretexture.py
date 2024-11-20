@@ -191,8 +191,8 @@ def get_texture(
     2, the maximum is 256.
     """
     unique_labels = numpy.unique(masks)
-    unique_labels = unique_labels[unique_labels>0]
-    
+    unique_labels = unique_labels[unique_labels > 0]
+
     # Modified to use the number of dimensions in pixels to determine the number of directions
     n_directions = 13 if pixels.ndim > 2 else 4
 
@@ -219,7 +219,7 @@ def get_texture(
             )
         except ValueError:
             features[:, :, index] = numpy.nan
-            
+
     # MODIFIED: Reconstructed name:
     # Texture_{X}_{scale}_{direction_id}_{graylevels}
     results = {}

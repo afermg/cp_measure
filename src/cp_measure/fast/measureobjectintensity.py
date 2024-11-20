@@ -133,7 +133,7 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
 
     unique_vals = numpy.unique(masks)
     # MODIFIED: Extract the number of objects by explicitly removing 0s
-    nobjects = (unique_vals>0).sum()
+    nobjects = (unique_vals > 0).sum()
 
     integrated_intensity = numpy.zeros((nobjects,))
     integrated_intensity_edge = numpy.zeros((nobjects,))
