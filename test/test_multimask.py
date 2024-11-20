@@ -1,3 +1,4 @@
+
 """ "
 Test functions that operate multiple pixel arrays (e.g., correlations).
 """
@@ -15,6 +16,9 @@ def get_sample_label_masks(size: int = 789):
     masks[-100:, -100:] = 3
     return masks
 
+def get_transposed_mask(size: int= 789):
+    masks = get_sample_label_masks()
+    return [masks, masks.T]
 
 @pytest.mark.parametrize("masks", (get_sample_label_masks(),))
 @pytest.mark.parametrize(
@@ -25,7 +29,9 @@ def test_neighbors(masks: numpy.ndarray, distance_method: str):
     return measureobjectneighbors(masks, masks, distance_method=distance_method)
 
 
-@pytest.mark.parametrize("masks", (get_sample_label_masks(),))
+@pytest.mark.parametrize("masks1", get_transposed_mask())
+@pytest.mark.parametrize("masks2", get_transposed_mask())
 @pytest.mark.parametrize("decimation_method", ("K means", "Skeleton"))
-def test_overlap(masks: numpy.ndarray, decimation_method: str):
-    return measureobjectoverlap(masks, masks, decimation_method=decimation_method)
+@pytest.mark.parametrize("wants_emd", (True, False))
+def test_overlap(masks1: numpy.ndarray, masks2: numpy.ndarray, decimation_method: str, wants_emd:bool):
+    return measureobjectoverlap(masks1, masks2, decimation_method=decimation_method, wants_emd=wants_emd)
