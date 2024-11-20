@@ -6,7 +6,7 @@ import numpy.ma
 import scipy.ndimage
 import scipy.sparse
 
-from cp_measure.fast.utils import masks_to_ijv
+from cp_measure.utils import masks_to_ijv
 
 """"
 ============ ============ ===============
