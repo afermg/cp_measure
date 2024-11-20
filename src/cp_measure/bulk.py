@@ -5,6 +5,7 @@ match the original names. This may change in the future.
 
 from typing import Callable
 
+
 def get_fast_measurements() -> dict[str, Callable]:
     from cp_measure.fast import (
         measuregranularity,
@@ -21,18 +22,27 @@ def get_fast_measurements() -> dict[str, Callable]:
         "sizeshape": measureobjectsizeshape.get_sizeshape,
         "zernike": measureobjectsizeshape.get_zernike,
         "ferret": measureobjectsizeshape.get_ferret,
-        "texture": measuretexture.get_texture,        
+        "texture": measuretexture.get_texture,
         "granularity": measuregranularity.get_granularity,
-
     }
+
 
 def get_correlation_measurements() -> dict[str, Callable]:
     from cp_measure.fast import measurecolocalization
-    
+
     return {
         "costes": measurecolocalization.get_correlation_costes,
         "pearson": measurecolocalization.get_correlation_pearson,
-        "pearson": measurecolocalization.get_correlation_pearson,
         "manders_fold": measurecolocalization.get_correlation_manders_fold,
         "rwc": measurecolocalization.get_correlation_rwc,
+    }
+
+
+def get_multimask_measurements() -> dict[str, Callable]:
+    from cp_measure.multimask.measureobjectneighbors import measureobjectneighbors
+    from cp_measure.multimask.measureobjectoverlap import measureobjectoverlap
+
+    return {
+        "overlap": measureobjectoverlap,
+        "neighbors": measureobjectneighbors,
     }
