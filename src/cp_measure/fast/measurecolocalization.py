@@ -84,6 +84,7 @@ import numpy
 import scipy.ndimage
 import scipy.stats
 from centrosome.cpmorphology import fixup_scipy_ndimage_result as fix
+from cp_measure.utils import labels_to_binmasks
 from scipy.linalg import lstsq
 
 M_IMAGES = "Across entire image"
@@ -581,12 +582,6 @@ def get_correlation_overlap(pixels_1: numpy.ndarray, pixels_2:numpy.ndarray, mas
 
 # Helper functions
 
-def labels_to_binarymasks(masks: numpy.ndarray):
-    """
-    Convert a label matrix to a boolean masks.
-    """
-    return [masks==i for i in range(1, masks.max()+1)]
-
 def apply_correlation_fun(corr_function, pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, masks: numpy.ndarray, **kwargs):
     """
     Apply `corr_function` to the subsequent args and kwargs. It assumes that pixels (arrays containing images) are passed, as well as
@@ -594,7 +589,7 @@ def apply_correlation_fun(corr_function, pixels_1: numpy.ndarray, pixels_2: nump
     """
     results = []
     partial_corr_fun = partial(corr_function, pixels_1, pixels_2)
-    for mask in labels_to_binarymasks(masks):
+    for mask in labels_to_binmasks(masks):
         results.append(partial_corr_fun(mask, **kwargs))
         
     return {k:[item[k] for item in results] for k in results[0]}
