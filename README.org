@@ -26,9 +26,9 @@ This shows the simplest way to use the first set (1 image, 1 mask set), which cu
 #+begin_src python
 import numpy as np
 
-from cp_measure.bulk import get_fast_measurements
+from cp_measure.bulk import get_core_measurements
 
-measurements = get_fast_measurements()
+measurements = get_core_measurements()
 print(measurements.keys())
 # dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'ferret', 'texture', 'granularity'])
 

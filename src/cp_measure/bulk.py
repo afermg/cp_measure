@@ -6,8 +6,8 @@ match the original names. This may change in the future.
 from typing import Callable
 
 
-def get_fast_measurements() -> dict[str, Callable]:
-    from cp_measure.fast import (
+def get_core_measurements() -> dict[str, Callable]:
+    from cp_measure.core import (
         measuregranularity,
         measureobjectintensity,
         measureobjectintensitydistribution,
@@ -28,7 +28,7 @@ def get_fast_measurements() -> dict[str, Callable]:
 
 
 def get_correlation_measurements() -> dict[str, Callable]:
-    from cp_measure.fast import measurecolocalization
+    from cp_measure.core import measurecolocalization
 
     return {
         "costes": measurecolocalization.get_correlation_costes,
