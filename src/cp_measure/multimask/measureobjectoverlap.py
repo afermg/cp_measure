@@ -65,11 +65,9 @@ import centrosome.propagate
 import numpy
 import scipy.ndimage
 import scipy.sparse
-from cp_measure.fast.utils import masks_to_ijv
+from cp_measure.utils import labels_to_binmasks, masks_to_ijv
 
-
-
-f_IMAGE_OVERLAP = "Overlap"
+C_IMAGE_OVERLAP = "Overlap"
 FTR_F_FACTOR = "Ffactor"
 FTR_PRECISION = "Precision"
 FTR_RECALL = "Recall"
@@ -101,24 +99,42 @@ L_CP = "From this CP pipeline"
 DM_KMEANS = "K Means"
 DM_SKEL = "Skeleton"
 
-def nan_divide(numerator, denominator):
+
+def nan_divide(numerator: numpy.float64 | float | int, denominator: numpy.float64 | float | int) -> float:
     if denominator == 0:
         return numpy.nan
     return float(numerator) / float(denominator)
 
-def subscripts(condition1, condition2):
+
+def subscripts(
+    condition1: numpy.ndarray,
+    condition2: numpy.ndarray,
+    GT_pixels: numpy.ndarray,
+    ID_pixels: numpy.ndarray,
+) -> list:
     x1, y1 = numpy.where(GT_pixels == condition1)
     x2, y2 = numpy.where(ID_pixels == condition2)
     mask = set(zip(x1, y1)) & set(zip(x2, y2))
     return list(mask)
+
 
 def maskimg(mask, img):
     for ea in mask:
         img[ea] = 1
     return img
 
-def measureobjectoverlap(mask1, mask2, wants_emd:bool=False, max_points:int=250, decimation_method: str=DM_KMEANS, penalize_missing: bool = False):
+
+def measureobjectoverlap(
+    masks1: numpy.ndarray,
+    masks2: numpy.ndarray,
+    wants_emd: bool = False,
+    max_points: int = 250,
+    decimation_method: str = DM_KMEANS,
+    max_distance: int = 100,
+    penalize_missing: bool = False,
+):
     """
+    Assumes 2D masks shown as 
     wants_emd:
         Calculate earth mover's distance?
         The earth mover’s distance computes the shortest distance that would
@@ -187,92 +203,92 @@ def measureobjectoverlap(mask1, mask2, wants_emd:bool=False, max_points:int=250,
         distance times the absolute difference in number of foreground pixels in
         the two objects. Set this setting to “No” to assess no penalty.
     """.format(
-                **{
-                    "DM_KMEANS": DM_KMEANS,
-                    "DM_SKEL": DM_SKEL,
-                }
+        **{
+            "DM_KMEANS": DM_KMEANS,
+            "DM_SKEL": DM_SKEL,
+        }
     )
     # category = "Measurement"
     # variable_revision_number = 2
     # module_name = "MeasureObjectOverlap"
-    
-        # object_name_GT = self.object_name_GT.value
-        # objects_GT = workspace.get_objects(object_name_GT)
-        objects_GT = masks1
-        # iGT, jGT, lGT = objects_GT.ijv.transpose()
-        iGT, jGT, lGT = masks_to_ijv(objects_GT.ijv).transpose()
-        # object_name_ID = self.object_name_ID.value
-        # objects_ID = workspace.get_objects(object_name_ID)
-        objects_ID = masks2
-        iID, jID, lID = masks_to_ijv(objects_ID).transpose()
-        ID_obj = 0 if len(lID) == 0 else max(lID)
-        GT_obj = 0 if len(lGT) == 0 else max(lGT)
 
-        xGT, yGT = objects_GT.shape
-        xID, yID = objects_ID.shape
-        GT_pixels = numpy.zeros((xGT, yGT))
-        ID_pixels = numpy.zeros((xID, yID))
-        total_pixels = xGT * yGT
+    # object_name_GT = self.object_name_GT.value
+    # objects_GT = workspace.get_objects(object_name_GT)
+    objects_GT = masks1
+    # iGT, jGT, lGT = objects_GT.ijv.transpose()
+    iGT, jGT, lGT = masks_to_ijv(objects_GT).transpose()
+    # object_name_ID = self.object_name_ID.value
+    # objects_ID = workspace.get_objects(object_name_ID)
+    objects_ID = masks2
+    iID, jID, lID = masks_to_ijv(objects_ID).transpose()
+    ID_obj = 0 if len(lID) == 0 else max(lID)
+    GT_obj = 0 if len(lGT) == 0 else max(lGT)
 
-        GT_pixels[iGT, jGT] = 1
-        ID_pixels[iID, jID] = 1
+    xGT, yGT = objects_GT.shape
+    xID, yID = objects_ID.shape
+    GT_pixels = numpy.zeros((xGT, yGT))
+    ID_pixels = numpy.zeros((xID, yID))
+    total_pixels = xGT * yGT
 
-        GT_tot_area = len(iGT)
-        if len(iGT) == 0 and len(iID) == 0:
-            intersect_matrix = numpy.zeros((0, 0), int)
-        else:
-            #
-            # Build a matrix with rows of i, j, label and a GT/ID flag
-            #
-            all_ijv = numpy.column_stack(
-                (
-                    numpy.hstack((iGT, iID)),
-                    numpy.hstack((jGT, jID)),
-                    numpy.hstack((lGT, lID)),
-                    numpy.hstack((numpy.zeros(len(iGT)), numpy.ones(len(iID)))),
-                )
+    GT_pixels[iGT, jGT] = 1
+    ID_pixels[iID, jID] = 1
+
+    GT_tot_area = len(iGT)
+    if len(iGT) == 0 and len(iID) == 0:
+        intersect_matrix = numpy.zeros((0, 0), int)
+    else:
+        #
+        # Build a matrix with rows of i, j, label and a GT/ID flag
+        #
+        all_ijv = numpy.column_stack(
+            (
+                numpy.hstack((iGT, iID)),
+                numpy.hstack((jGT, jID)),
+                numpy.hstack((lGT, lID)),
+                numpy.hstack((numpy.zeros(len(iGT)), numpy.ones(len(iID)))),
             )
-            #
-            # Order it so that runs of the same i, j are consecutive
-            #
-            order = numpy.lexsort((all_ijv[:, -1], all_ijv[:, 0], all_ijv[:, 1]))
-            all_ijv = all_ijv[order, :]
-            # Mark the first at each i, j != previous i, j
-            first = numpy.where(
-                numpy.hstack(
-                    ([True], ~numpy.all(all_ijv[:-1, :2] == all_ijv[1:, :2], 1), [True])
-                )
-            )[0]
-            # Count # at each i, j
-            count = first[1:] - first[:-1]
-            # First indexer - mapping from i,j to index in all_ijv
-            all_ijv_map = centrosome.index.Indexes([count])
-            # Bincount to get the # of ID pixels per i,j
-            id_count = numpy.bincount(all_ijv_map.rev_idx, all_ijv[:, -1]).astype(int)
-            gt_count = count - id_count
-            # Now we can create an indexer that has NxM elements per i,j
-            # where N is the number of GT pixels at that i,j and M is
-            # the number of ID pixels. We can then use the indexer to pull
-            # out the label values for each to populate a sparse array.
-            #
-            cross_map = centrosome.index.Indexes([id_count, gt_count])
-            off_gt = all_ijv_map.fwd_idx[cross_map.rev_idx] + cross_map.idx[0]
-            off_id = (
-                all_ijv_map.fwd_idx[cross_map.rev_idx]
-                + cross_map.idx[1]
-                + id_count[cross_map.rev_idx]
+        )
+        #
+        # Order it so that runs of the same i, j are consecutive
+        #
+        order = numpy.lexsort((all_ijv[:, -1], all_ijv[:, 0], all_ijv[:, 1]))
+        all_ijv = all_ijv[order, :]
+        # Mark the first at each i, j != previous i, j
+        first = numpy.where(
+            numpy.hstack(
+                ([True], ~numpy.all(all_ijv[:-1, :2] == all_ijv[1:, :2], 1), [True])
             )
-            intersect_matrix = scipy.sparse.coo_matrix(
-                (numpy.ones(len(off_gt)), (all_ijv[off_id, 2], all_ijv[off_gt, 2])),
-                shape=(ID_obj + 1, GT_obj + 1),
-            ).toarray()[1:, 1:]
+        )[0]
+        # Count # at each i, j
+        count = first[1:] - first[:-1]
+        # First indexer - mapping from i,j to index in all_ijv
+        all_ijv_map = centrosome.index.Indexes([count])
+        # Bincount to get the # of ID pixels per i,j
+        id_count = numpy.bincount(all_ijv_map.rev_idx, all_ijv[:, -1]).astype(int)
+        gt_count = count - id_count
+        # Now we can create an indexer that has NxM elements per i,j
+        # where N is the number of GT pixels at that i,j and M is
+        # the number of ID pixels. We can then use the indexer to pull
+        # out the label values for each to populate a sparse array.
+        #
+        cross_map = centrosome.index.Indexes([id_count, gt_count])
+        off_gt = all_ijv_map.fwd_idx[cross_map.rev_idx] + cross_map.idx[0]
+        off_id = (
+            all_ijv_map.fwd_idx[cross_map.rev_idx]
+            + cross_map.idx[1]
+            + id_count[cross_map.rev_idx]
+        )
+        intersect_matrix = scipy.sparse.coo_matrix(
+            (numpy.ones(len(off_gt)), (all_ijv[off_id, 2], all_ijv[off_gt, 2])),
+            shape=(ID_obj + 1, GT_obj + 1),
+        ).toarray()[1:, 1:]
 
-            # TODO adjust
-        gt_areas = objects_GT.areas
-        id_areas = objects_ID.areas
+        # TODO adjust
+        gt_areas = get_areas(objects_GT)
+        id_areas = get_areas(objects_ID)
         FN_area = gt_areas[numpy.newaxis, :] - intersect_matrix
-        all_intersecting_area = numpy.sum(intersect_matrix)
-
+         # all_intersecting_area = numpy.sum(intersect_matrix)
+        # all_intersecting_area = numpy.sum(intersect_matrix)
         dom_ID = []
 
         for i in range(0, ID_obj):
@@ -327,6 +343,7 @@ def measureobjectoverlap(mask1, mask2, wants_emd:bool=False, max_points:int=250,
 
         TN = max(0, total_pixels - TP - FN - FP)
 
+        # This is not used in the original implementation
         # accuracy = nan_divide(TP, all_intersecting_area)
         recall = nan_divide(TP, GT_tot_area)
         precision = nan_divide(TP, (TP + FP))
@@ -340,33 +357,29 @@ def measureobjectoverlap(mask1, mask2, wants_emd:bool=False, max_points:int=250,
             numpy.ones(2, int),
         )
         rand_index, adjusted_rand_index = compute_rand_index_ijv(
-            masks_to_ijv(objects_GT), masks_toi_ijv(objects_ID), shape
+            masks_to_ijv(objects_GT), masks_to_ijv(objects_ID), shape
         )
         results = {}
-        m.add_image_measurement(self.measurement_name(FTR_F_FACTOR), F_factor)
-        m.add_image_measurement(self.measurement_name(FTR_PRECISION), precision)
-        m.add_image_measurement(self.measurement_name(FTR_RECALL), recall)
-        m.add_image_measurement(
-            self.measurement_name(FTR_TRUE_POS_RATE), true_positive_rate
-        )
-        m.add_image_measurement(
-            self.measurement_name(FTR_FALSE_POS_RATE), false_positive_rate
-        )
-        m.add_image_measurement(
-            self.measurement_name(FTR_TRUE_NEG_RATE), true_negative_rate
-        )
-        m.add_image_measurement(
-            self.measurement_name(FTR_FALSE_NEG_RATE), false_negative_rate
-        )
-        m.add_image_measurement(self.measurement_name(FTR_RAND_INDEX), rand_index)
-        m.add_image_measurement(
-            self.measurement_name(FTR_ADJUSTED_RAND_INDEX), adjusted_rand_index
-        )
 
-        TP_mask = subscripts(1, 1)
-        FN_mask = subscripts(1, 0)
-        FP_mask = subscripts(0, 1)
-        TN_mask = subscripts(0, 0)
+        measurement_value = {
+            FTR_F_FACTOR: F_factor,
+            FTR_PRECISION: precision,
+            FTR_RECALL: recall,
+            FTR_RAND_INDEX: rand_index,
+            FTR_TRUE_POS_RATE: true_positive_rate,
+            FTR_FALSE_POS_RATE: false_positive_rate,
+            FTR_TRUE_NEG_RATE: true_negative_rate,
+            FTR_FALSE_NEG_RATE: false_negative_rate,
+            FTR_ADJUSTED_RAND_INDEX: adjusted_rand_index,
+        }
+
+        for k, v in measurement_value.items():
+            results[k] = v
+
+        TP_mask = subscripts(1, 1, GT_pixels, ID_pixels)
+        FN_mask = subscripts(1, 0, GT_pixels, ID_pixels)
+        FP_mask = subscripts(0, 1, GT_pixels, ID_pixels)
+        TN_mask = subscripts(0, 0, GT_pixels, ID_pixels)
 
         TP_pixels = numpy.zeros((xGT, yGT))
         FN_pixels = numpy.zeros((xGT, yGT))
@@ -378,9 +391,19 @@ def measureobjectoverlap(mask1, mask2, wants_emd:bool=False, max_points:int=250,
         FP_pixels = maskimg(FP_mask, FP_pixels)
         TN_pixels = maskimg(TN_mask, TN_pixels)
         if wants_emd:
-            emd = compute_emd(objects_ID, objects_GT)
+            emd = compute_emd(
+                objects_ID,
+                objects_GT,
+                max_points,
+                decimation_method,
+                max_distance,
+                penalize_missing,
+            )
 
-            results[measurement_name(FTR_EARTH_MOVERS_DISTANCE)]= emd
+            results[measurement_name(FTR_EARTH_MOVERS_DISTANCE)] = emd
+
+        return results
+
 
 def compute_rand_index_ijv(gt_ijv, test_ijv, shape):
     """Compute the Rand Index for an IJV matrix
@@ -434,9 +457,7 @@ def compute_rand_index_ijv(gt_ijv, test_ijv, shape):
     #
     u = numpy.vstack(
         [
-            numpy.column_stack(
-                [gt_ijv, numpy.zeros(gt_ijv.shape[0], gt_ijv.dtype)]
-            ),
+            numpy.column_stack([gt_ijv, numpy.zeros(gt_ijv.shape[0], gt_ijv.dtype)]),
             numpy.column_stack(
                 [test_ijv, numpy.ones(test_ijv.shape[0], test_ijv.dtype)]
             ),
@@ -458,9 +479,7 @@ def compute_rand_index_ijv(gt_ijv, test_ijv, shape):
     first_coord_idxs = numpy.hstack(
         [
             [0],
-            numpy.argwhere(
-                (u[:-1, 0] != u[1:, 0]) | (u[:-1, 1] != u[1:, 1])
-            ).flatten()
+            numpy.argwhere((u[:-1, 0] != u[1:, 0]) | (u[:-1, 1] != u[1:, 1])).flatten()
             + 1,
             [u.shape[0]],
         ]
@@ -501,8 +520,7 @@ def compute_rand_index_ijv(gt_ijv, test_ijv, shape):
             lm_first = numpy.hstack(
                 [
                     [0],
-                    numpy.argwhere(numpy.any(lm[:-1, :] != lm[1:, :], 1)).flatten()
-                    + 1,
+                    numpy.argwhere(numpy.any(lm[:-1, :] != lm[1:, :], 1)).flatten() + 1,
                     [lm.shape[0]],
                 ]
             )
@@ -524,12 +542,10 @@ def compute_rand_index_ijv(gt_ijv, test_ijv, shape):
     for i, (c1, tobject_numbers1, gobject_numbers1) in enumerate(labels):
         for j, (c2, tobject_numbers2, gobject_numbers2) in enumerate(labels[i:]):
             nhits_test = numpy.sum(
-                tobject_numbers1[:, numpy.newaxis]
-                == tobject_numbers2[numpy.newaxis, :]
+                tobject_numbers1[:, numpy.newaxis] == tobject_numbers2[numpy.newaxis, :]
             )
             nhits_gt = numpy.sum(
-                gobject_numbers1[:, numpy.newaxis]
-                == gobject_numbers2[numpy.newaxis, :]
+                gobject_numbers1[:, numpy.newaxis] == gobject_numbers2[numpy.newaxis, :]
             )
             if j == 0:
                 N = c1 * (c1 - 1) / 2
@@ -548,8 +564,7 @@ def compute_rand_index_ijv(gt_ijv, test_ijv, shape):
     #
     e_omega = (
         numpy.sum(
-            numpy.sum(tbl[:min_JK, :min_JK], 0)
-            * numpy.sum(tbl[:min_JK, :min_JK], 1)
+            numpy.sum(tbl[:min_JK, :min_JK], 0) * numpy.sum(tbl[:min_JK, :min_JK], 1)
         )
         / N**2
     )
@@ -559,7 +574,15 @@ def compute_rand_index_ijv(gt_ijv, test_ijv, shape):
     adjusted_rand_index = (rand_index - e_omega) / (1 - e_omega)
     return rand_index, adjusted_rand_index
 
-def compute_emd(src_objects, dest_objects, penalize_missing:bool, decimation_method:str, max_distance: int):
+
+def compute_emd(
+    src_objects,
+    dest_objects,
+    max_points: int,
+    decimation_method: str,
+    max_distance: int,
+    penalize_missing: bool,
+):
     """Compute the earthmovers distance between two sets of objects
 
     src_objects - move pixels from these objects
@@ -577,20 +600,20 @@ def compute_emd(src_objects, dest_objects, penalize_missing:bool, decimation_met
     ):
         if angels.count == 0:
             if penalize_missing:
-                return numpy.sum(demons.areas) * self.max_distance.value
+                return numpy.sum(get_areas(demons)) * max_distance
             else:
                 return 0
     if decimation_method == DM_KMEANS:
-        isrc, jsrc = self.get_kmeans_points(src_objects, dest_objects)
+        isrc, jsrc = get_kmeans_points(src_objects, dest_objects, max_points)
         idest, jdest = isrc, jsrc
     else:
         isrc, jsrc = get_skeleton_points(src_objects, max_points)
         idest, jdest = get_skeleton_points(dest_objects, max_points)
     src_weights, dest_weights = [
-        get_weights(i, j, get_labels_mask(objects))
-        for i, j, objects in (
-            (isrc, jsrc, src_objects),
-            (idest, jdest, dest_objects),
+        get_weights(i, j, object)
+        for i, j, object in (
+            (isrc, jsrc, labels_to_binmasks(src_objects)),
+            (idest, jdest, labels_to_binmasks(dest_objects)),
         )
     ]
     ioff, joff = [
@@ -598,8 +621,8 @@ def compute_emd(src_objects, dest_objects, penalize_missing:bool, decimation_met
         for src, dest in ((isrc, idest), (jsrc, jdest))
     ]
     c = numpy.sqrt(ioff * ioff + joff * joff).astype(numpy.int32)
-    c[c > max_distance.value] = max_distance.value
-    extra_mass_penalty = max_distance.value if penalize_missing else 0
+    c[c > max_distance] = max_distance
+    extra_mass_penalty = max_distance if penalize_missing else 0
     return centrosome.fastemd.emd_hat_int32(
         src_weights.astype(numpy.int32),
         dest_weights.astype(numpy.int32),
@@ -607,17 +630,9 @@ def compute_emd(src_objects, dest_objects, penalize_missing:bool, decimation_met
         extra_mass_penalty=extra_mass_penalty,
     )
 
-def get_labels_mask(obj):
-    labels_mask = numpy.zeros(obj.shape, bool)
-    # TODO adjust here
-    for labels, indexes in obj.get_labels():
-        labels_mask = labels_mask | labels > 0
-    return labels_mask
 
 def get_skeleton_points(obj, max_points: int):
     """Get points by skeletonizing the objects and decimating"""
-    ii = []
-    jj = []
     total_skel = numpy.zeros(obj.shape, bool)
     # TODO adjust here
     for labels, indexes in obj.get_labels():
@@ -657,13 +672,12 @@ def get_skeleton_points(obj, max_points: int):
         # Get a linear space of self.max_points elements with bounds at
         # 0 and len(order)-1 and use that to select the points.
         #
-        order = order[
-            numpy.linspace(0, len(order) - 1, max_points).astype(int)
-        ]
+        order = order[numpy.linspace(0, len(order) - 1, max_points).astype(int)]
         return i[order], j[order]
     return i, j
 
-def get_kmeans_points(self, src_obj, dest_obj, max_points:int):
+
+def get_kmeans_points(src_obj, dest_obj, max_points: int):
     """Get representative points in the objects using K means
 
     src_obj - get some of the foreground points from the source objects
@@ -676,20 +690,19 @@ def get_kmeans_points(self, src_obj, dest_obj, max_points:int):
     from sklearn.cluster import KMeans
 
     ijv = numpy.vstack((src_obj.ijv, dest_obj.ijv))
-    if len(ijv) <= self.max_points.value:
+    if len(ijv) <= max_points:
         return ijv[:, 0], ijv[:, 1]
     random_state = numpy.random.RandomState()
     random_state.seed(ijv.astype(int).flatten())
-    kmeans = KMeans(
-        n_clusters=self.max_points.value, tol=2, random_state=random_state
-    )
+    kmeans = KMeans(n_clusters=max_points, tol=2, random_state=random_state)
     kmeans.fit(ijv[:, :2])
     return (
         kmeans.cluster_centers_[:, 0].astype(numpy.uint32),
         kmeans.cluster_centers_[:, 1].astype(numpy.uint32),
     )
 
-def get_weights(self, i, j, labels_mask):
+
+def get_weights(i, j, labels_mask):
     """Return the weights to assign each i,j point
 
     Assign each pixel in the labels mask to the nearest i,j and return
@@ -722,13 +735,26 @@ def get_weights(self, i, j, labels_mask):
     result[: len(bc)] = bc
     return result
 
-def measurement_name(feature. object_name_GT, object_name_ID):
+
+# def measurement_name(feature, object_name_GT, object_name_ID):
+def measurement_name(feature, *args):
+    # name_components = [C_IMAGE_OVERLAP]
     return "_".join(
         (
             C_IMAGE_OVERLAP,
             feature,
-            object_name_GT.value,
-            object_name_ID.value,
+            *args,
+            # object_name_GT.value,
+            # object_name_ID.value,
         )
     )
 
+
+def get_areas(masks: numpy.ndarray):
+    """
+    Assumes mask is an flat array of integer masks
+    Works for both 2D and 3D label masks.
+    """
+    unique_vals = numpy.unique(masks)
+    unique_vals = sorted(unique_vals[unique_vals > 0])
+    return numpy.array([(masks == i).sum() for i in unique_vals])
