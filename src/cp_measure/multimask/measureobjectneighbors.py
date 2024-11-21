@@ -106,7 +106,7 @@ def measureobjectneighbors(
     masks2: numpy.ndarray,
     distance_method: str = D_EXPAND,
     distance: int = 5,
-)->dict[str,list[float | int]]:
+) -> dict[str, list[float | int]]:
     """
     Calculate neighbors of objects based on different methods. Supports 3D masks.
 
