@@ -611,11 +611,24 @@ def compute_emd(
     else:
         isrc, jsrc = get_skeleton_points(src_objects, max_points)
         idest, jdest = get_skeleton_points(dest_objects, max_points)
+        # TODO simplify
+    src_union_binmask, dest_union_binmask = [
+        get_labels_mask(numpy.array(labels_to_binmasks(x)))
+        for x in (src_objects, dest_objects)
+    ]
     src_weights, dest_weights = [
         get_weights(i, j, object)
         for i, j, object in (
-            (isrc, jsrc, labels_to_binmasks(src_objects)),
-            (idest, jdest, labels_to_binmasks(dest_objects)),
+            (
+                isrc,
+                jsrc,
+                src_union_binmask,
+            ),
+            (
+                idest,
+                jdest,
+                dest_union_binmask,
+            ),
         )
     ]
     ioff, joff = [
@@ -713,6 +726,7 @@ def get_weights(i, j, labels_mask):
     #
     # Create a mapping of chosen points to their index in the i,j array
     #
+
     total_skel = numpy.zeros(labels_mask.shape, int)
     total_skel[i, j] = numpy.arange(1, len(i) + 1)
     #
@@ -760,3 +774,13 @@ def get_areas(masks: numpy.ndarray):
     unique_vals = numpy.unique(masks)
     unique_vals = sorted(unique_vals[unique_vals > 0])
     return numpy.array([(masks == i).sum() for i in unique_vals])
+
+
+def get_labels_mask(label_masks):
+    """
+    Transform a set of masks into the union of all binary masks. Results in a binary 2D mask.
+    """
+    labels_mask = numpy.zeros(label_masks.shape[1:], bool)
+    for labels in label_masks:
+        labels_mask = labels_mask | (labels > 0)
+    return labels_mask
