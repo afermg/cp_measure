@@ -17,7 +17,7 @@ def get_sample_label_masks(size: int = 789):
     return masks
 
 def get_transposed_mask(size: int= 789):
-    masks = get_sample_label_masks()
+    masks = get_sample_label_masks(size=size)
     return [masks, masks.T]
 
 @pytest.mark.parametrize("masks", (get_sample_label_masks(),))
