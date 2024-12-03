@@ -198,8 +198,9 @@ For Type 3 functions:
 You can follow progress [[https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing][here]].
 
 *** Done
-- Type 1, 2 and 3 measurements in sklearn style (process multiple masks per image)
+- Type 1, 2 and 3 measurements in sklearn style (multiple masks per image)
 *** Pending
+- Add a wrapper for type 3 measurements
 - Type 4 measurements
   
   
