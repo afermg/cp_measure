@@ -22,7 +22,7 @@ Users usually want to calculate all the features. There are four type of measure
 - Type 3: 2 sets of masks (e.g., number of neighbors)
 - Type 4: 1 image + 2 sets of masks  (e.g., skeleton)
   
-This shows the simplest way to use the first set (1 image, 1 mask set), which currently follows the style of the scikit-image syule (1 image, 1 matrix with non-overlapping labels).
+This shows the simplest way to use the first set (1 image, 1 mask set), which currently follows the style of scikit-image (1 image, 1 matrix with non-overlapping labels).
 #+begin_src python
 import numpy as np
 
@@ -158,6 +158,11 @@ for name, v in measurements.items():
 """
 #+end_src
 
+**** Multimask (Type 3) methods:
+#+begin_src
+  
+#+end_src
+
 *** Call specific measurements
 If you need a specific measurement/feature you can just import it. Note that measurements come in sets, so you have to fetch the one that you specifically require from the resultant dictionary. Any available measurement can be found using code as follows:
 #+begin_src python
@@ -185,13 +190,17 @@ And for Type 2 functions:
 - measurecolocalization.get_correlation_costes
 - measurecolocalization.get_correlation_overlap  
 
+For Type 3 functions:
+- measureobjectoverlap.measureobjectoverlap
+- measureobjectneghbors.measureobjectneighboors
+  
 * Pending measurements 
 You can follow progress [[https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing][here]].
 
 *** Done
-- Type 1 and 2 measurements in sklearn style (process multiple masks per image)
+- Type 1, 2 and 3 measurements in sklearn style (process multiple masks per image)
 *** Pending
-- Type 3 and 4 measurements
+- Type 4 measurements
   
   
 *** Additional notes
