@@ -1,4 +1,5 @@
 [project.urls]
+name = "cp_measure"
 Homepage = "https://github.com/afermg/cp_measure"
 
 [tool.poetry]
