@@ -323,7 +323,7 @@ def get_radial_zernikes(
     ijv = masks_to_ijv(labels)
 
     # MODIFIED: TODO double-check check that this -1 makes sense! `l` is used as indices later on
-    l = ijv[:, 2]
+    l = ijv[:, 2] -1
 
     yx = (ijv[:, :2] - ij[l, :]) / r[l, numpy.newaxis]
 
