@@ -188,10 +188,10 @@ def get_granularity(
     else:
         footprint = skimage.morphology.ball(radius, dtype=bool)
     back_pixels_mask = numpy.zeros_like(back_pixels)
-    back_pixels_mask[back_mask == True] = back_pixels[back_mask == True]
+    back_pixels_mask[back_mask == 1] = back_pixels[back_mask == 1]
     back_pixels = skimage.morphology.erosion(back_pixels_mask, footprint=footprint)
     back_pixels_mask = numpy.zeros_like(back_pixels)
-    back_pixels_mask[back_mask == True] = back_pixels[back_mask == True]
+    back_pixels_mask[back_mask == 1] = back_pixels[back_mask == 1]
     back_pixels = skimage.morphology.dilation(back_pixels_mask, footprint=footprint)
     if image_sample_size < 1:
         if pixels.ndim == 2:
@@ -233,7 +233,6 @@ def get_granularity(
     # during reconstruction
     #
     # ero[~mask] = 0
-    currentmean = startmean
     startmean = max(startmean, numpy.finfo(float).eps)
 
     if pixels.ndim == 2:
@@ -254,7 +253,6 @@ def get_granularity(
     for granularity_id in range(1, ng + 1):
         # NOTE: This seems to be an iterative process of sequential
         # erosions and reconstructions
-        prevmean = currentmean
         # ero_mask = numpy.zeros_like(ero)
         # ero_mask[mask == True] = ero[mask == True]
         ero_mask = ero.copy()
@@ -263,7 +261,6 @@ def get_granularity(
         # Use a mask (footprint) to make bright sections bigger
         rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
         # currentmean = numpy.mean(rec[mask])
-        currentmean = numpy.mean(rec)
         # gs is the image granularity
         # gs = (prevmean - currentmean) * 100 / startmean
         # image_granularity = gs

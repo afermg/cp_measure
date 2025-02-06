@@ -764,7 +764,7 @@ def get_sizeshape(
             slices = tuple(
                 slice(
                     max(props[f"bbox-{i}"][idx] - 1, 0),
-                    min(props[f"bbox-{i+3}"][idx] + 1, labels.shape[i]),
+                    min(props[f"bbox-{i + 3}"][idx] + 1, labels.shape[i]),
                 )
                 for i in range(3)
             )
