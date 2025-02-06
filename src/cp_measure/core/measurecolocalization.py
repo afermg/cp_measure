@@ -185,7 +185,7 @@ def calculate_threshold(
         labels[second_pixels >= tss[labels - 1]],
         lrange,
     )
-    return fi_thresh, si_thresh, tot_fi_thr, tot_fi_thr, combined_thresh
+    return fi_thresh, si_thresh, tot_fi_thr, tot_si_thr, combined_thresh
 
 
 def get_correlation_pearson_ind(
