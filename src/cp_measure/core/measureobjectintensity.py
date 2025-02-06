@@ -125,7 +125,6 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
     masks is a labeled array where 0 are background images.
     """
     masked_image = pixels
-    image_mask = numpy.ones_like(pixels, dtype=bool)
 
     if pixels.ndim == 2:
         img = pixels.reshape(1, *pixels.shape)

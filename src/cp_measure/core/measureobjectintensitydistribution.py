@@ -5,7 +5,6 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
-
 from cp_measure.utils import masks_to_ijv
 
 """"
@@ -173,13 +172,13 @@ def get_radial_distribution(
 
     for color in range(1, ncolors + 1):
         mask = colors == color
-        l, d = centrosome.propagate.propagate(
+        l_, d = centrosome.propagate.propagate(
             numpy.zeros(center_labels.shape), center_labels, mask, 1
         )
 
         d_from_center[mask] = d[mask]
 
-        cl[mask] = l[mask]
+        cl[mask] = l_[mask]
 
     good_mask = cl > 0
 
@@ -323,9 +322,9 @@ def get_radial_zernikes(
     ijv = masks_to_ijv(labels)
 
     # MODIFIED: TODO double-check check that this -1 makes sense! `l` is used as indices later on
-    l = ijv[:, 2] -1
+    l_ = ijv[:, 2] - 1
 
-    yx = (ijv[:, :2] - ij[l, :]) / r[l, numpy.newaxis]
+    yx = (ijv[:, :2] - ij[l_, :]) / r[l_, numpy.newaxis]
 
     z = centrosome.zernike.construct_zernike_polynomials(
         yx[:, 1], yx[:, 0], zernike_indexes
@@ -336,7 +335,7 @@ def get_radial_zernikes(
     # ijv_mask[ijv_mask] = pixels[ijv[ijv_mask,0], ijv[ijv_mask, 1]]
 
     yx = yx[ijv_mask, :]
-    l_ = l[ijv_mask]
+    l_ = l_[ijv_mask]
     z_ = z[ijv_mask, :]
 
     if len(l_) == 0:
