@@ -105,3 +105,6 @@ The Image-wide functions will not be implemented directly, they were originally 
 * Additional notes
 - This is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
 - The functions exposed perform minimal checks. They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
+  
+* Similar projects
+- [[https://github.com/EinarOlafsson/spacr][spacr]]: Library to analyse screens, it provides measurements (independently implemented) and a GUI.
