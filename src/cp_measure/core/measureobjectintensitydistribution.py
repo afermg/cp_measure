@@ -135,7 +135,8 @@ def get_radial_distribution(
         labels = labels.astype(numpy.integer)
 
     unique_labels = numpy.unique(labels)
-    nobjects = len(unique_labels[unique_labels > 0])
+    unique_labels = unique_labels[unique_labels > 0]
+    nobjects = len(unique_labels)
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
 
     # Find the point in each object farthest away from the edge.
@@ -151,7 +152,7 @@ def get_radial_distribution(
         # d_to_edge, labels, indices=[1]
         d_to_edge,
         labels,
-        indices=[1],
+        indices=unique_labels,
     )
 
     center_labels = numpy.zeros(labels.shape, int)
