@@ -148,8 +148,6 @@ def measureobjectneighbors(
     """
     dimensions = masks1.ndim
     # has_pixels = masks.any()
-    dimensions = masks1.ndim
-    # has_pixels = masks.any()
     labels = masks1
     neighbor_labels = masks2
     # neighbor_objects = workspace.object_set.get_objects(self.neighbors_name.value)
