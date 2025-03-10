@@ -305,11 +305,8 @@ def get_radial_zernikes(
     unique_labels = numpy.unique(labels)  # Will be used later for scipy.ndimage.sum
     unique_labels = unique_labels[unique_labels > 0]
     # MODIFIED: Delegate index generation to the minimum_enclosing_circle
-    # TODO: Check that this has the correct dimensions
-    ij = numpy.zeros((len(unique_labels) + 1, 2))
-    r = numpy.zeros((len(unique_labels) + 1))
     # MODIFIED: We assume non-overlapping labels for now
-    # TODO Support label overlap (i.e., add wrapper to format in ijv)
+    # TODO Support label overlap (i.e., format in ijv)
     # MODIFIED: Delegate indexes to minimum_enclosing_circle
     ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels, unique_labels)
 
@@ -319,10 +316,9 @@ def get_radial_zernikes(
     #
     ijv = masks_to_ijv(labels)
 
-    # MODIFIED: TODO double-check check that this -1 makes sense! `l` is used as indices later on
-    l_ = ijv[:, 2] - 1
+    l_ = ijv[:, 2] # (N,1) vector with labels
 
-    yx = (ijv[:, :2] - ij[l_, :]) / r[l_, numpy.newaxis]
+    yx = (ijv[:, :2] - ij[l_-1, :]) / r[l_-1, numpy.newaxis]
 
     z = centrosome.zernike.construct_zernike_polynomials(
         yx[:, 1], yx[:, 0], zernike_indexes
@@ -346,7 +342,7 @@ def get_radial_zernikes(
     else:
         # MODIFIED: Replaced sum with the updated sum_labels
         areas = scipy.ndimage.sum_labels(
-            numpy.ones(l_.shape, int), labels=l_, index=unique_labels-1
+            numpy.ones(l_.shape, int), labels=l_, index=unique_labels
         )
 
         #
@@ -360,13 +356,13 @@ def get_radial_zernikes(
             vr = scipy.ndimage.sum_labels(
                 pixels[ijv[:, 0], ijv[:, 1]] * z_[:, i].real,
                 labels=l_,
-                index=unique_labels-1,
+                index=unique_labels,
             )
 
             vi = scipy.ndimage.sum_labels(
                 pixels[ijv[:, 0], ijv[:, 1]] * z[:, i].imag,
                 labels=l_,
-                index=unique_labels-1,
+                index=unique_labels,
             )
 
             magnitude = numpy.sqrt(vr * vr + vi * vi) / areas
