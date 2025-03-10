@@ -309,12 +309,9 @@ def get_radial_zernikes(
     ij = numpy.zeros((len(unique_labels) + 1, 2))
     r = numpy.zeros((len(unique_labels) + 1))
     # MODIFIED: We assume non-overlapping labels for now
-    # TODO Support label overlap (i.e., format in ijv)
+    # TODO Support label overlap (i.e., add wrapper to format in ijv)
     # MODIFIED: Delegate indexes to minimum_enclosing_circle
-    for index, _ in enumerate(unique_labels, 1):
-        ij_, r_ = centrosome.cpmorphology.minimum_enclosing_circle(labels, [index])
-        ij[[index]] = ij_
-        r[[index]] = r_
+    ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels, unique_labels)
 
     #
     # Then compute x and y, the position of each labeled pixel
@@ -349,7 +346,7 @@ def get_radial_zernikes(
     else:
         # MODIFIED: Replaced sum with the updated sum_labels
         areas = scipy.ndimage.sum_labels(
-            numpy.ones(l_.shape, int), labels=l_, index=unique_labels
+            numpy.ones(l_.shape, int), labels=l_, index=unique_labels-1
         )
 
         #
@@ -363,13 +360,13 @@ def get_radial_zernikes(
             vr = scipy.ndimage.sum_labels(
                 pixels[ijv[:, 0], ijv[:, 1]] * z_[:, i].real,
                 labels=l_,
-                index=unique_labels,
+                index=unique_labels-1,
             )
 
             vi = scipy.ndimage.sum_labels(
                 pixels[ijv[:, 0], ijv[:, 1]] * z[:, i].imag,
                 labels=l_,
-                index=unique_labels,
+                index=unique_labels-1,
             )
 
             magnitude = numpy.sqrt(vr * vr + vi * vi) / areas
@@ -379,3 +376,4 @@ def get_radial_zernikes(
             results[f"{M_CATEGORY}_ZernikePhase_{n}_{m}"] = phase
 
     return results
+
