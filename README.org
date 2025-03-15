@@ -78,7 +78,7 @@ If you need a specific measurement/feature you can just import it. Note that mea
   
   mask = np.zeros((50, 50))
   mask[5:-6, 5:-6] = 1
-  get_sizeshape(mask, None) # pixels, the second argument, is not necessary for this measurement
+  get_sizeshape(mask, None) # pixels, the second argument, is not necessary for this particular measurement
 #+end_src
 
 The other available functions are as follows:
