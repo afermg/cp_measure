@@ -4,15 +4,14 @@ Homepage = "https://github.com/afermg/cp_measure"
 
 [tool.poetry]
 name = "cp_measure"
-version = "0.1.7"
+version = "0.1.8"
 description = """
 cp-measure implements CellProfiler Measurements. You can integrate them to your workflow or use them from CellProfiler 5 once they are integrated there."""
 authors = ["Alan Munoz"]
 readme = "README.org"
 packages = [{include = "cp_measure", from = "src"}]
 
-[tool.poetry.urls]
-name = "cp_measure"
+[poetry.urls]
 Homepage = "https://github.com/afermg/cp_measure"
 
 [tool.poetry.dependencies]
