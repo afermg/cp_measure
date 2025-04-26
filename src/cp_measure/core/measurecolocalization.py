@@ -84,8 +84,9 @@ import numpy
 import scipy.ndimage
 import scipy.stats
 from centrosome.cpmorphology import fixup_scipy_ndimage_result as fix
-from cp_measure.utils import labels_to_binmasks
 from scipy.linalg import lstsq
+
+from cp_measure.utils import labels_to_binmasks
 
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
@@ -152,8 +153,8 @@ def extract_pixels(
 ):
     fi = pixels_1[mask]
     si = pixels_2[mask]
-    labels = mask[mask]
-    lrange = numpy.arange(max(labels), dtype=numpy.int32) + 1
+    labels = mask.astype(numpy.uint32)[mask]
+    lrange = numpy.arange(max(labels), dtype=numpy.uint32) + 1
     return fi, si, labels, lrange
 
 
@@ -245,12 +246,14 @@ def get_correlation_rwc_ind(
     RWC2 = numpy.zeros(len(lrange))
     [Rank1] = numpy.lexsort(([labels], [first_pixels]))
     [Rank2] = numpy.lexsort(([labels], [second_pixels]))
-    Rank1_U = numpy.hstack(
-        [[False], first_pixels[Rank1[:-1]] != first_pixels[Rank1[1:]]]
-    )
-    Rank2_U = numpy.hstack(
-        [[False], second_pixels[Rank2[:-1]] != second_pixels[Rank2[1:]]]
-    )
+    Rank1_U = numpy.hstack([
+        [False],
+        first_pixels[Rank1[:-1]] != first_pixels[Rank1[1:]],
+    ])
+    Rank2_U = numpy.hstack([
+        [False],
+        second_pixels[Rank2[:-1]] != second_pixels[Rank2[1:]],
+    ])
     Rank1_S = numpy.cumsum(Rank1_U)
     Rank2_S = numpy.cumsum(Rank2_U)
     Rank_im1 = numpy.zeros(first_pixels.shape, dtype=int)
