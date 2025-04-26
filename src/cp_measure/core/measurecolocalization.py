@@ -173,8 +173,6 @@ def calculate_threshold(
     combined_thresh = (first_pixels >= tff[labels - 1]) & (
         second_pixels >= tss[labels - 1]
     )
-    if not combined_thresh.sum():
-        breakpoint()
     fi_thresh = first_pixels[combined_thresh]
     si_thresh = second_pixels[combined_thresh]
     tot_fi_thr = scipy.ndimage.sum(
