@@ -154,7 +154,7 @@ def extract_pixels(
     fi = pixels_1[mask]
     si = pixels_2[mask]
     labels = mask.astype(numpy.uint32)[mask]
-    lrange = numpy.arange(max(labels), dtype=numpy.uint32) + 1
+    lrange = numpy.arange(labels.max(), dtype=numpy.int32) + 1
     return fi, si, labels, lrange
 
 
@@ -170,10 +170,11 @@ def calculate_threshold(
     )
     tff = (thr / 100) * fix(scipy.ndimage.maximum(first_pixels, labels, lrange))
     tss = (thr / 100) * fix(scipy.ndimage.maximum(second_pixels, labels, lrange))
-
     combined_thresh = (first_pixels >= tff[labels - 1]) & (
         second_pixels >= tss[labels - 1]
     )
+    if not combined_thresh.sum():
+        breakpoint()
     fi_thresh = first_pixels[combined_thresh]
     si_thresh = second_pixels[combined_thresh]
     tot_fi_thr = scipy.ndimage.sum(
@@ -218,16 +219,21 @@ def get_correlation_manders_fold_ind(
         pixels_1, pixels_2, mask, thr
     )
     # Manders Coefficient
-    M1 = numpy.array(
-        scipy.ndimage.sum(fi_thresh, labels[combined_thresh], lrange)
-    ) / numpy.array(tot_fi_thr)
-    M2 = numpy.array(
-        scipy.ndimage.sum(si_thresh, labels[combined_thresh], lrange)
-    ) / numpy.array(tot_si_thr)
+    if combined_thresh.any():
+        M1 = numpy.array(
+            scipy.ndimage.sum(fi_thresh, labels[combined_thresh], lrange)
+        ) / numpy.array(tot_fi_thr)
+        M2 = numpy.array(
+            scipy.ndimage.sum(si_thresh, labels[combined_thresh], lrange)
+        ) / numpy.array(tot_si_thr)
+
+        # TODO remove this to support multiple labels
+        M1 = M1[0]
+        M2 = M2[0]
 
     return {
-        f"{F_MANDERS_FORMAT}_1": M1[0],
-        f"{F_MANDERS_FORMAT}_2": M2[0],
+        f"{F_MANDERS_FORMAT}_1": M1,
+        f"{F_MANDERS_FORMAT}_2": M2,
     }
 
 
