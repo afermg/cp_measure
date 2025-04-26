@@ -217,6 +217,8 @@ def get_correlation_manders_fold_ind(
         pixels_1, pixels_2, mask, thr
     )
     # Manders Coefficient
+    M1 = 0.0
+    M2 = 0.0
     if combined_thresh.any():
         M1 = numpy.array(
             scipy.ndimage.sum(fi_thresh, labels[combined_thresh], lrange)
@@ -270,16 +272,25 @@ def get_correlation_rwc_ind(
     weight = (R - Di) * 1.0 / R
     weight_thresh = weight[combined_thresh]
 
-    RWC1 = numpy.array(
-        scipy.ndimage.sum(fi_thresh * weight_thresh, labels[combined_thresh], lrange)
-    ) / numpy.array(tot_fi_thr)
-    RWC2 = numpy.array(
-        scipy.ndimage.sum(si_thresh * weight_thresh, labels[combined_thresh], lrange)
-    ) / numpy.array(tot_si_thr)
+    RWC1 = 0.0
+    RWC2 = 0.0
+    if combined_thresh.any():  # TODO adjust this to support multiple labels
+        RWC1 = numpy.array(
+            scipy.ndimage.sum(
+                fi_thresh * weight_thresh, labels[combined_thresh], lrange
+            )
+        ) / numpy.array(tot_fi_thr)
+        RWC2 = numpy.array(
+            scipy.ndimage.sum(
+                si_thresh * weight_thresh, labels[combined_thresh], lrange
+            )
+        ) / numpy.array(tot_si_thr)
+        RWC1 = RWC1[0]
+        RWC2 = RWC2[0]
 
     return {
-        f"{F_RWC_FORMAT}_1": RWC1[0],
-        f"{F_RWC_FORMAT}_2": RWC2[0],
+        f"{F_RWC_FORMAT}_1": RWC1,
+        f"{F_RWC_FORMAT}_2": RWC2,
     }
 
 
@@ -512,44 +523,50 @@ def get_correlation_overlap_ind(
     )
     _, _, _, _, combined_thresh = calculate_threshold(pixels_1, pixels_2, mask, thr)
     # Overlap Coefficient
-    fpsq = scipy.ndimage.sum(
-        first_pixels[combined_thresh] ** 2,
-        labels[combined_thresh],
-        lrange,
-    )
-    spsq = scipy.ndimage.sum(
-        second_pixels[combined_thresh] ** 2,
-        labels[combined_thresh],
-        lrange,
-    )
-    pdt = numpy.sqrt(numpy.array(fpsq) * numpy.array(spsq))
-
-    overlap = fix(
-        scipy.ndimage.sum(
-            first_pixels[combined_thresh] * second_pixels[combined_thresh],
+    K1 = 0.0
+    K2 = 0.0
+    if combined_thresh.any():  # TODO adjust for multiple labels
+        fpsq = scipy.ndimage.sum(
+            first_pixels[combined_thresh] ** 2,
             labels[combined_thresh],
             lrange,
         )
-        / pdt
-    )
-    K1 = fix(
-        (
+        spsq = scipy.ndimage.sum(
+            second_pixels[combined_thresh] ** 2,
+            labels[combined_thresh],
+            lrange,
+        )
+        pdt = numpy.sqrt(numpy.array(fpsq) * numpy.array(spsq))
+
+        overlap = fix(
             scipy.ndimage.sum(
                 first_pixels[combined_thresh] * second_pixels[combined_thresh],
                 labels[combined_thresh],
                 lrange,
             )
+            / pdt
         )
-        / (numpy.array(fpsq))
-    )
-    K2 = fix(
-        scipy.ndimage.sum(
-            first_pixels[combined_thresh] * second_pixels[combined_thresh],
-            labels[combined_thresh],
-            lrange,
+        K1 = fix(
+            (
+                scipy.ndimage.sum(
+                    first_pixels[combined_thresh] * second_pixels[combined_thresh],
+                    labels[combined_thresh],
+                    lrange,
+                )
+            )
+            / (numpy.array(fpsq))
         )
-        / numpy.array(spsq)
-    )
+        K2 = fix(
+            scipy.ndimage.sum(
+                first_pixels[combined_thresh] * second_pixels[combined_thresh],
+                labels[combined_thresh],
+                lrange,
+            )
+            / numpy.array(spsq)
+        )
+
+        K1 = K1[0]
+        K2 = K2[0]
 
     return {
         F_OVERLAP_FORMAT: overlap[0],
