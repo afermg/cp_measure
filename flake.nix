@@ -33,7 +33,7 @@
           devShells = {
             default  = let
               # These packages get built by Nix, and will be ahead on the PATH
-                pwp = (python311.withPackages (p: with p; [
+                pwp = (python312.withPackages (p: with p; [
                      python-lsp-server
                      python-lsp-ruff
                    ]));
@@ -45,7 +45,7 @@
                 packages = [
                   pkgs.gcc
                   pwp
-                  python311Packages.venvShellHook
+                  python312Packages.venvShellHook
                   uv
                 ]
                 ++ libList;
@@ -57,7 +57,7 @@
                     unset SOURCE_DATE_EPOCH
                   '';
                 shellHook = ''
-                    export UV_PYTHON=${pkgs.python311}
+                    export UV_PYTHON=${pkgs.python312}
                     export LD_LIBRARY_PATH=$NIX_LD_LIBRARY_PATH:$LD_LIBRARY_PATH
                     export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
 
