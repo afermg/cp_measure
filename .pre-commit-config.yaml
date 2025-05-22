@@ -1,20 +1,26 @@
+fail_fast: false
+default_language_version:
+    python: python3
+default_stages:
+    - pre-commit
+    - pre-push
+minimum_pre_commit_version: 2.16.0
+ci:
+    skip: []
 repos:
-  # Hooks that are run everywhere
-  - repo: https://github.com/biomejs/pre-commit
-    rev: v1.9.4
-    hooks:
-      - id: biome-format
-  # Hooks that are run for scripts
-  - repo: https://github.com/tox-dev/pyproject-fmt
-    rev: v2.5.1
-    hooks:
-      - id: pyproject-fmt
-        files: ^scripts/pyproject\.toml$
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.9
-    hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
-        files: ^scripts/
-      - id: ruff-format
-        files: ^scripts/
+    - repo: https://github.com/rbubley/mirrors-prettier
+      rev: v3.5.3
+      hooks:
+          - id: prettier
+    - repo: https://github.com/pre-commit/mirrors-mypy
+      rev: v1.15.0
+      hooks:
+          - id: mypy
+            additional_dependencies: [numpy, types-requests]
+            exclude: tests/|docs/
+    - repo: https://github.com/astral-sh/ruff-pre-commit
+      rev: v0.11.6
+      hooks:
+          - id: ruff
+            args: [--fix, --exit-non-zero-on-fix]
+          - id: ruff-format
