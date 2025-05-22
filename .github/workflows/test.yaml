@@ -41,6 +41,10 @@ jobs:
                   python-version: ${{ matrix.python }}
             - name: Install dependencies
               run: "uv sync --extra test"
+            - name: Install pre-commit
+              run: "uv pip install pre-commit"
+            - name: Run pre-commit
+              run: pre-commit run --all-files
             - name: Test
               env:
                   MPLBACKEND: agg
