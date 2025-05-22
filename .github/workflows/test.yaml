@@ -1,0 +1,72 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+defaults:
+  run:
+    # to fail on error in multiline statements (-e), in pipes (-o pipefail), and on unset variables (-u).
+    shell: bash -euo pipefail {0}
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+        os: [ubuntu-latest]
+        # one that matches "project-name".lower().replace('-', '_'), one that doesn't:
+        package-name: ["cp_measure"]
+
+    steps:
+      # Setup
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          cache-dependency-glob: "cp_measure/pyproject.toml"
+      - name: Install Ubuntu system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install pandoc
+      - name: Install build & check dependencies
+        run: |
+          uv tool install pre-commit --with=pre-commit-uv
+          uv tool install cruft --with=pre-commit-uv
+          uv tool install hatch
+      # Build
+      - name: Build from template
+        run: cruft create . --no-input --extra-context='{"package_name":"${{ matrix.package-name }}"}'
+      # Check
+      - name: Run pre-commit
+        run: |
+          cd "cp_measure"
+          git add .
+          pre-commit run --verbose --color=always --show-diff-on-failure --all-files
+      - name: Install the package and check if it can be imported
+        run: |
+          cd "cp_measure"
+          uv run python -c "import ${{ matrix.package-name }}"
+      # Docs
+      - name: Build the documentation
+        run: |
+          cd "{{cookiecutter.project_name}}"
+          hatch run docs:build
+
+  test-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          cache-dependency-glob: scripts/pyproject.toml
+      - name: set git default branch
+        run: git config --global init.defaultBranch main
+      - name: Run tests
+        working-directory: ./scripts
+        run: uvx hatch test
