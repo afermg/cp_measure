@@ -105,6 +105,7 @@ And for Type 2 functions:
 -   measurecolocalization.get_correlation_rwc
 -   measurecolocalization.get_correlation_costes
 -   measurecolocalization.get_correlation_overlap
+  
 For Type 3 functions:
 
 -   measureobjectoverlap.measureobjectoverlap
