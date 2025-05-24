@@ -11,16 +11,15 @@ pip install cp-measure
 ```
 
 
-### Poetry
+### Development
 
-If you want a development environment.
+If you want to install it for development use [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone git@github.com:afermg/cp_measure.git
 cd cp_measure
-poetry install 
+uv sync --all-extras
 ```
-
 
 ## Usage
 
