@@ -2,6 +2,7 @@ from itertools import product
 
 import numpy
 import pytest
+
 from cp_measure.bulk import get_core_measurements
 from cp_measure.examples import get_masks, get_pixels
 
@@ -30,8 +31,8 @@ def test_measurements(named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarr
                     [any(~(x == 0 | numpy.isnan(x))) for x in result.values()]
                 ), text
                 # Test that the output and number of masks match
-                assert all([len(x) == mask.max() for x in result.values()]), (
-                    f"Input-Output size does not match: Feature {name}, mask {mask_name}"
-                )
+                assert all(
+                    [len(x) == mask.max() for x in result.values()]
+                ), f"Input-Output size does not match: Feature {name}, mask {mask_name}"
             else:
                 assert result != 0 and not numpy.isnan(result), text
