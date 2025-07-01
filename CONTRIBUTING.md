@@ -14,7 +14,7 @@ cp_measure aims to be **lean in dependencies and complexity to maximize its acce
    git clone git@github.com:YOUR_USERNAME/cp_measure.git
    cd cp_measure
    ```
-3. Set up the development environment using uv:
+3. Set up the development environment using [uv](https://github.com/astral-sh/uv?tab=readme-ov-file#installation):
    ```bash
    uv sync --all-extras
    ```
@@ -35,7 +35,6 @@ We welcome various types of contributions:
 
 1. Check existing issues and pull requests to avoid duplicate work
 2. For significant changes, open an issue to discuss your proposal first
-3. Install [uv](https://github.com/astral-sh/uv?tab=readme-ov-file#installation) to manage Python environments and dependencies
 
 ### Making Changes
 
