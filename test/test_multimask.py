@@ -1,4 +1,4 @@
-""" "
+"""
 Test functions that operate multiple pixel arrays (e.g., correlations).
 """
 
