@@ -252,14 +252,18 @@ def get_correlation_rwc_ind(
     RWC2 = numpy.zeros(len(lrange))
     [Rank1] = numpy.lexsort(([labels], [first_pixels]))
     [Rank2] = numpy.lexsort(([labels], [second_pixels]))
-    Rank1_U = numpy.hstack([
-        [False],
-        first_pixels[Rank1[:-1]] != first_pixels[Rank1[1:]],
-    ])
-    Rank2_U = numpy.hstack([
-        [False],
-        second_pixels[Rank2[:-1]] != second_pixels[Rank2[1:]],
-    ])
+    Rank1_U = numpy.hstack(
+        [
+            [False],
+            first_pixels[Rank1[:-1]] != first_pixels[Rank1[1:]],
+        ]
+    )
+    Rank2_U = numpy.hstack(
+        [
+            [False],
+            second_pixels[Rank2[:-1]] != second_pixels[Rank2[1:]],
+        ]
+    )
     Rank1_S = numpy.cumsum(Rank1_U)
     Rank2_S = numpy.cumsum(Rank2_U)
     Rank_im1 = numpy.zeros(first_pixels.shape, dtype=int)
