@@ -64,6 +64,8 @@ will be positive, but there may not be a corresponding
 
 """
 
+from typing import Union
+
 import numpy
 import scipy
 import scipy.ndimage
@@ -106,7 +108,7 @@ def measureobjectneighbors(
     masks2: numpy.ndarray,
     distance_method: str = D_EXPAND,
     distance: int = 5,
-) -> dict[str, list[float | int]]:
+) -> dict[str, list[Union[float, int]]]:
     """
     Calculate neighbors of objects based on different methods. Supports 3D masks.
 

@@ -2,6 +2,7 @@ from itertools import product
 
 import numpy
 import pytest
+
 from cp_measure.bulk import get_core_measurements
 from cp_measure.examples import get_masks, get_pixels
 

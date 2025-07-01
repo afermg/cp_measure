@@ -56,6 +56,7 @@ References
 """
 
 from functools import reduce
+from typing import Union
 
 import centrosome.cpmorphology
 import centrosome.fastemd
@@ -65,6 +66,7 @@ import centrosome.propagate
 import numpy
 import scipy.ndimage
 import scipy.sparse
+
 from cp_measure.utils import labels_to_binmasks, masks_to_ijv
 
 C_IMAGE_OVERLAP = "Overlap"
@@ -101,7 +103,8 @@ DM_SKEL = "Skeleton"
 
 
 def nan_divide(
-    numerator: numpy.float64 | float | int, denominator: numpy.float64 | float | int
+    numerator: Union[numpy.float64, float, int],
+    denominator: Union[numpy.float64, float, int],
 ) -> float:
     if denominator == 0:
         return numpy.nan
@@ -258,7 +261,11 @@ def measureobjectoverlap(
         # Mark the first at each i, j != previous i, j
         first = numpy.where(
             numpy.hstack(
-                ([True], ~numpy.all(all_ijv[:-1, :2] == all_ijv[1:, :2], 1), [True])
+                (
+                    [True],
+                    ~numpy.all(all_ijv[:-1, :2] == all_ijv[1:, :2], 1),
+                    [True],
+                )
             )
         )[0]
         # Count # at each i, j
