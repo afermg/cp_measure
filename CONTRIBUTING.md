@@ -93,7 +93,7 @@ The project is actively developing in these areas:
 - **Pull Requests**: For code contributions and documentation improvements
 - **Discussions**: Feel free to start discussions about potential improvements or use cases
 
-## Notes on Project Relationship
+## Notes on Project Relationship to CellProfiler/cellprofiler_library
 
 cp_measure focuses specifically on reimplementing CellProfiler's measurement modules with a unified interface, while the CellProfiler team's `cellprofiler_library` project aims to port many CellProfiler modules. While there may be some overlap in the future, cp_measure maintains its focus on:
 - Minimal dependencies
