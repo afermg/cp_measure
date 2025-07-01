@@ -27,12 +27,12 @@ def test_measurements(named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarr
             text = f"Feature {name} returned zero/null on mask {mask_name}"
             if isinstance(result, dict):
                 # Test that at least one item contains a valid value
-                assert any(
-                    [any(~(x == 0 | numpy.isnan(x))) for x in result.values()]
-                ), text
+                assert any([
+                    any(~(x == 0 | numpy.isnan(x))) for x in result.values()
+                ]), text
                 # Test that the output and number of masks match
-                assert all(
-                    [len(x) == mask.max() for x in result.values()]
-                ), f"Input-Output size does not match: Feature {name}, mask {mask_name}"
+                assert all([len(x) == mask.max() for x in result.values()]), (
+                    f"Input-Output size does not match: Feature {name}, mask {mask_name}"
+                )
             else:
                 assert result != 0 and not numpy.isnan(result), text

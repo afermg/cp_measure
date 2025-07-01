@@ -4,6 +4,7 @@ Test functions that operate multiple pixel arrays (e.g., correlations).
 
 import numpy
 import pytest
+
 from cp_measure.multimask.measureobjectneighbors import measureobjectneighbors
 from cp_measure.multimask.measureobjectoverlap import measureobjectoverlap
 
