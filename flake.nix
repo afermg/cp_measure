@@ -36,6 +36,7 @@
                 pwp = (python312.withPackages (p: with p; [
                      python-lsp-server
                      python-lsp-ruff
+                     venvShellHook
                    ]));
             in mkShell {
                NIX_LD = runCommand "ld.so" {} ''
@@ -45,7 +46,6 @@
                 packages = [
                   pkgs.gcc
                   pwp
-                  python312Packages.venvShellHook
                   uv
                 ]
                 ++ libList;
@@ -61,10 +61,10 @@
                     export LD_LIBRARY_PATH=$NIX_LD_LIBRARY_PATH:$LD_LIBRARY_PATH
                     export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
 
-                    runHook venvShellHook
-                    uv sync
-
+                    uv sync --all-extras
                     export PYTHONPATH=${pwp}/${pwp.sitePackages}:$PYTHONPATH
+                    runHook venvShellHook
+                    source .venv/bin/activate
                 '';
              };
           };
