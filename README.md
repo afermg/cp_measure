@@ -142,3 +142,8 @@ The Image-wide functions will not be implemented directly, they were originally 
 
 -   [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independently implemented) and a GUI.
 -   [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
+
+# Cite
+If you used cp\_measure in your project, please cite as follows:
+
+Muñoz, Alán F., Tim Treis, Alexandr A. Kalinin, Shatavisha Dasgupta, Fabian Theis, Anne E. Carpenter, and Shantanu Singh. “Cp_measure: API-First Feature Extraction for Image-Based Profiling Workflows.” arXiv, July 1, 2025. https://doi.org/10.48550/arXiv.2507.01163.
