@@ -4,6 +4,7 @@ import numpy
 import pytest
 
 from cp_measure.bulk import get_core_measurements
+from cp_measure.core.measurecolocalization import get_correlation_overlap
 from cp_measure.examples import get_masks, get_pixels
 
 
@@ -36,3 +37,19 @@ def test_measurements(named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarr
                 )
             else:
                 assert result != 0 and not numpy.isnan(result), text
+
+
+def test_correlation_overlap():
+    size = 240
+    rng = numpy.random.default_rng(42)
+    pixels = rng.integers(low=1, high=255, size=(size, size, 2))
+
+    # Create two similar-sized objects
+    masks = numpy.zeros((size, size), dtype=int)
+    masks[50:100, 50:100] = 1  # First square 50x50
+    masks[80:120, 90:120] = 1  # Major asymmetries on bottom right edge
+    masks[150:200, 150:200] = 2  # Second square 50x50
+    masks[175:180, 180:210] = 2  # Minor asymmetries on bottom right edge
+    get_correlation_overlap(
+        pixels_1=pixels[..., 0], pixels_2=pixels[..., 0], masks=masks
+    )
