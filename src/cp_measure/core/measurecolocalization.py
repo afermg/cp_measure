@@ -574,8 +574,8 @@ def get_correlation_overlap_ind(
     is_scalar = numpy.isscalar(K1)
     return {
         F_OVERLAP_FORMAT: overlap[0],
-        f"{F_K_FORMAT}_1": 0 if is_scalar else K1[0],
-        f"{F_K_FORMAT}_2": 0 if is_scalar else K2[0],
+        f"{F_K_FORMAT}_1": K1 if is_scalar else K1[0],
+        f"{F_K_FORMAT}_2": K2 if is_scalar else K2[0],
     }
 
 
