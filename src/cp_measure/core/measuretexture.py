@@ -198,11 +198,11 @@ def get_texture(
 
     # MODIFIED: We assume that the mask provided has the same shape
     # as pixels, thus no cropping is performed
-    pixels[~masks.astype(bool)] = 0
 
     # mahotas.features.haralick bricks itself when provided a
     # dtype larger than uint8 (version 1.4.3)
-    pixels = skimage.util.img_as_ubyte(pixels)
+    pixels = skimage.util.img_as_ubyte(pixels, force_copy=True)
+    pixels[~masks.astype(bool)] = 0
     if gray_levels != 256:
         pixels = skimage.exposure.rescale_intensity(
             pixels, in_range=(0, 255), out_range=(0, gray_levels - 1)
