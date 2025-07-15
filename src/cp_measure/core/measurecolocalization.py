@@ -569,6 +569,7 @@ def get_correlation_overlap_ind(
             / numpy.array(spsq)
         )
 
+        # TODO Revert this block once integer labels are supported
         K1 = K1[0]
         K2 = K2[0]
     is_scalar = numpy.isscalar(K1)

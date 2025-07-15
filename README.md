@@ -123,12 +123,12 @@ You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPw
 
 ### Done
 
--   Type 1, 2 and 3 measurements in sklearn style (multiple masks per image)
+-   Type 1, 2 in sklearn style (multiple masks per image)
 
 
 ### Pending
 
--   Add a wrapper for type 3 measurements
+-   Add a wrapper for type 2 and 3 measurements
 -   Type 4 measurements (ObjectSkeleton). We don't know if it is worth implementing.
 
 
