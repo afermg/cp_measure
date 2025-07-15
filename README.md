@@ -90,26 +90,31 @@ get_sizeshape(mask, None) # pixels, the second argument, is not necessary for th
 
 The other available functions are as follows:
 
--   measureobjectintensitydistribution.get_radial_zernikes
--   measureobjectintensity.get_intensity
--   measureobjectsizeshape.get_zernike
--   measureobjectsizeshape.get_ferret
--   measuregranularity.get_granularity
--   measuretexture.get_texture
+```
+measureobjectintensitydistribution.get_radial_zernikes
+measureobjectintensity.get_intensity
+measureobjectsizeshape.get_zernike
+measureobjectsizeshape.get_ferret
+measuregranularity.get_granularity
+measuretexture.get_texture
+```
 
 And for Type 2 functions:
 
--   measurecolocalization.get_correlation_pearson
--   measurecolocalization.get_correlation_manders_fold
--   measurecolocalization.get_correlation_rwc
--   measurecolocalization.get_correlation_costes
--   measurecolocalization.get_correlation_overlap
+```
+measurecolocalization.get_correlation_pearson
+measurecolocalization.get_correlation_manders_fold
+measurecolocalization.get_correlation_rwc
+measurecolocalization.get_correlation_costes
+measurecolocalization.get_correlation_overlap
+```
   
 For Type 3 functions:
 
--   measureobjectoverlap.measureobjectoverlap
--   measureobjectneghbors.measureobjectneighboors
-
+```
+measureobjectoverlap.measureobjectoverlap
+measureobjectneghbors.measureobjectneighboors
+```
 
 # Work in Progress
 
