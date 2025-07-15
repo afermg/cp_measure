@@ -148,3 +148,14 @@ The Image-wide functions will not be implemented directly, they were originally 
 If you used cp\_measure in your project, please cite as follows:
 
 Muñoz, Alán F., Tim Treis, Alexandr A. Kalinin, Shatavisha Dasgupta, Fabian Theis, Anne E. Carpenter, and Shantanu Singh. “Cp_measure: API-First Feature Extraction for Image-Based Profiling Workflows.” arXiv, July 1, 2025. https://doi.org/10.48550/arXiv.2507.01163.
+
+If you use the bibtex format:
+
+```
+@article{munoz2025cp_measure,
+  title={cp\_measure: API-first feature extraction for image-based profiling workflows},
+  author={Mu{\~n}oz, Al{\'a}n F and Treis, Tim and Kalinin, Alexandr A and Dasgupta, Shatavisha and Theis, Fabian and Carpenter, Anne E and Singh, Shantanu},
+  journal={arXiv preprint arXiv:2507.01163},
+  year={2025}
+}
+```
