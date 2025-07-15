@@ -140,8 +140,9 @@ The Image-wide functions will not be implemented directly, they were originally 
 
 # Similar projects
 
--   [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independently implemented) and a GUI.
--   [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
+- [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
+- [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
+- [thype](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 
 # Cite
 If you used cp\_measure in your project, please cite as follows:
