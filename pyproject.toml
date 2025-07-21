@@ -1,7 +1,7 @@
 [project]
 name = "cp_measure"
-version = "0.1.10"
-description = "cp-measure implements CellProfiler Measurements. You can integrate them to your workflow or use them from CellProfiler 5 once they are integrated there."
+version = "0.1.11"
+description = "cp-measure implements CellProfiler Measurements. "
 authors = [
     {name= "Alan Munoz"},
 ]
