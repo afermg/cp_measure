@@ -30,7 +30,7 @@ Users usually want to calculate all the features. There are four type of measure
 -   Type 3: 2 sets of masks (e.g., number of neighbors)
 -   Type 4: 1 image + 2 sets of masks (e.g., skeleton)
 
-This shows the simplest way to use the first set (1 image, 1 mask set), which currently follows the style of scikit-image (1 image, 1 matrix with non-overlapping labels). **IMPORTANT:** To match CellProfiler measurements 1:1 you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
+This shows the simplest way to use the first set (1 image, 1 mask set), which currently follows the style of scikit-image (1 image, 1 matrix with non-overlapping labels). **IMPORTANT:** If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
 
 ```python
 import numpy as np
