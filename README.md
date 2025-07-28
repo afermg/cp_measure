@@ -131,15 +131,11 @@ You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPw
 -   Type 4 measurements (ObjectSkeleton). We don't know if it is worth implementing.
 
 
-### Additional notes
-
-The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
-
-
 # Additional notes
 
--   This is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
--   The functions exposed perform minimal checks. They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
+- The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
+- This is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
+- The functions exposed perform minimal checks. They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
 
 
 # Similar projects
@@ -149,11 +145,7 @@ The Image-wide functions will not be implemented directly, they were originally 
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 
 # Cite
-If you used cp\_measure in your project, please cite as follows:
-
-Muñoz, Alán F., Tim Treis, Alexandr A. Kalinin, Shatavisha Dasgupta, Fabian Theis, Anne E. Carpenter, and Shantanu Singh. “Cp_measure: API-First Feature Extraction for Image-Based Profiling Workflows.” arXiv, July 1, 2025. https://doi.org/10.48550/arXiv.2507.01163.
-
-If you use the bibtex format:
+If you used cp\_measure in your project, please cite using the following bib entry:
 
 ```
 @article{munoz2025cp_measure,
