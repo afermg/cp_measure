@@ -1,10 +1,14 @@
+<div align="center">
+<img src="./logos/cpm.svg" width="150px">
+</div>
+
+# cp_measure: Morphological features for imaging data
 Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but you want to do it in a programmatic way? Look no more, this package was developed by and for the click-a-phobic scientists.
 
+## Quick overview
 
-# Quick overview
 
-
-## Installation
+### Installation
 
 ```bash
 pip install cp-measure
@@ -21,7 +25,7 @@ cd cp_measure
 uv sync --all-extras
 ```
 
-## Usage
+### Usage
 
 Users usually want to calculate all the features. There are four type of measurements, based on their inputs:
 
@@ -74,7 +78,7 @@ for name, v in measurements.items():
 ```
 
 
-### Call specific measurements
+#### Call specific measurements
 
 If you need a specific measurement/feature you can just import it. Note that measurements come in sets, so you have to fetch the one that you specifically require from the resultant dictionary. Any available measurement can be found using code as follows:
 
@@ -116,7 +120,7 @@ measureobjectoverlap.measureobjectoverlap
 measureobjectneghbors.measureobjectneighboors
 ```
 
-# Work in Progress
+## Work in Progress
 
 You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing).
 
@@ -138,13 +142,13 @@ You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPw
 - The functions exposed perform minimal checks. They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
 
 
-# Similar projects
+## Similar projects
 
 - [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
 - [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 
-# Cite
+## Cite
 If you used cp\_measure in your project, please cite using the following bib entry:
 
 ```
