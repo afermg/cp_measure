@@ -2,7 +2,7 @@
 <img src="./logos/cpm.svg" width="150px">
 </div>
 
-# Morphological features for imaging data
+# cp_measure: Morphological features for imaging data
 Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but you want to do it in a programmatic way? Look no more, this package was developed by and for the click-a-phobic scientists.
 
 ## Quick overview
