@@ -1,6 +1,6 @@
 Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but you want to do it in a programmatic way? Look no more, this package was developed by and for the click-a-phobic scientists.
 
-![logo](./logos/cpm.svg)
+![logo](./logos/cpm.svg | width=50)
 
 # Quick overview
 
