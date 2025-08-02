@@ -1,13 +1,27 @@
-import centrosome.cpmorphology
-import centrosome.propagate
-import centrosome.zernike
-import numpy
-import numpy.ma
-import scipy.ndimage
-import scipy.sparse
-from cp_measure.utils import masks_to_ijv
+"""
+MeasureObjectIntensityDistribution
+==================================
 
-""""
+**MeasureObjectIntensityDistribution** measures the spatial distribution of
+intensities within each object.
+
+Given an image with objects identified, this module measures the
+intensity distribution from each object’s center to its boundary within
+a set of bins, i.e., rings that you specify.
+
+|MeasureObjectIntensityDistribution_image0|
+
+The distribution is measured from the center of the object, where the
+center is defined as the point farthest from any edge. The numbering of bins is
+from 1 (innermost) to *N* (outermost), where *N* is the number of bins
+you specify. Alternatively, if primary objects exist within
+the object of interest (e.g., nuclei within cells), you can choose the
+center of the primary objects as the center from which to measure the
+radial distribution. This might be useful in cytoplasm-to-nucleus
+translocation experiments, for example. Note that the ring widths are
+normalized per-object, i.e., not necessarily a constant width across
+objects.
+
 ============ ============ ===============
 Supports 2D? Supports 3D? Respects masks?
 ============ ============ ===============
@@ -36,6 +50,16 @@ Measurements made by this module
    gives the moment’s orientation.
 
 """
+
+import centrosome.cpmorphology
+import centrosome.propagate
+import centrosome.zernike
+import numpy
+import numpy.ma
+import scipy.ndimage
+import scipy.sparse
+
+from cp_measure.utils import masks_to_ijv
 
 Z_NONE = "None"
 Z_MAGNITUDES = "Magnitudes only"
