@@ -381,7 +381,6 @@ dependencies = [
     { name = "centrosome" },
     { name = "mahotas" },
     { name = "numpy" },
-    { name = "ruff" },
     { name = "scikit-image" },
     { name = "scipy" },
 ]
@@ -403,7 +402,6 @@ requires-dist = [
     { name = "centrosome", specifier = ">=1.3.2" },
     { name = "mahotas", specifier = ">=1.4.13,<2.0.0" },
     { name = "numpy", specifier = ">=1.22.1" },
-    { name = "ruff", specifier = ">=0.12.1" },
     { name = "scikit-image", specifier = ">=0.20.0" },
     { name = "scipy", specifier = ">=1.9.1" },
 ]

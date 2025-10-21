@@ -14,7 +14,6 @@ dependencies = [
     "centrosome>=1.3.2",
     "numpy>=1.22.1",
     "mahotas<2.0.0,>=1.4.13",
-    "ruff>=0.12.1",
 ]
 
 [project.urls]
