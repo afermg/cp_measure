@@ -72,11 +72,10 @@
               '';
               shellHook = ''
                 export UV_PYTHON=${pkgs.python313}
-                expot CC=clang
                 export LD_LIBRARY_PATH=$NIX_LD_LIBRARY_PATH:$LD_LIBRARY_PATH
                 export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
 
-                uv sync --all-extras
+                uv sync --all-groups
                 export PYTHONPATH=${pwp}/${pwp.sitePackages}:$PYTHONPATH
                 runHook venvShellHook
                 source .venv/bin/activate
