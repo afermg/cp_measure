@@ -24,9 +24,6 @@ includes = [
     "src/cp_measure",
 ]
 
-[tool.uv.sources]
-centrosome = { path = "../centrosome", editable = true }
-
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
