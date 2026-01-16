@@ -14,17 +14,6 @@ Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but
 pip install cp-measure
 ```
 
-
-### Development
-
-If you want to install it for development use [uv](https://docs.astral.sh/uv/).
-
-```bash
-git clone git@github.com:afermg/cp_measure.git
-cd cp_measure
-uv sync --all-groups
-```
-
 ### Usage
 
 Users usually want to calculate all the features. There are four type of measurements, based on their inputs:
@@ -122,7 +111,27 @@ measureobjectoverlap.measureobjectoverlap
 measureobjectneghbors.measureobjectneighboors
 ```
 
-## Work in Progress
+## Similar projects
+
+- [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
+- [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
+- [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
+
+### Contribute
+
+Please use GitHub issues to report bugs and issues or submit a Pull Request.
+
+### Development installation
+
+If you want to install it for development use [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone git@github.com:afermg/cp_measure.git
+cd cp_measure
+uv sync --all-groups
+```
+
+## Current work
 
 You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing).
 
@@ -137,18 +146,12 @@ You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPw
 -   Type 4 measurements (ObjectSkeleton). We don't know if it is worth implementing.
 
 
-# Additional notes
+# Design notes
 
+- cp\_measure is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
 - The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
-- This is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
-- The functions exposed perform minimal checks. They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
+- The functions do not include guardrails (e.g., checks of type or value). They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
 
-
-## Similar projects
-
-- [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
-- [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
-- [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 
 ## Cite
 If you used cp\_measure in your project, please cite using the following bib entry:
