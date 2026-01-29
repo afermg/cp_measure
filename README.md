@@ -5,6 +5,21 @@
 # cp_measure: Morphological features for imaging data
 Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but you want to do it in a programmatic way? Look no more, this package was developed by and for the click-a-phobic scientists.
 
+
+### Preprint
+[Here](https://arxiv.org/abs/2507.01163) is the current version of the preprint.
+
+If you used cp\_measure in your project, please cite using the following bib entry:
+
+```
+@article{munoz2025cp_measure,
+  title={cp\_measure: API-first feature extraction for image-based profiling workflows},
+  author={Mu{\~n}oz, Al{\'a}n F and Treis, Tim and Kalinin, Alexandr A and Dasgupta, Shatavisha and Theis, Fabian and Carpenter, Anne E and Singh, Shantanu},
+  journal={arXiv preprint arXiv:2507.01163},
+  year={2025}
+}
+```
+
 ## Quick overview
 
 
@@ -151,16 +166,3 @@ You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPw
 - cp\_measure is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
 - The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
 - The functions do not include guardrails (e.g., checks of type or value). They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
-
-
-## Cite
-If you used cp\_measure in your project, please cite using the following bib entry:
-
-```
-@article{munoz2025cp_measure,
-  title={cp\_measure: API-first feature extraction for image-based profiling workflows},
-  author={Mu{\~n}oz, Al{\'a}n F and Treis, Tim and Kalinin, Alexandr A and Dasgupta, Shatavisha and Theis, Fabian and Carpenter, Anne E and Singh, Shantanu},
-  journal={arXiv preprint arXiv:2507.01163},
-  year={2025}
-}
-```
