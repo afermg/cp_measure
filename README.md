@@ -12,7 +12,7 @@ Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but
 If you used cp\_measure in your project, please cite using the following bib entry:
 
 ```
-@article{munoz2025cp_measure,
+@article{munoz2025cpmeasure,
   title={cp\_measure: API-first feature extraction for image-based profiling workflows},
   author={Mu{\~n}oz, Al{\'a}n F and Treis, Tim and Kalinin, Alexandr A and Dasgupta, Shatavisha and Theis, Fabian and Carpenter, Anne E and Singh, Shantanu},
   journal={arXiv preprint arXiv:2507.01163},
