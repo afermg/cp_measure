@@ -618,7 +618,8 @@ class TestEndToEnd:
         }
         assert len(unexpected_nan) == 0, f"Unexpected all-NaN columns: {unexpected_nan}"
 
-        # Reasonable column count: 2 masks × all features
-        assert len(df.columns) > 200, (
-            f"Expected >200 total columns (2 masks), got {len(df.columns)}"
+        # Exact column count: 995 per mask × 2 masks
+        # (110 shape + 805 per-channel + 80 correlation = 995 with granular_spectrum_length=8)
+        assert len(df.columns) == 1990, (
+            f"Expected 1990 columns (995 per mask × 2), got {len(df.columns)}"
         )
