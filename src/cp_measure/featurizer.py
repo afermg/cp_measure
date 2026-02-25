@@ -1,38 +1,29 @@
-"""High-level featurization orchestrator for cp_measure."""
+"""High-level featurization orchestrator for cp_measure.
+
+Wraps all cp_measure core measurement functions into a single
+:class:`Featurizer` that operates on multichannel images and
+multiple named masks, producing a tidy DataFrame.
+
+Notes
+-----
+Some shape features may produce NaN values for certain object
+geometries. In particular, ``NormalizedMoment_0_0``,
+``NormalizedMoment_0_1``, and ``NormalizedMoment_1_0`` are
+mathematically undefined for objects with uniform pixel values
+or degenerate shapes. These NaN values are expected and
+inherent to the underlying skimage ``regionprops`` computation.
+"""
 
 from __future__ import annotations
 
 import itertools
 import warnings
+from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
 
-# Mapping from make_featurizer kwarg names to bulk.py registry keys
-_CHANNEL_FEATURES = {
-    "intensity": "intensity",
-    "texture": "texture",
-    "granularity": "granularity",
-    "radial_distribution": "radial_distribution",
-    "radial_zernikes": "radial_zernikes",
-}
-
-_SHAPE_FEATURES = {
-    "sizeshape": "sizeshape",
-    "zernike": "zernike",
-    "ferret": "ferret",
-}
-
-# Correlation features: (registry_key, symmetric).
-# Symmetric metrics produce identical results for (A, B) and (B, A) —
-# either directly or via _1/_2 suffix swap — so combinations suffice.
-# Asymmetric metrics must be run for both orderings (permutations).
-_CORRELATION_FEATURES = {
-    "correlation_pearson": ("pearson", False),
-    "correlation_costes": ("costes", False),
-    "correlation_manders_fold": ("manders_fold", True),
-    "correlation_rwc": ("rwc", True),
-}
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class Featurizer:
@@ -46,12 +37,12 @@ class Featurizer:
         Channel names corresponding to the first axis of the image array.
     masks : list[str]
         Mask names corresponding to the first axis of the masks array.
-    channel_features : list[tuple[str, callable, dict]]
-        Per-channel features as ``(name, func, params)`` tuples.
-    shape_features : list[tuple[str, callable, dict]]
-        Mask-only shape features as ``(name, func, params)`` tuples.
-    correlation_features : list[tuple[str, callable, dict, bool]]
-        Pairwise correlation features as ``(name, func, params, symmetric)``
+    channel_features : list[tuple[callable, dict]]
+        Per-channel features as ``(func, params)`` tuples.
+    shape_features : list[tuple[callable, dict]]
+        Mask-only shape features as ``(func, params)`` tuples.
+    correlation_features : list[tuple[callable, dict, bool]]
+        Pairwise correlation features as ``(func, params, symmetric)``
         tuples. Symmetric metrics use combinations; asymmetric use
         permutations.
     """
@@ -60,9 +51,9 @@ class Featurizer:
         self,
         channels: list[str],
         masks: list[str],
-        channel_features: list[tuple[str, callable, dict]],
-        shape_features: list[tuple[str, callable, dict]],
-        correlation_features: list[tuple[str, callable, dict, bool]],
+        channel_features: list[tuple[callable, dict]],
+        shape_features: list[tuple[callable, dict]],
+        correlation_features: list[tuple[callable, dict, bool]],
     ):
         self._channels = list(channels)
         self._masks = list(masks)
@@ -93,7 +84,14 @@ class Featurizer:
             ``{mask}_{feature}_{ch1}_{ch2}`` for correlation features.
             Labels missing from a given mask have NaN for that mask's columns.
         """
+        import pandas as pd
+
         self._validate(image, masks)
+
+        # Shape features (sizeshape, zernike, ferret) are purely geometric
+        # and do not depend on pixel values. Their function signatures
+        # require a pixels argument, but it is ignored; pass zeros.
+        _dummy_pixels = np.zeros(image.shape[1:], dtype=image.dtype)
 
         per_mask_dfs: list[pd.DataFrame] = []
 
@@ -102,37 +100,32 @@ class Featurizer:
             n_labels = mask_2d.max()
 
             if n_labels == 0:
-                # This mask plane has no labels; skip it
                 continue
 
             results: dict[str, np.ndarray] = {}
 
-            # Shape features — run once per mask, no channel suffix
-            for _name, func, params in self._shape_features:
-                result = func(mask_2d, image[0], **params)
-                for key, values in result.items():
+            # Shape features — purely geometric, run once per mask
+            for func, params in self._shape_features:
+                for key, values in func(mask_2d, _dummy_pixels, **params).items():
                     results[f"{mask_name}_{key}"] = values
 
-            # Per-channel intensity features
+            # Per-channel features
             for ch_idx, ch_name in enumerate(self._channels):
                 pixels = image[ch_idx]
-                for _name, func, params in self._channel_features:
-                    result = func(mask_2d, pixels, **params)
-                    for key, values in result.items():
+                for func, params in self._channel_features:
+                    for key, values in func(mask_2d, pixels, **params).items():
                         results[f"{mask_name}_{key}_{ch_name}"] = values
 
             # Correlation features — symmetric use combinations, asymmetric
             # use permutations to capture both channel orderings
             n_ch = len(self._channels)
-            for _name, func, params, symmetric in self._correlation_features:
+            for func, params, symmetric in self._correlation_features:
                 pairs = (
                     itertools.combinations(range(n_ch), 2)
                     if symmetric
                     else itertools.permutations(range(n_ch), 2)
                 )
                 for ch_i, ch_j in pairs:
-                    name_i = self._channels[ch_i]
-                    name_j = self._channels[ch_j]
                     result = func(
                         pixels_1=image[ch_i],
                         pixels_2=image[ch_j],
@@ -140,16 +133,16 @@ class Featurizer:
                         **params,
                     )
                     for key, values in result.items():
-                        results[f"{mask_name}_{key}_{name_i}_{name_j}"] = values
+                        col = f"{mask_name}_{key}_{self._channels[ch_i]}_{self._channels[ch_j]}"
+                        results[col] = values
 
             mask_df = pd.DataFrame(results, index=np.arange(1, n_labels + 1))
             per_mask_dfs.append(mask_df)
 
-        # Outer-join all per-mask DataFrames on label index
         if not per_mask_dfs:
             raise ValueError("all mask planes have no labels (all zeros)")
-        df = pd.concat(per_mask_dfs, axis=1, join="outer")
 
+        df = pd.concat(per_mask_dfs, axis=1, join="outer")
         df.index.name = "label"
         return df
 
@@ -176,16 +169,15 @@ class Featurizer:
             )
         if not np.issubdtype(masks.dtype, np.integer):
             raise TypeError(f"masks must be integer dtype, got {masks.dtype}")
-        if masks.max() == 0:
-            raise ValueError("all mask planes have no labels (all zeros)")
         for i in range(masks.shape[0]):
             plane_max = masks[i].max()
             if plane_max == 0:
                 continue
-            unique = np.unique(masks[i])
-            unique = unique[unique > 0]
-            expected = np.arange(1, plane_max + 1)
-            if not np.array_equal(unique, expected):
+            counts = np.bincount(masks[i].ravel())
+            # Labels 1..plane_max must all be present (non-zero count)
+            if len(counts) <= plane_max or np.any(counts[1 : plane_max + 1] == 0):
+                unique = np.unique(masks[i])
+                unique = unique[unique > 0]
                 raise ValueError(
                     f"mask plane '{self._masks[i]}' has non-contiguous labels "
                     f"{unique.tolist()}; labels must be 1..N with no gaps"
@@ -204,30 +196,33 @@ def make_featurizer(
     channels: list[str],
     *,
     masks: list[str] | None = None,
-    intensity: bool = False,
+    intensity: bool = True,
     intensity_params: dict | None = None,
-    texture: bool = False,
+    texture: bool = True,
     texture_params: dict | None = None,
-    granularity: bool = False,
+    granularity: bool = True,
     granularity_params: dict | None = None,
-    radial_distribution: bool = False,
+    radial_distribution: bool = True,
     radial_distribution_params: dict | None = None,
-    radial_zernikes: bool = False,
+    radial_zernikes: bool = True,
     radial_zernikes_params: dict | None = None,
-    sizeshape: bool = False,
+    sizeshape: bool = True,
     sizeshape_params: dict | None = None,
-    zernike: bool = False,
+    zernike: bool = True,
     zernike_params: dict | None = None,
-    ferret: bool = False,
-    correlation_pearson: bool = False,
-    correlation_costes: bool = False,
+    ferret: bool = True,
+    correlation_pearson: bool = True,
+    correlation_costes: bool = True,
     correlation_costes_params: dict | None = None,
-    correlation_manders_fold: bool = False,
+    correlation_manders_fold: bool = True,
     correlation_manders_fold_params: dict | None = None,
-    correlation_rwc: bool = False,
+    correlation_rwc: bool = True,
     correlation_rwc_params: dict | None = None,
 ) -> Featurizer:
     """Create a configured featurizer pipeline.
+
+    By default all features are enabled. Pass ``feature=False`` to
+    disable individual features.
 
     Parameters
     ----------
@@ -262,7 +257,9 @@ def make_featurizer(
     radial_zernikes_params : dict, optional
         Extra keyword arguments forwarded to ``get_radial_zernikes``.
     sizeshape : bool
-        Compute size and shape features (mask only, run once).
+        Compute size and shape features (purely geometric, run once
+        per mask). All sizeshape features depend only on the mask
+        geometry; columns have no channel suffix.
     sizeshape_params : dict, optional
         Extra keyword arguments forwarded to ``get_sizeshape``.
     zernike : bool
@@ -271,8 +268,10 @@ def make_featurizer(
         Extra keyword arguments forwarded to ``get_zernike``.
     ferret : bool
         Compute Feret diameter features (mask only, run once).
+        ``get_ferret`` accepts no extra parameters.
     correlation_pearson : bool
         Compute Pearson correlation and slope for all channel permutations.
+        ``get_correlation_pearson`` accepts no extra parameters.
     correlation_costes : bool
         Compute Costes colocalization for all channel permutations.
     correlation_costes_params : dict, optional
@@ -308,34 +307,54 @@ def make_featurizer(
     if len(set(masks)) != len(masks):
         raise ValueError("mask names must be unique")
 
-    # Capture all local args for lookup
-    args = locals()
-
-    # Resolve functions from bulk registries
     from cp_measure.bulk import get_core_measurements, get_correlation_measurements
 
     core_funcs = get_core_measurements()
     corr_funcs = get_correlation_measurements()
 
-    channel_features: list[tuple[str, callable, dict]] = []
-    for kwarg_name, registry_key in _CHANNEL_FEATURES.items():
-        if args[kwarg_name]:
-            params = args.get(f"{kwarg_name}_params") or {}
-            channel_features.append((kwarg_name, core_funcs[registry_key], params))
+    channel_features: list[tuple[callable, dict]] = []
+    if intensity:
+        channel_features.append((core_funcs["intensity"], intensity_params or {}))
+    if texture:
+        channel_features.append((core_funcs["texture"], texture_params or {}))
+    if granularity:
+        channel_features.append((core_funcs["granularity"], granularity_params or {}))
+    if radial_distribution:
+        channel_features.append(
+            (core_funcs["radial_distribution"], radial_distribution_params or {})
+        )
+    if radial_zernikes:
+        channel_features.append(
+            (core_funcs["radial_zernikes"], radial_zernikes_params or {})
+        )
 
-    shape_features: list[tuple[str, callable, dict]] = []
-    for kwarg_name, registry_key in _SHAPE_FEATURES.items():
-        if args[kwarg_name]:
-            params = args.get(f"{kwarg_name}_params") or {}
-            shape_features.append((kwarg_name, core_funcs[registry_key], params))
+    # Shape features are purely geometric (do not depend on pixel values).
+    shape_features: list[tuple[callable, dict]] = []
+    if sizeshape:
+        shape_features.append((core_funcs["sizeshape"], sizeshape_params or {}))
+    if zernike:
+        shape_features.append((core_funcs["zernike"], zernike_params or {}))
+    if ferret:
+        shape_features.append((core_funcs["ferret"], {}))
 
-    correlation_features: list[tuple[str, callable, dict, bool]] = []
-    for kwarg_name, (registry_key, symmetric) in _CORRELATION_FEATURES.items():
-        if args[kwarg_name]:
-            params = args.get(f"{kwarg_name}_params") or {}
-            correlation_features.append(
-                (kwarg_name, corr_funcs[registry_key], params, symmetric)
-            )
+    # Symmetric metrics produce identical results for (A, B) and (B, A)
+    # — either directly or via _1/_2 suffix swap — so combinations suffice.
+    # Asymmetric metrics must be run for both orderings (permutations).
+    correlation_features: list[tuple[callable, dict, bool]] = []
+    if correlation_pearson:
+        correlation_features.append((corr_funcs["pearson"], {}, False))
+    if correlation_costes:
+        correlation_features.append(
+            (corr_funcs["costes"], correlation_costes_params or {}, False)
+        )
+    if correlation_manders_fold:
+        correlation_features.append(
+            (corr_funcs["manders_fold"], correlation_manders_fold_params or {}, True)
+        )
+    if correlation_rwc:
+        correlation_features.append(
+            (corr_funcs["rwc"], correlation_rwc_params or {}, True)
+        )
 
     if not channel_features and not shape_features and not correlation_features:
         raise ValueError(

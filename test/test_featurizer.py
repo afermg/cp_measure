@@ -13,6 +13,30 @@ from cp_measure.featurizer import make_featurizer
 #   phalloidin (actin/AGP), WGA (Golgi/plasma membrane, Mito merged)
 CELL_PAINTING_CHANNELS = ["DNA", "ER", "RNA", "AGP", "Mito"]
 
+# Shape features that are mathematically NaN for certain object geometries
+# (e.g., uniform pixel values produce degenerate normalized moments).
+_KNOWN_NAN_PATTERNS = {
+    "NormalizedMoment_0_0",
+    "NormalizedMoment_0_1",
+    "NormalizedMoment_1_0",
+}
+
+# All feature flags set to False — tests override only what they need.
+_ALL_OFF = dict(
+    intensity=False,
+    texture=False,
+    granularity=False,
+    radial_distribution=False,
+    radial_zernikes=False,
+    sizeshape=False,
+    zernike=False,
+    ferret=False,
+    correlation_pearson=False,
+    correlation_costes=False,
+    correlation_manders_fold=False,
+    correlation_rwc=False,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -54,7 +78,9 @@ class TestSmokeTest:
         channels = CELL_PAINTING_CHANNELS[:2]
         image, mask = _make_image_and_mask(n_channels=2)
 
-        f = make_featurizer(channels, intensity=True, sizeshape=True)
+        f = make_featurizer(
+            channels, **{**_ALL_OFF, "intensity": True, "sizeshape": True}
+        )
         df = f.featurize(image, mask)
 
         assert isinstance(df, pd.DataFrame)
@@ -67,9 +93,64 @@ class TestSmokeTest:
     def test_single_feature_works(self):
         """Enabling only one feature type should work."""
         image, mask = _make_image_and_mask(n_channels=1)
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         df = f.featurize(image, mask)
         assert len(df) == 2
+
+    def test_values_are_finite_and_nontrivial(self):
+        """Verify that features produce finite, non-trivial values."""
+        channels = CELL_PAINTING_CHANNELS[:2]
+        image, mask = _make_image_and_mask(n_channels=2)
+
+        f = make_featurizer(
+            channels, **{**_ALL_OFF, "intensity": True, "sizeshape": True}
+        )
+        df = f.featurize(image, mask)
+
+        # Exclude columns known to produce NaN for certain geometries
+        check_cols = [
+            c for c in df.columns if not any(p in c for p in _KNOWN_NAN_PATTERNS)
+        ]
+        subset = df[check_cols]
+
+        # No column should be entirely NaN
+        all_nan = subset.columns[subset.isna().all()].tolist()
+        assert len(all_nan) == 0, f"All-NaN columns: {all_nan}"
+
+        # The majority of columns should have at least one non-zero value.
+        # Some features are legitimately zero for symmetric objects (e.g.,
+        # Eccentricity=0 for squares, odd-order CentralMoments for symmetric
+        # shapes, Z coordinates for 2D images).
+        numeric = subset.select_dtypes(include=[np.number])
+        nonzero_cols = (numeric != 0).any()
+        frac_nonzero = nonzero_cols.sum() / len(nonzero_cols)
+        assert frac_nonzero > 0.5, (
+            f"Only {frac_nonzero:.0%} of columns have non-zero values; expected >50%"
+        )
+
+        # No column should contain inf
+        inf_cols = numeric.columns[np.isinf(numeric).any()].tolist()
+        assert len(inf_cols) == 0, f"Columns with inf: {inf_cols}"
+
+        # Spot-check: Area must equal the object pixel count (10x10 = 100)
+        # sizeshape is a shape feature — columns have no channel suffix
+        area_cols = [c for c in df.columns if "Area" in c and "BoundingBox" not in c]
+        assert len(area_cols) > 0, "No Area columns found"
+        for col in area_cols:
+            np.testing.assert_array_equal(
+                df[col].values,
+                [100.0, 100.0],
+                err_msg=f"{col} should equal object pixel count",
+            )
+
+        # Spot-check: MeanIntensity should be in (0, 1] for float [0,1] images
+        mean_int_cols = [c for c in df.columns if "MeanIntensity" in c]
+        assert len(mean_int_cols) > 0, "No MeanIntensity columns found"
+        for col in mean_int_cols:
+            vals = df[col].values
+            assert np.all(vals > 0) and np.all(vals <= 1), (
+                f"{col} values {vals} not in (0, 1]"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +164,7 @@ class TestColumnNaming:
         channels = CELL_PAINTING_CHANNELS[:2]
         image, mask = _make_image_and_mask(n_channels=2)
 
-        f = make_featurizer(channels, intensity=True)
+        f = make_featurizer(channels, **{**_ALL_OFF, "intensity": True})
         df = f.featurize(image, mask)
 
         for col in df.columns:
@@ -92,16 +173,19 @@ class TestColumnNaming:
             )
 
     def test_shape_features_no_channel_suffix(self):
-        """Shape features have no channel suffix."""
+        """Purely geometric shape features (sizeshape, zernike, ferret) have no channel suffix."""
         channels = CELL_PAINTING_CHANNELS[:2]
         image, mask = _make_image_and_mask(n_channels=2)
 
-        f = make_featurizer(channels, sizeshape=True)
+        f = make_featurizer(
+            channels,
+            **{**_ALL_OFF, "sizeshape": True, "zernike": True, "ferret": True},
+        )
         df = f.featurize(image, mask)
 
         for col in df.columns:
             assert not col.endswith("_DNA") and not col.endswith("_ER"), (
-                f"Shape feature should not have channel suffix: {col}"
+                f"Geometric shape feature should not have channel suffix: {col}"
             )
 
     def test_correlation_naming_asymmetric(self):
@@ -110,7 +194,7 @@ class TestColumnNaming:
         image, mask = _make_image_and_mask(n_channels=3)
 
         # Pearson is asymmetric (Slope differs by ordering)
-        f = make_featurizer(channels, correlation_pearson=True)
+        f = make_featurizer(channels, **{**_ALL_OFF, "correlation_pearson": True})
         df = f.featurize(image, mask)
 
         # Should have permutations: (A,B), (B,A) for all pairs
@@ -125,7 +209,7 @@ class TestColumnNaming:
         image, mask = _make_image_and_mask(n_channels=3)
 
         # Manders is symmetric (_1/_2 capture both directions)
-        f = make_featurizer(channels, correlation_manders_fold=True)
+        f = make_featurizer(channels, **{**_ALL_OFF, "correlation_manders_fold": True})
         df = f.featurize(image, mask)
 
         expected_combos = list(itertools.combinations(channels, 2))
@@ -141,7 +225,11 @@ class TestColumnNaming:
         mask_names = ["nuclei", "cells"]
         masks = np.concatenate([mask, mask], axis=0)  # (2, H, W)
 
-        f = make_featurizer(channels, masks=mask_names, intensity=True, sizeshape=True)
+        f = make_featurizer(
+            channels,
+            masks=mask_names,
+            **{**_ALL_OFF, "intensity": True, "sizeshape": True},
+        )
         df = f.featurize(image, masks)
 
         for col in df.columns:
@@ -163,7 +251,7 @@ class TestParamsForwarding:
 
         f4 = make_featurizer(
             channels,
-            granularity=True,
+            **{**_ALL_OFF, "granularity": True},
             granularity_params={"granular_spectrum_length": 4},
         )
         df4 = f4.featurize(image, mask)
@@ -171,7 +259,7 @@ class TestParamsForwarding:
 
         f8 = make_featurizer(
             channels,
-            granularity=True,
+            **{**_ALL_OFF, "granularity": True},
             granularity_params={"granular_spectrum_length": 8},
         )
         df8 = f8.featurize(image, mask)
@@ -192,49 +280,51 @@ class TestValidation:
     def test_image_not_3d(self):
         image = np.ones((10, 10))
         mask = np.ones((1, 10, 10), dtype=np.int32)
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         with pytest.raises(ValueError, match="3D"):
             f.featurize(image, mask)
 
     def test_masks_not_3d(self):
         image = np.ones((1, 10, 10))
         mask = np.ones((10, 10), dtype=np.int32)
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         with pytest.raises(ValueError, match="3D"):
             f.featurize(image, mask)
 
     def test_channel_count_mismatch(self):
         image = np.ones((3, 10, 10))
         mask = np.ones((1, 10, 10), dtype=np.int32)
-        f = make_featurizer(["DNA", "ER"], intensity=True)
+        f = make_featurizer(["DNA", "ER"], **{**_ALL_OFF, "intensity": True})
         with pytest.raises(ValueError, match="channels"):
             f.featurize(image, mask)
 
     def test_mask_count_mismatch(self):
         image = np.ones((1, 10, 10))
         masks = np.ones((2, 10, 10), dtype=np.int32)
-        f = make_featurizer(["DNA"], masks=["nuclei"], intensity=True)
+        f = make_featurizer(
+            ["DNA"], masks=["nuclei"], **{**_ALL_OFF, "intensity": True}
+        )
         with pytest.raises(ValueError, match="mask names"):
             f.featurize(image, masks)
 
     def test_spatial_dims_mismatch(self):
         image = np.ones((1, 10, 10))
         mask = np.ones((1, 8, 8), dtype=np.int32)
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         with pytest.raises(ValueError, match="spatial dims"):
             f.featurize(image, mask)
 
     def test_mask_not_integer(self):
         image = np.ones((1, 10, 10))
         mask = np.ones((1, 10, 10), dtype=np.float64)
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         with pytest.raises(TypeError, match="integer dtype"):
             f.featurize(image, mask)
 
     def test_all_masks_empty(self):
         image = np.ones((1, 10, 10))
         mask = np.zeros((1, 10, 10), dtype=np.int32)
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         with pytest.raises(ValueError, match="no labels"):
             f.featurize(image, mask)
 
@@ -244,7 +334,7 @@ class TestValidation:
         mask = np.zeros((1, 10, 10), dtype=np.int32)
         mask[0, 0:3, 0:3] = 1
         mask[0, 5:8, 5:8] = 3  # gap: no label 2
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         with pytest.raises(ValueError, match="non-contiguous"):
             f.featurize(image, mask)
 
@@ -259,7 +349,7 @@ class TestWarnings:
         """Integer-dtype image should trigger a UserWarning."""
         image, mask = _make_image_and_mask(n_channels=1, dtype=np.float64)
         image_uint8 = (image * 255).astype(np.uint8)
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         with pytest.warns(UserWarning, match="integer dtype"):
             f.featurize(image_uint8, mask)
 
@@ -292,8 +382,7 @@ class TestMultiMask:
         f = make_featurizer(
             CELL_PAINTING_CHANNELS[:2],
             masks=["nuclei", "cells"],
-            intensity=True,
-            sizeshape=True,
+            **{**_ALL_OFF, "intensity": True, "sizeshape": True},
         )
         df = f.featurize(image, masks)
 
@@ -310,21 +399,16 @@ class TestMultiMask:
         # Label 3 should have NaN for all nuclei columns
         assert df.loc[3, nuclei_cols].isna().all()
         # Label 3 should have values for most cells columns
-        # (NormalizedMoment columns are mathematically NaN for certain shapes)
-        known_nan_patterns = {
-            "NormalizedMoment_0_0",
-            "NormalizedMoment_0_1",
-            "NormalizedMoment_1_0",
-        }
+        # (some moment columns are mathematically NaN for uniform pixels)
         cells_cols_without_known_nan = [
-            c for c in cells_cols if not any(p in c for p in known_nan_patterns)
+            c for c in cells_cols if not any(p in c for p in _KNOWN_NAN_PATTERNS)
         ]
         assert df.loc[3, cells_cols_without_known_nan].notna().all()
 
     def test_single_mask_default_name(self):
         """When masks param is omitted, default name is 'mask'."""
         image, mask = _make_image_and_mask(n_channels=1)
-        f = make_featurizer(["DNA"], intensity=True)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         df = f.featurize(image, mask)
 
         for col in df.columns:
@@ -345,7 +429,9 @@ class TestMultiMask:
 
         masks = np.stack([mask1, mask2], axis=0)
 
-        f = make_featurizer(["DNA"], masks=["nuclei", "cells"], intensity=True)
+        f = make_featurizer(
+            ["DNA"], masks=["nuclei", "cells"], **{**_ALL_OFF, "intensity": True}
+        )
         df = f.featurize(image, masks)
 
         # Only nuclei columns should be present
@@ -361,25 +447,35 @@ class TestMultiMask:
 class TestMakeFeaturizer:
     def test_no_features_raises(self):
         with pytest.raises(ValueError, match="at least one feature"):
-            make_featurizer(["DNA"])
+            make_featurizer(["DNA"], **_ALL_OFF)
 
     def test_empty_channels_raises(self):
         with pytest.raises(ValueError, match="non-empty"):
-            make_featurizer([], intensity=True)
+            make_featurizer([], **{**_ALL_OFF, "intensity": True})
 
     def test_empty_masks_raises(self):
         with pytest.raises(ValueError, match="non-empty"):
-            make_featurizer(["DNA"], masks=[], intensity=True)
+            make_featurizer(["DNA"], masks=[], **{**_ALL_OFF, "intensity": True})
 
     def test_duplicate_mask_names_raises(self):
         with pytest.raises(ValueError, match="unique"):
-            make_featurizer(["DNA"], masks=["cells", "cells"], intensity=True)
+            make_featurizer(
+                ["DNA"],
+                masks=["cells", "cells"],
+                **{**_ALL_OFF, "intensity": True},
+            )
 
     def test_single_channel_correlation_warns(self):
-        """Single channel + correlation should warn and skip correlation."""
+        """Single channel + correlation should warn and produce no correlation columns."""
         with pytest.warns(UserWarning, match="at least 2 channels"):
-            f = make_featurizer(["DNA"], intensity=True, correlation_pearson=True)
-        assert len(f._correlation_features) == 0
+            f = make_featurizer(
+                ["DNA"],
+                **{**_ALL_OFF, "intensity": True, "correlation_pearson": True},
+            )
+        image, mask = _make_image_and_mask(n_channels=1)
+        df = f.featurize(image, mask)
+        corr_cols = [c for c in df.columns if "Correlation" in c or "Slope" in c]
+        assert len(corr_cols) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -392,81 +488,65 @@ class TestEndToEnd:
 
     @pytest.fixture()
     def cellprofiler_data(self):
-        """Simulate a typical CellProfiler image: 5 channels, ~1024x1024,
+        """Simulate a CellProfiler image: 5 channels, 512x512,
         multiple cells with nuclei and cell masks."""
         rng = np.random.default_rng(42)
-        size = 1024
+        size = 512
         channels = list(CELL_PAINTING_CHANNELS)
         n_channels = len(channels)
 
-        # Simulate float64 image normalized to [0, 1] (CellProfiler convention)
         image = rng.random((n_channels, size, size))
 
-        # Create nuclei mask with 10 objects (smaller circles)
         nuclei = np.zeros((size, size), dtype=np.int32)
-        # Create cells mask with 12 objects (larger circles, includes nuclei labels)
         cells = np.zeros((size, size), dtype=np.int32)
 
         centers = [
-            (150, 200),
-            (300, 400),
-            (500, 100),
-            (600, 600),
-            (100, 800),
-            (400, 700),
-            (750, 300),
-            (800, 800),
-            (200, 550),
-            (900, 150),
+            (80, 100),
+            (160, 200),
+            (260, 60),
+            (300, 300),
+            (60, 400),
+            (200, 350),
+            (380, 150),
+            (400, 400),
+            (100, 280),
+            (460, 80),
         ]
         yy, xx = np.ogrid[:size, :size]
 
-        # Nuclei: 10 objects with smaller radii
         for label, (cy, cx) in enumerate(centers, start=1):
-            radius = rng.integers(15, 30)
+            radius = rng.integers(12, 24)
             dist = (yy - cy) ** 2 + (xx - cx) ** 2
             nuclei[dist <= radius**2] = label
 
-        # Cells: same 10 objects with larger radii + 2 extra cells without nuclei
         for label, (cy, cx) in enumerate(centers, start=1):
-            radius = rng.integers(30, 55)
+            radius = rng.integers(25, 45)
             dist = (yy - cy) ** 2 + (xx - cx) ** 2
             cells[dist <= radius**2] = label
 
         # Extra cells (labels 11, 12) without corresponding nuclei
-        extra_centers = [(50, 50), (950, 950)]
+        extra_centers = [(30, 30), (480, 480)]
         for i, (cy, cx) in enumerate(extra_centers, start=11):
-            radius = rng.integers(20, 40)
+            radius = rng.integers(12, 28)
             dist = (yy - cy) ** 2 + (xx - cx) ** 2
             cells[dist <= radius**2] = i
 
-        masks = np.stack([nuclei, cells], axis=0)  # (2, H, W)
+        masks = np.stack([nuclei, cells], axis=0)
         mask_names = ["nuclei", "cells"]
 
         return image, masks, channels, mask_names
 
     def test_all_features(self, cellprofiler_data):
-        """Run all feature categories on a realistic CellProfiler-sized image."""
+        """Run ALL feature categories on a realistic CellProfiler-sized image."""
         image, masks, channels, mask_names = cellprofiler_data
         nuclei_labels = masks[0].max()
         cells_labels = masks[1].max()
 
+        # All features enabled by default; only override granularity_params
         f = make_featurizer(
             channels,
             masks=mask_names,
-            # Per-channel intensity features
-            intensity=True,
-            texture=True,
-            granularity=True,
             granularity_params={"granular_spectrum_length": 8},
-            radial_distribution=True,
-            radial_zernikes=True,
-            # Shape features (mask only)
-            sizeshape=True,
-            ferret=True,
-            # Correlation features (pairwise)
-            correlation_pearson=True,
-            correlation_manders_fold=True,
         )
         df = f.featurize(image, masks)
 
@@ -532,18 +612,13 @@ class TestEndToEnd:
         # Almost no fully-NaN columns (excluding labels that are in only one mask)
         # For labels 1-10 (present in both masks), check for unexpected NaN
         shared_df = df.loc[1:nuclei_labels]
-        known_nan_patterns = {
-            "NormalizedMoment_0_0",
-            "NormalizedMoment_0_1",
-            "NormalizedMoment_1_0",
-        }
         all_nan_cols = set(shared_df.columns[shared_df.isna().all()].tolist())
         unexpected_nan = {
-            c for c in all_nan_cols if not any(p in c for p in known_nan_patterns)
+            c for c in all_nan_cols if not any(p in c for p in _KNOWN_NAN_PATTERNS)
         }
         assert len(unexpected_nan) == 0, f"Unexpected all-NaN columns: {unexpected_nan}"
 
-        # Reasonable column count: 2 masks × features
+        # Reasonable column count: 2 masks × all features
         assert len(df.columns) > 200, (
             f"Expected >200 total columns (2 masks), got {len(df.columns)}"
         )
