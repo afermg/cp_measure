@@ -133,28 +133,31 @@ def get_granularity(
     # Downsample the image and mask
     #
     new_shape = numpy.array(pixels.shape)
-    # MODIFIED: Remove subsample
-    # if subsample_size < 1:
-    #     new_shape = new_shape * subsample_size
-    #     if pixels.ndim == 2:
-    #         i, j = (
-    #             numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
-    #             / subsample_size
-    #         )
-    #         pixels = scipy.ndimage.map_coordinates(pixels, (i, j), order=1)
-    #         mask = scipy.ndimage.map_coordinates(mask.astype(float), (i, j)) > 0.9
-    #     else:
-    #         k, i, j = (
-    #             numpy.mgrid[
-    #                 0 : new_shape[0], 0 : new_shape[1], 0 : new_shape[2]
-    #             ].astype(float)
-    #             / subsample_size
-    #         )
-    #         pixels = scipy.ndimage.map_coordinates(pixels, (k, i, j), order=1)
-    #         mask = scipy.ndimage.map_coordinates(mask.astype(float), (k, i, j)) > 0.9
-    # else:
-    pixels = pixels.copy()
-    mask = mask.copy()
+    if subsample_size < 1:
+        new_shape = new_shape * subsample_size
+        if pixels.ndim == 2:
+            i, j = (
+                numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
+                / subsample_size
+            )
+            pixels = scipy.ndimage.map_coordinates(pixels, (i, j), order=1)
+            mask = scipy.ndimage.map_coordinates(
+                mask.astype(float), (i, j), order=0
+            ).astype(mask.dtype)
+        else:
+            k, i, j = (
+                numpy.mgrid[
+                    0 : new_shape[0], 0 : new_shape[1], 0 : new_shape[2]
+                ].astype(float)
+                / subsample_size
+            )
+            pixels = scipy.ndimage.map_coordinates(pixels, (k, i, j), order=1)
+            mask = scipy.ndimage.map_coordinates(
+                mask.astype(float), (k, i, j), order=0
+            ).astype(mask.dtype)
+    else:
+        pixels = pixels.copy()
+        mask = mask.copy()
     #
     # Remove background pixels using a greyscale tophat filter
     #
@@ -166,7 +169,9 @@ def get_granularity(
                 / image_sample_size
             )
             back_pixels = scipy.ndimage.map_coordinates(pixels, (i, j), order=1)
-            back_mask = scipy.ndimage.map_coordinates(mask.astype(float), (i, j)) > 0.9
+            back_mask = scipy.ndimage.map_coordinates(
+                mask.astype(float), (i, j), order=0
+            ).astype(mask.dtype)
         else:
             k, i, j = (
                 numpy.mgrid[
@@ -175,9 +180,9 @@ def get_granularity(
                 / subsample_size
             )
             back_pixels = scipy.ndimage.map_coordinates(pixels, (k, i, j), order=1)
-            back_mask = (
-                scipy.ndimage.map_coordinates(mask.astype(float), (k, i, j)) > 0.9
-            )
+            back_mask = scipy.ndimage.map_coordinates(
+                mask.astype(float), (k, i, j), order=0
+            ).astype(mask.dtype)
     else:
         back_pixels = pixels
         back_mask = mask
