@@ -20,7 +20,7 @@ import itertools
 import warnings
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 
 class Featurizer:
@@ -58,7 +58,7 @@ class Featurizer:
         self._shape_features = shape_features
         self._correlation_features = correlation_features
 
-    def featurize(self, image: np.ndarray, masks: np.ndarray) -> pd.DataFrame:
+    def featurize(self, image: np.ndarray, masks: np.ndarray) -> pl.DataFrame:
         """Compute all configured features for the given image and masks.
 
         Parameters
@@ -73,13 +73,13 @@ class Featurizer:
 
         Returns
         -------
-        pandas.DataFrame
+        polars.DataFrame
             DataFrame with one row per labeled object (union of all labels
-            across masks). Index is the label ID, columns are named
-            ``{mask}_{feature}_{channel}`` for per-channel features,
-            ``{mask}_{feature}`` for shape features, and
-            ``{mask}_{feature}_{ch1}_{ch2}`` for correlation features.
-            Labels missing from a given mask have NaN for that mask's columns.
+            across masks). The ``"label"`` column contains the label ID.
+            Feature columns are named ``{mask}_{feature}_{channel}`` for
+            per-channel features, ``{mask}_{feature}`` for shape features,
+            and ``{mask}_{feature}_{ch1}_{ch2}`` for correlation features.
+            Labels missing from a given mask have null for that mask's columns.
         """
         self._validate(image, masks)
 
@@ -88,7 +88,7 @@ class Featurizer:
         # require a pixels argument, but it is ignored; pass zeros.
         _dummy_pixels = np.zeros(image.shape[1:], dtype=image.dtype)
 
-        per_mask_dfs: list[pd.DataFrame] = []
+        per_mask_dfs: list[pl.DataFrame] = []
 
         for mask_idx, mask_name in enumerate(self._masks):
             mask_2d = masks[mask_idx]
@@ -131,15 +131,16 @@ class Featurizer:
                         col = f"{mask_name}_{key}_{self._channels[ch_i]}_{self._channels[ch_j]}"
                         results[col] = values
 
-            mask_df = pd.DataFrame(results, index=np.arange(1, n_labels + 1))
+            mask_df = pl.DataFrame({"label": np.arange(1, n_labels + 1), **results})
             per_mask_dfs.append(mask_df)
 
         if not per_mask_dfs:
             raise ValueError("all mask planes have no labels (all zeros)")
 
-        df = pd.concat(per_mask_dfs, axis=1, join="outer")
-        df.index.name = "label"
-        return df
+        df = per_mask_dfs[0]
+        for other in per_mask_dfs[1:]:
+            df = df.join(other, on="label", how="full", coalesce=True)
+        return df.sort("label")
 
     def _validate(self, image: np.ndarray, masks: np.ndarray) -> None:
         """Validate inputs before featurization."""

@@ -3,7 +3,8 @@
 import itertools
 
 import numpy as np
-import pandas as pd
+import polars as pl
+import polars.selectors as cs
 import pytest
 
 from cp_measure.featurizer import make_featurizer
@@ -21,7 +22,7 @@ _KNOWN_NAN_PATTERNS = {
     "NormalizedMoment_1_0",
 }
 
-# All feature flags set to False — tests override only what they need.
+# All feature flags set to False - tests override only what they need.
 _ALL_OFF = dict(
     intensity=False,
     texture=False,
@@ -67,6 +68,11 @@ def _make_image_and_mask(
     return image, mask
 
 
+def _feature_columns(df: pl.DataFrame) -> list[str]:
+    """Return all columns except 'label'."""
+    return [c for c in df.columns if c != "label"]
+
+
 # ---------------------------------------------------------------------------
 # Smoke tests
 # ---------------------------------------------------------------------------
@@ -83,9 +89,9 @@ class TestSmokeTest:
         )
         df = f.featurize(image, mask)
 
-        assert isinstance(df, pd.DataFrame)
-        assert df.index.name == "label"
-        assert len(df) == 2  # 2 objects
+        assert isinstance(df, pl.DataFrame)
+        assert "label" in df.columns
+        assert df.height == 2  # 2 objects
         # Should have intensity columns per channel and shape columns
         assert any("_DNA" in c for c in df.columns)
         assert any("_ER" in c for c in df.columns)
@@ -95,7 +101,7 @@ class TestSmokeTest:
         image, mask = _make_image_and_mask(n_channels=1)
         f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         df = f.featurize(image, mask)
-        assert len(df) == 2
+        assert df.height == 2
 
     def test_values_are_finite_and_nontrivial(self):
         """Verify that features produce finite, non-trivial values."""
@@ -109,36 +115,40 @@ class TestSmokeTest:
 
         # Exclude columns known to produce NaN for certain geometries
         check_cols = [
-            c for c in df.columns if not any(p in c for p in _KNOWN_NAN_PATTERNS)
+            c
+            for c in _feature_columns(df)
+            if not any(p in c for p in _KNOWN_NAN_PATTERNS)
         ]
-        subset = df[check_cols]
+        subset = df.select(check_cols)
 
-        # No column should be entirely NaN
-        all_nan = subset.columns[subset.isna().all()].tolist()
-        assert len(all_nan) == 0, f"All-NaN columns: {all_nan}"
+        # No column should be entirely null
+        all_null = [c for c in subset.columns if subset[c].is_null().all()]
+        assert len(all_null) == 0, f"All-null columns: {all_null}"
 
         # The majority of columns should have at least one non-zero value.
-        # Some features are legitimately zero for symmetric objects (e.g.,
-        # Eccentricity=0 for squares, odd-order CentralMoments for symmetric
-        # shapes, Z coordinates for 2D images).
-        numeric = subset.select_dtypes(include=[np.number])
-        nonzero_cols = (numeric != 0).any()
-        frac_nonzero = nonzero_cols.sum() / len(nonzero_cols)
+        numeric = subset.select(cs.numeric())
+        n_cols = len(numeric.columns)
+        nonzero_count = sum(1 for c in numeric.columns if (numeric[c] != 0).any())
+        frac_nonzero = nonzero_count / n_cols
         assert frac_nonzero > 0.5, (
             f"Only {frac_nonzero:.0%} of columns have non-zero values; expected >50%"
         )
 
         # No column should contain inf
-        inf_cols = numeric.columns[np.isinf(numeric).any()].tolist()
+        inf_cols = [
+            c
+            for c in numeric.columns
+            if numeric[c].cast(pl.Float64).is_infinite().any()
+        ]
         assert len(inf_cols) == 0, f"Columns with inf: {inf_cols}"
 
         # Spot-check: Area must equal the object pixel count (10x10 = 100)
-        # sizeshape is a shape feature — columns have no channel suffix
+        # sizeshape is a shape feature - columns have no channel suffix
         area_cols = [c for c in df.columns if "Area" in c and "BoundingBox" not in c]
         assert len(area_cols) > 0, "No Area columns found"
         for col in area_cols:
             np.testing.assert_array_equal(
-                df[col].values,
+                df[col].to_numpy(),
                 [100.0, 100.0],
                 err_msg=f"{col} should equal object pixel count",
             )
@@ -147,7 +157,7 @@ class TestSmokeTest:
         mean_int_cols = [c for c in df.columns if "MeanIntensity" in c]
         assert len(mean_int_cols) > 0, "No MeanIntensity columns found"
         for col in mean_int_cols:
-            vals = df[col].values
+            vals = df[col].to_numpy()
             assert np.all(vals > 0) and np.all(vals <= 1), (
                 f"{col} values {vals} not in (0, 1]"
             )
@@ -167,7 +177,7 @@ class TestColumnNaming:
         f = make_featurizer(channels, **{**_ALL_OFF, "intensity": True})
         df = f.featurize(image, mask)
 
-        for col in df.columns:
+        for col in _feature_columns(df):
             assert col.endswith("_DNA") or col.endswith("_ER"), (
                 f"Expected channel suffix, got column: {col}"
             )
@@ -183,7 +193,7 @@ class TestColumnNaming:
         )
         df = f.featurize(image, mask)
 
-        for col in df.columns:
+        for col in _feature_columns(df):
             assert not col.endswith("_DNA") and not col.endswith("_ER"), (
                 f"Geometric shape feature should not have channel suffix: {col}"
             )
@@ -198,9 +208,10 @@ class TestColumnNaming:
         df = f.featurize(image, mask)
 
         # Should have permutations: (A,B), (B,A) for all pairs
+        feat_cols = _feature_columns(df)
         expected_perms = list(itertools.permutations(channels, 2))
         for a, b in expected_perms:
-            matching = [c for c in df.columns if c.endswith(f"_{a}_{b}")]
+            matching = [c for c in feat_cols if c.endswith(f"_{a}_{b}")]
             assert len(matching) > 0, f"Missing permutation ({a}, {b})"
 
     def test_correlation_naming_symmetric(self):
@@ -213,7 +224,7 @@ class TestColumnNaming:
         df = f.featurize(image, mask)
 
         expected_combos = list(itertools.combinations(channels, 2))
-        for col in df.columns:
+        for col in _feature_columns(df):
             matched = any(col.endswith(f"_{a}_{b}") for a, b in expected_combos)
             assert matched, f"Column {col} should use combinations, not permutations"
 
@@ -232,7 +243,7 @@ class TestColumnNaming:
         )
         df = f.featurize(image, masks)
 
-        for col in df.columns:
+        for col in _feature_columns(df):
             assert col.startswith("nuclei_") or col.startswith("cells_"), (
                 f"Column {col} does not start with a mask name"
             )
@@ -361,7 +372,7 @@ class TestWarnings:
 
 class TestMultiMask:
     def test_multi_mask_smoke(self):
-        """Two masks with different label counts → union index and NaN fill."""
+        """Two masks with different label counts -> union of labels and null fill."""
         rng = np.random.default_rng(42)
         size = 64
         image = rng.random((2, size, size))
@@ -386,24 +397,28 @@ class TestMultiMask:
         )
         df = f.featurize(image, masks)
 
-        # Union index: labels 1, 2, 3
-        assert len(df) == 3
-        assert set(df.index) == {1, 2, 3}
+        # Union of labels: 1, 2, 3
+        assert df.height == 3
+        assert set(df["label"].to_list()) == {1, 2, 3}
 
-        # Label 3 exists only in cells → nuclei columns should be NaN
+        # Label 3 exists only in cells -> nuclei columns should be null
         nuclei_cols = [c for c in df.columns if c.startswith("nuclei_")]
         cells_cols = [c for c in df.columns if c.startswith("cells_")]
         assert len(nuclei_cols) > 0
         assert len(cells_cols) > 0
 
-        # Label 3 should have NaN for all nuclei columns
-        assert df.loc[3, nuclei_cols].isna().all()
+        # Label 3 should have null for all nuclei columns
+        row3 = df.filter(pl.col("label") == 3)
+        assert row3.select(nuclei_cols).null_count().row(0) == tuple(
+            [1] * len(nuclei_cols)
+        )
         # Label 3 should have values for most cells columns
-        # (some moment columns are mathematically NaN for uniform pixels)
         cells_cols_without_known_nan = [
             c for c in cells_cols if not any(p in c for p in _KNOWN_NAN_PATTERNS)
         ]
-        assert df.loc[3, cells_cols_without_known_nan].notna().all()
+        assert row3.select(cells_cols_without_known_nan).null_count().row(0) == tuple(
+            [0] * len(cells_cols_without_known_nan)
+        )
 
     def test_single_mask_default_name(self):
         """When masks param is omitted, default name is 'mask'."""
@@ -411,7 +426,7 @@ class TestMultiMask:
         f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         df = f.featurize(image, mask)
 
-        for col in df.columns:
+        for col in _feature_columns(df):
             assert col.startswith("mask_"), (
                 f"Expected 'mask_' prefix with default mask name, got: {col}"
             )
@@ -434,9 +449,9 @@ class TestMultiMask:
         )
         df = f.featurize(image, masks)
 
-        # Only nuclei columns should be present
-        assert all(c.startswith("nuclei_") for c in df.columns)
-        assert len(df) == 1
+        # Only nuclei columns (plus label) should be present
+        assert all(c.startswith("nuclei_") for c in _feature_columns(df))
+        assert df.height == 1
 
 
 # ---------------------------------------------------------------------------
@@ -547,22 +562,25 @@ class TestEndToEnd:
         df = f.featurize(image, masks)
 
         # Basic shape checks
-        assert isinstance(df, pd.DataFrame)
+        assert isinstance(df, pl.DataFrame)
         # Union of labels: max(nuclei_labels, cells_labels)
         expected_labels = max(nuclei_labels, cells_labels)
-        assert len(df) == expected_labels
-        assert df.index.name == "label"
-        np.testing.assert_array_equal(df.index, np.arange(1, expected_labels + 1))
+        assert df.height == expected_labels
+        assert "label" in df.columns
+        np.testing.assert_array_equal(
+            df["label"].to_numpy(), np.arange(1, expected_labels + 1)
+        )
 
-        # Labels 11, 12 have no nuclei → nuclei columns should be NaN
+        # Labels 11, 12 have no nuclei -> nuclei columns should be null
         nuclei_cols = [c for c in df.columns if c.startswith("nuclei_")]
         for label in range(nuclei_labels + 1, cells_labels + 1):
-            assert df.loc[label, nuclei_cols].isna().all(), (
-                f"Label {label} should have NaN nuclei features"
+            row = df.filter(pl.col("label") == label).select(nuclei_cols)
+            assert row.null_count().row(0) == tuple([1] * len(nuclei_cols)), (
+                f"Label {label} should have null nuclei features"
             )
 
-        # All columns should be prefixed with a mask name
-        for col in df.columns:
+        # All feature columns should be prefixed with a mask name
+        for col in _feature_columns(df):
             assert col.startswith("nuclei_") or col.startswith("cells_"), (
                 f"Column {col} missing mask prefix"
             )
@@ -605,17 +623,20 @@ class TestEndToEnd:
             ]
             assert len(corr_cols) > 0, f"No correlation columns for mask={mask_name}"
 
-        # Almost no fully-NaN columns (excluding labels that are in only one mask)
-        # For labels 1-10 (present in both masks), check for unexpected NaN
-        shared_df = df.loc[1:nuclei_labels]
-        all_nan_cols = set(shared_df.columns[shared_df.isna().all()].tolist())
-        unexpected_nan = {
-            c for c in all_nan_cols if not any(p in c for p in _KNOWN_NAN_PATTERNS)
+        # Almost no fully-null columns (excluding labels that are in only one mask)
+        # For labels 1-10 (present in both masks), check for unexpected nulls
+        shared_df = df.filter(pl.col("label").is_between(1, nuclei_labels))
+        feat_cols = _feature_columns(shared_df)
+        all_null_cols = [c for c in feat_cols if shared_df[c].is_null().all()]
+        unexpected_null = {
+            c for c in all_null_cols if not any(p in c for p in _KNOWN_NAN_PATTERNS)
         }
-        assert len(unexpected_nan) == 0, f"Unexpected all-NaN columns: {unexpected_nan}"
+        assert len(unexpected_null) == 0, (
+            f"Unexpected all-null columns: {unexpected_null}"
+        )
 
-        # Exact column count: 1035 per mask × 2 masks
+        # Exact column count: 1035 per mask x 2 masks + 1 label column = 2071
         # (110 shape + 805 per-channel + 120 correlation = 1035)
-        assert len(df.columns) == 2070, (
-            f"Expected 2070 columns (1035 per mask × 2), got {len(df.columns)}"
+        assert df.width == 2071, (
+            f"Expected 2071 columns (1035 per mask x 2 + 1 label), got {df.width}"
         )
