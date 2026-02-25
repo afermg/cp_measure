@@ -18,12 +18,9 @@ from __future__ import annotations
 
 import itertools
 import warnings
-from typing import TYPE_CHECKING
 
 import numpy as np
-
-if TYPE_CHECKING:
-    import pandas as pd
+import pandas as pd
 
 
 class Featurizer:
@@ -84,8 +81,6 @@ class Featurizer:
             ``{mask}_{feature}_{ch1}_{ch2}`` for correlation features.
             Labels missing from a given mask have NaN for that mask's columns.
         """
-        import pandas as pd
-
         self._validate(image, masks)
 
         # Shape features (sizeshape, zernike, ferret) are purely geometric
