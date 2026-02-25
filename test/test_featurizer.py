@@ -492,7 +492,7 @@ class TestEndToEnd:
         multiple cells with nuclei and cell masks."""
         rng = np.random.default_rng(42)
         size = 512
-        channels = list(CELL_PAINTING_CHANNELS)
+        channels = CELL_PAINTING_CHANNELS
         n_channels = len(channels)
 
         image = rng.random((n_channels, size, size))
@@ -542,12 +542,8 @@ class TestEndToEnd:
         nuclei_labels = masks[0].max()
         cells_labels = masks[1].max()
 
-        # All features enabled by default; only override granularity_params
-        f = make_featurizer(
-            channels,
-            masks=mask_names,
-            granularity_params={"granular_spectrum_length": 8},
-        )
+        # All features enabled by default
+        f = make_featurizer(channels, masks=mask_names)
         df = f.featurize(image, masks)
 
         # Basic shape checks
@@ -618,8 +614,8 @@ class TestEndToEnd:
         }
         assert len(unexpected_nan) == 0, f"Unexpected all-NaN columns: {unexpected_nan}"
 
-        # Exact column count: 995 per mask × 2 masks
-        # (110 shape + 805 per-channel + 80 correlation = 995 with granular_spectrum_length=8)
-        assert len(df.columns) == 1990, (
-            f"Expected 1990 columns (995 per mask × 2), got {len(df.columns)}"
+        # Exact column count: 1035 per mask × 2 masks
+        # (110 shape + 805 per-channel + 120 correlation = 1035)
+        assert len(df.columns) == 2070, (
+            f"Expected 2070 columns (1035 per mask × 2), got {len(df.columns)}"
         )
