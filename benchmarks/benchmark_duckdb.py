@@ -101,12 +101,12 @@ con.sql(unpivot_query)
 
 # Join with parsed
 con.sql(
-    f"CREATE OR REPLACE VIEW with_parsed AS SELECT * FROM orig_unpivot NATURAL JOIN parsed_features"
+    "CREATE OR REPLACE VIEW with_parsed AS SELECT * FROM orig_unpivot NATURAL JOIN parsed_features"
 )
 
 # With trimmed
 con.sql(
-    f"CREATE OR REPLACE VIEW with_trimmed AS SELECT *, trim_features(fullname) AS cpm_id FROM with_parsed"
+    "CREATE OR REPLACE VIEW with_trimmed AS SELECT *, trim_features(fullname) AS cpm_id FROM with_parsed"
 )
 
 # Image metadata
@@ -209,6 +209,7 @@ merged_query = """
 """
 merged_df = con.sql(merged_query).df()  # Convert to pandas for plotting
 
+duckdb.sql(f"COPY cellprof_tidy TO '{out_dir}/benchmark_table.parquet'")
 duckdb.sql(f"COPY merged_df TO '{out_dir}/benchmark_table.parquet'")
 
 # %% Plot
