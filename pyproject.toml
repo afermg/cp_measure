@@ -29,6 +29,14 @@ requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
 [dependency-groups]
+benchmark = [
+    "duckdb>=1.4.4",
+    "matplotlib>=3.10.8",
+    "pandas>=2.3.3",
+    "pooch>=1.9.0",
+    "pyarrow>=23.0.1",
+    "seaborn>=0.13.2",
+]
 dev = [
     "ruff>=0.12.1",
     "ipdb>=0.13.13",
