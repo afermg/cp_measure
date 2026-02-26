@@ -53,38 +53,9 @@ cp_data = pooch.retrieve(
 
 csv_files = [x for x in cp_data if Path(x).stem.split("_")[-1] in ("Cells", "Nuclei")]
 image_table = [x for x in cp_data if x.endswith("Image.csv")][0]
-# # Load tables into DuckDB
-# for k, v in csv_files.items():
-#     con.execute(f"CREATE OR REPLACE TABLE {k} AS SELECT * FROM '{v}'")
 
-# # Identify feature tables (excluding Image)
-# feature_table_names = [k for k in csv_files.keys() if not k.endswith("Image")]
-
-# # Find common columns
-# common_cols = set()
-# for i, table_name in enumerate(feature_table_names):
-#     cols = [row[0] for row in con.execute(f"DESCRIBE {table_name}").fetchall()]
-#     if i == 0:
-#         common_cols = set(cols)
-#     else:
-#         common_cols &= set(cols)
-
-# # Construct UNION ALL query
-# union_parts = []
-# common_cols_list = list(common_cols)
-# common_cols_list.sort()
-
-# for table_name in feature_table_names:
-#     obj_name = table_name.replace("cp_measure_", "")
-#     cols_str = ", ".join([f'"{c}"' for c in common_cols_list])
-#     union_parts.append(
-#         f"SELECT {cols_str}, '{obj_name}' AS object FROM {csv_files.values()}"
-#     )
-
-# union_query = " UNION ALL ".join(union_parts)
-# con.execute(f"CREATE OR REPLACE VIEW orig_profiles AS {union_query}")
 con.sql(
-    f"CREATE OR REPLACE TABLE orig_profiles AS (SELECT *, split_part(parse_filename(filename),'_',3) AS object FROM read_csv({csv_files}, filename=True, union_by_name=True))"
+    f"CREATE OR REPLACE TABLE orig_profiles AS (SELECT *, split_part(parse_filename(filename, true),'_',3) AS object FROM read_csv({csv_files}, filename=True, union_by_name=True))"
 )
 
 # Consensus: Group by ImageNumber, object -> median
@@ -172,13 +143,7 @@ mapper = get_cpm_to_measurement_mapper()
 con.sql(f"CREATE OR REPLACE TABLE cp_raw AS SELECT * FROM '{cpmeasure_parquet}'")
 
 meta_cols = ["object", "gene", "channel", "site"]
-# raw_cols_info = con.execute("DESCRIBE cp_raw").fetchall()
-# raw_numeric_cols = [
-#     c[0] for c in raw_cols_info if c[0] not in meta_cols and c[1] != "VARCHAR"
-# ]
 
-# median_exprs_cp = [f'MEDIAN("{col}") AS "{col}"' for col in raw_numeric_cols]
-# "{", ".join(meta_cols)}, {", ".join(median_exprs_cp)}
 new_consensus_query = f"""
     CREATE OR REPLACE VIEW new_consensus AS
     SELECT {",".join(meta_cols)}, MEDIAN(COLUMNS(* EXCLUDE({",".join(meta_cols)}))) 
