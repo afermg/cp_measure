@@ -1,6 +1,7 @@
 import re
 import pyarrow as pa
 
+
 def get_feature_groups(
     feature_fullnames: tuple[str],
     feature_names: tuple[str] = ("Feature", "Channel", "Suffix"),
@@ -19,30 +20,34 @@ def get_feature_groups(
     pa.Table
         Arrow Table containing the grouped feature information.
     """
-    channels = "|".join((
-        "DNA",
-        "AGP",
-        "RNA",
-        "ER",
-        "Mito",
-        "Image",
-    ))
-    chless_feats = "|".join((
-        "AreaShape",
-        "Neighbors",
-        "Location",
-        "Count",
-        "Number",
-        "Parent",
-        "Children",
-        "ObjectSkeleton",
-        "Threshold",
-    ))
+    channels = "|".join(
+        (
+            "DNA",
+            "AGP",
+            "RNA",
+            "ER",
+            "Mito",
+            "Image",
+        )
+    )
+    chless_feats = "|".join(
+        (
+            "AreaShape",
+            "Neighbors",
+            "Location",
+            "Count",
+            "Number",
+            "Parent",
+            "Children",
+            "ObjectSkeleton",
+            "Threshold",
+        )
+    )
 
     std = re.compile(rf"(\S+)_(Orig)?({channels})(_.*)?")
     chless = re.compile(f"({chless_feats})_?([a-zA-Z]+)?(.*)?")
     results = []
-    
+
     for x in feature_fullnames:
         try:
             # Check for standard match first
@@ -68,17 +73,16 @@ def get_feature_groups(
                 else:
                     # Fallback
                     results.append((x, "", ""))
+
         except Exception as e:
             print(f"Error processing {x}: {e}")
             results.append((x, "", ""))
 
     # Transpose results for columnar storage
     columns_data = list(zip(*results)) if results else [(), (), ()]
-    
+
     # Create Arrow Table
-    data_dict = {
-        name: data for name, data in zip(feature_names, columns_data)
-    }
+    data_dict = {name: data for name, data in zip(feature_names, columns_data)}
     data_dict["fullname"] = feature_fullnames
-    
+
     return pa.Table.from_pydict(data_dict)
