@@ -54,7 +54,6 @@ References
 import numpy
 import scipy.ndimage
 import skimage.morphology
-from centrosome.cpmorphology import fixup_scipy_ndimage_result as fix
 
 
 def get_granularity(
@@ -244,10 +243,26 @@ def get_granularity(
     unique_labels = unique_labels[unique_labels > 0]
 
     # Info on objects
-    range_ = numpy.arange(1, numpy.max(mask) + 1)
     labels = mask.copy()
-    current_mean = fix(scipy.ndimage.mean(pixels, labels, range_))
+    max_label = numpy.max(mask)
+
+    # Precompute label counts for fast per-label mean via bincount
+    flat_labels = labels.ravel()
+    counts = numpy.bincount(flat_labels, minlength=max_label + 1)[1:]
+    # Use NaN for missing labels to match scipy.ndimage.mean behavior
+    counts_safe = counts.astype(float)
+    counts_safe[counts_safe == 0] = numpy.nan
+
+    current_mean = (
+        numpy.bincount(flat_labels, weights=pixels.ravel(), minlength=max_label + 1)[1:]
+        / counts_safe
+    )
     start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
+
+    # Hoist shape comparison out of loop — if shapes match, map_coordinates
+    # is an identity operation and can be skipped entirely.
+    orig_shape = pixels.shape
+    need_remap = not numpy.array_equal(new_shape, orig_shape)
 
     results = {}
     for granularity_id in range(1, ng + 1):
@@ -255,9 +270,8 @@ def get_granularity(
         # erosions and reconstructions
         # ero_mask = numpy.zeros_like(ero)
         # ero_mask[mask == True] = ero[mask == True]
-        ero_mask = ero.copy()
-        # Shrink bright regions
-        ero = skimage.morphology.erosion(ero_mask, footprint=footprint)
+        # Shrink bright regions (erosion returns a new array, no copy needed)
+        ero = skimage.morphology.erosion(ero, footprint=footprint)
         # Use a mask (footprint) to make bright sections bigger
         rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
         # currentmean = numpy.mean(rec[mask])
@@ -267,26 +281,28 @@ def get_granularity(
 
         # Restore the reconstructed image to the shape of the
         # original image so we can match against object labels
-        #
-        orig_shape = pixels.shape
+        # (only needed when subsampling changes the shape)
         # TODO DRY This can be easily cleaned up
-        if pixels.ndim == 2:
-            i, j = numpy.mgrid[0 : orig_shape[0], 0 : orig_shape[1]].astype(float)
-            #
-            # Make sure the mapping only references the index range of
-            # back_pixels.
-            #
-            i *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
-            j *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
-            rec = scipy.ndimage.map_coordinates(rec, (i, j), order=1)
-        else:
-            k, i, j = numpy.mgrid[
-                0 : orig_shape[0], 0 : orig_shape[1], 0 : orig_shape[2]
-            ].astype(float)
-            k *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
-            i *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
-            j *= float(new_shape[2] - 1) / float(orig_shape[2] - 1)
-            rec = scipy.ndimage.map_coordinates(rec, (k, i, j), order=1)
+        if need_remap:
+            if pixels.ndim == 2:
+                i, j = numpy.mgrid[0 : orig_shape[0], 0 : orig_shape[1]].astype(float)
+                #
+                # Make sure the mapping only references the index range of
+                # back_pixels.
+                #
+                i *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
+                j *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
+                rec = scipy.ndimage.map_coordinates(rec, (i, j), order=1)
+            else:
+                k, i, j = numpy.mgrid[
+                    0 : orig_shape[0],
+                    0 : orig_shape[1],
+                    0 : orig_shape[2],
+                ].astype(float)
+                k *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
+                i *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
+                j *= float(new_shape[2] - 1) / float(orig_shape[2] - 1)
+                rec = scipy.ndimage.map_coordinates(rec, (k, i, j), order=1)
 
         # Calculate the means for the objects
         gss = numpy.zeros((0,))
@@ -296,7 +312,12 @@ def get_granularity(
             #
             # MODIFIED: These metrics were defined inside ObjectRecord originally
 
-            new_mean = fix(scipy.ndimage.mean(rec, labels, range_))
+            new_mean = (
+                numpy.bincount(
+                    flat_labels, weights=rec.ravel(), minlength=max_label + 1
+                )[1:]
+                / counts_safe
+            )
             gss = (current_mean - new_mean) * 100 / start_mean
 
         results[f"Granularity_{granularity_id}"] = gss
