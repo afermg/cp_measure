@@ -2,16 +2,7 @@
 
 Wraps all cp_measure core measurement functions into a single
 :class:`Featurizer` that operates on multichannel images and
-multiple named masks, producing a tidy table.
-
-Notes
------
-Some shape features may produce NaN values for certain object
-geometries. In particular, ``NormalizedMoment_0_0``,
-``NormalizedMoment_0_1``, and ``NormalizedMoment_1_0`` are
-mathematically undefined for objects with uniform pixel values
-or degenerate shapes. These NaN values are expected and
-inherent to the underlying skimage ``regionprops`` computation.
+multiple named object masks, producing a tidy table.
 """
 
 from __future__ import annotations
@@ -23,14 +14,10 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pyarrow as pa
-import pyarrow.compute as pc
 
 if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
-
-#: Supported output formats for :meth:`Featurizer.featurize`.
-ReturnFormat = Literal["pyarrow", "polars", "pandas"]
 
 
 class Featurizer:
@@ -42,8 +29,8 @@ class Featurizer:
     ----------
     channels : list[str]
         Channel names corresponding to the first axis of the image array.
-    masks : list[str]
-        Mask names corresponding to the first axis of the masks array.
+    objects : list[str]
+        Object names corresponding to the first axis of the masks array.
     channel_features : list[tuple[Callable, dict]]
         Per-channel features as ``(func, params)`` tuples.
     shape_features : list[tuple[Callable, dict]]
@@ -57,13 +44,13 @@ class Featurizer:
     def __init__(
         self,
         channels: list[str],
-        masks: list[str],
+        objects: list[str],
         channel_features: list[tuple[Callable, dict]],
         shape_features: list[tuple[Callable, dict]],
         correlation_features: list[tuple[Callable, dict, bool]],
     ):
         self._channels = list(channels)
-        self._masks = list(masks)
+        self._objects = list(objects)
         self._channel_features = channel_features
         self._shape_features = shape_features
         self._correlation_features = correlation_features
@@ -73,8 +60,8 @@ class Featurizer:
         image: np.ndarray,
         masks: np.ndarray,
         *,
-        return_as: ReturnFormat = "pyarrow",
-    ) -> pa.Table | pl.DataFrame | pd.DataFrame:
+        return_as: Literal["pyarrow", "polars", "pandas", "dict"] = "pyarrow",
+    ) -> pa.Table | pl.DataFrame | pd.DataFrame | dict:
         """Compute all configured features for the given image and masks.
 
         Parameters
@@ -84,25 +71,27 @@ class Featurizer:
             the number of channel names provided at construction time.
         masks : numpy.ndarray
             Integer-labeled masks with shape ``(M, H, W)`` where ``M`` matches
-            the number of mask names provided at construction time. Background
+            the number of object names provided at construction time. Background
             is 0, each object has a unique positive integer label per plane.
-        return_as : {"pyarrow", "polars", "pandas"}, default "pyarrow"
+        return_as : {"pyarrow", "polars", "pandas", "dict"}, default "pyarrow"
             Output format. ``"pyarrow"`` returns a :class:`pyarrow.Table`,
-            ``"polars"`` returns a :class:`polars.DataFrame`, and
-            ``"pandas"`` returns a :class:`pandas.DataFrame`.
+            ``"polars"`` returns a :class:`polars.DataFrame`,
+            ``"pandas"`` returns a :class:`pandas.DataFrame`, and
+            ``"dict"`` returns a plain Python dictionary of lists
+            (via :meth:`pyarrow.Table.to_pydict`).
             The requested library must be importable; a helpful
             :class:`ImportError` is raised otherwise.
 
         Returns
         -------
-        pyarrow.Table | polars.DataFrame | pandas.DataFrame
+        pyarrow.Table | polars.DataFrame | pandas.DataFrame | dict
             Table with one row per labeled object (union of all labels
             across masks). The ``"label"`` column contains the label ID.
-            Feature columns are named ``{mask}_{feature}_{channel}`` for
-            per-channel features, ``{mask}_{feature}`` for shape features,
-            and ``{mask}_{feature}_{ch1}_{ch2}`` for correlation features.
-            Labels missing from a given mask have null for that mask's columns.
-            Rows are sorted by ``label`` in ascending order.
+            Feature columns are named ``{object}__{feature}__{channel}``
+            for per-channel features, ``{object}__{feature}`` for shape
+            features, and ``{object}__{feature}__{ch1}__{ch2}`` for
+            correlation features. Labels missing from a given mask have
+            null for that mask's columns.
         """
         _check_return_format(return_as)
         self._validate(image, masks)
@@ -112,9 +101,9 @@ class Featurizer:
         # require a pixels argument, but it is ignored; pass zeros.
         _dummy_pixels = np.zeros(image.shape[1:], dtype=image.dtype)
 
-        per_mask_tables: list[pa.Table] = []
+        per_object_tables: list[pa.Table] = []
 
-        for mask_idx, mask_name in enumerate(self._masks):
+        for mask_idx, object_name in enumerate(self._objects):
             mask_2d = masks[mask_idx]
             # n_labels == mask_2d.max() is safe because _validate enforces
             # contiguous labels 1..N with no gaps.
@@ -128,25 +117,23 @@ class Featurizer:
             # Shape features — purely geometric, run once per mask
             for func, params in self._shape_features:
                 for key, values in func(mask_2d, _dummy_pixels, **params).items():
-                    results[f"{mask_name}_{key}"] = values
+                    results[f"{object_name}__{key}"] = values
 
             # Per-channel features
             for ch_idx, ch_name in enumerate(self._channels):
                 pixels = image[ch_idx]
                 for func, params in self._channel_features:
                     for key, values in func(mask_2d, pixels, **params).items():
-                        results[f"{mask_name}_{key}_{ch_name}"] = values
+                        results[f"{object_name}__{key}__{ch_name}"] = values
 
             # Correlation features — symmetric use combinations, asymmetric
             # use permutations to capture both channel orderings
             n_ch = len(self._channels)
             for func, params, symmetric in self._correlation_features:
-                pairs = (
-                    itertools.combinations(range(n_ch), 2)
-                    if symmetric
-                    else itertools.permutations(range(n_ch), 2)
+                iter_fn = (
+                    itertools.combinations if symmetric else itertools.permutations
                 )
-                for ch_i, ch_j in pairs:
+                for ch_i, ch_j in iter_fn(range(n_ch), 2):
                     result = func(
                         pixels_1=image[ch_i],
                         pixels_2=image[ch_j],
@@ -154,7 +141,7 @@ class Featurizer:
                         **params,
                     )
                     for key, values in result.items():
-                        col = f"{mask_name}_{key}_{self._channels[ch_i]}_{self._channels[ch_j]}"
+                        col = f"{object_name}__{key}__{self._channels[ch_i]}__{self._channels[ch_j]}"
                         results[col] = values
 
             labels = np.arange(1, n_labels + 1)
@@ -164,46 +151,12 @@ class Featurizer:
                 arrays.append(pa.array(col_values))
                 names.append(col_name)
             mask_table = pa.table(arrays, names=names)
-            per_mask_tables.append(mask_table)
+            per_object_tables.append(mask_table)
 
-        # Full outer join across masks on the "label" column using
-        # vectorized pc.take (C++ kernel) instead of per-cell .as_py().
-        table = per_mask_tables[0]
-        for other in per_mask_tables[1:]:
-            labels_left = table.column("label").to_pylist()
-            labels_right = other.column("label").to_pylist()
-            all_labels = sorted(set(labels_left) | set(labels_right))
-
-            left_idx = {lab: i for i, lab in enumerate(labels_left)}
-            right_idx = {lab: i for i, lab in enumerate(labels_right)}
-
-            # Index arrays with None for missing labels -> null in take output
-            left_indices = pa.array(
-                [left_idx.get(lab) for lab in all_labels], type=pa.int64()
-            )
-            right_indices = pa.array(
-                [right_idx.get(lab) for lab in all_labels], type=pa.int64()
-            )
-
-            merged_arrays: list[pa.Array] = [pa.array(all_labels, type=pa.int64())]
-            merged_names: list[str] = ["label"]
-
-            for col_name in table.column_names:
-                if col_name == "label":
-                    continue
-                merged_arrays.append(pc.take(table.column(col_name), left_indices))
-                merged_names.append(col_name)
-
-            for col_name in other.column_names:
-                if col_name == "label":
-                    continue
-                merged_arrays.append(pc.take(other.column(col_name), right_indices))
-                merged_names.append(col_name)
-
-            table = pa.table(merged_arrays, names=merged_names)
-
-        # Sort by label
-        table = table.sort_by("label")
+        # Full outer join across masks on the "label" column
+        table = per_object_tables[0]
+        for other in per_object_tables[1:]:
+            table = table.join(other, keys="label", join_type="full outer")
 
         if return_as == "pyarrow":
             return table
@@ -211,8 +164,10 @@ class Featurizer:
             import polars as pl
 
             return pl.from_arrow(table)
-        # return_as == "pandas" — availability already checked by _check_return_format
-        return table.to_pandas()
+        if return_as == "pandas":
+            return table.to_pandas()
+        # return_as == "dict"
+        return table.to_pydict()
 
     def _validate(self, image: np.ndarray, masks: np.ndarray) -> None:
         """Validate inputs before featurization."""
@@ -225,10 +180,10 @@ class Featurizer:
                 f"image has {image.shape[0]} channels but "
                 f"{len(self._channels)} channel names were provided"
             )
-        if masks.shape[0] != len(self._masks):
+        if masks.shape[0] != len(self._objects):
             raise ValueError(
                 f"masks has {masks.shape[0]} planes but "
-                f"{len(self._masks)} mask names were provided"
+                f"{len(self._objects)} object names were provided"
             )
         if image.shape[1:] != masks.shape[1:]:
             raise ValueError(
@@ -237,25 +192,24 @@ class Featurizer:
             )
         if not np.issubdtype(masks.dtype, np.integer):
             raise TypeError(f"masks must be integer dtype, got {masks.dtype}")
-        if masks.min() < 0:
-            raise ValueError("masks must not contain negative labels")
         all_empty = True
         for i in range(masks.shape[0]):
-            plane_max = masks[i].max()
-            if plane_max == 0:
+            mask_max = masks[i].max()
+            if mask_max == 0:
                 continue
             all_empty = False
             counts = np.bincount(masks[i].ravel())
-            # Labels 1..plane_max must all be present (non-zero count)
-            if len(counts) <= plane_max or np.any(counts[1 : plane_max + 1] == 0):
+            # Labels 1..mask_max must all be present (non-zero count)
+            if len(counts) <= mask_max or np.any(counts[1 : mask_max + 1] == 0):
                 unique = np.unique(masks[i])
                 unique = unique[unique > 0]
                 raise ValueError(
-                    f"mask plane '{self._masks[i]}' has non-contiguous labels "
-                    f"{unique.tolist()}; labels must be 1..N with no gaps"
+                    f"mask '{self._objects[i]}' has non-contiguous labels "
+                    f"{unique.tolist()}; cp_measure requires labels to be "
+                    f"1..N with no gaps"
                 )
         if all_empty:
-            raise ValueError("all mask planes have no labels (all zeros)")
+            raise ValueError("all masks have no labels (all zeros)")
         if np.issubdtype(image.dtype, np.integer):
             warnings.warn(
                 "image has integer dtype; cp_measure expects float images "
@@ -266,11 +220,13 @@ class Featurizer:
             )
 
 
-def _check_return_format(return_as: ReturnFormat) -> None:
+def _check_return_format(
+    return_as: Literal["pyarrow", "polars", "pandas", "dict"],
+) -> None:
     """Validate return format and check library availability early."""
     import importlib.util
 
-    valid = ("pyarrow", "polars", "pandas")
+    valid = ("pyarrow", "polars", "pandas", "dict")
     if return_as not in valid:
         raise ValueError(f"return_as must be one of {valid!r}, got {return_as!r}")
     if return_as == "polars" and importlib.util.find_spec("polars") is None:
@@ -288,7 +244,7 @@ def _check_return_format(return_as: ReturnFormat) -> None:
 def make_featurizer(
     channels: list[str],
     *,
-    masks: list[str] | None = None,
+    objects: list[str] | None = None,
     intensity: bool = True,
     intensity_params: dict | None = None,
     texture: bool = True,
@@ -323,10 +279,10 @@ def make_featurizer(
         Names for each channel in the image. The image passed to
         :meth:`Featurizer.featurize` must have ``len(channels)`` planes
         along the first axis.
-    masks : list[str], optional
-        Names for each mask plane. The masks array passed to
-        :meth:`Featurizer.featurize` must have ``len(masks)`` planes
-        along the first axis. If ``None``, defaults to ``["mask"]``.
+    objects : list[str], optional
+        Names for each object mask. The masks array passed to
+        :meth:`Featurizer.featurize` must have ``len(objects)`` planes
+        along the first axis. If ``None``, defaults to ``["object"]``.
     intensity : bool
         Compute intensity features per channel.
     intensity_params : dict, optional
@@ -386,8 +342,14 @@ def make_featurizer(
     Raises
     ------
     ValueError
-        If no features are enabled, if ``channels`` or ``masks`` is empty,
-        if channel names are not unique, or if mask names are not unique.
+        If no features are enabled, if ``channels`` or ``objects`` is empty,
+        if channel names are not unique, or if object names are not unique.
+
+    Examples
+    --------
+    >>> from cp_measure.featurizer import make_featurizer
+    >>> f = make_featurizer(["DNA", "ER"], objects=["nuclei", "cells"])
+    >>> table = f.featurize(image, masks)  # (C, H, W) and (M, H, W)
     """
     if not channels:
         raise ValueError("channels must be a non-empty list of channel names")
@@ -395,14 +357,14 @@ def make_featurizer(
     if len(set(channels)) != len(channels):
         raise ValueError("channel names must be unique")
 
-    if masks is None:
-        masks = ["mask"]
+    if objects is None:
+        objects = ["object"]
 
-    if not masks:
-        raise ValueError("masks must be a non-empty list of mask names")
+    if not objects:
+        raise ValueError("objects must be a non-empty list of object names")
 
-    if len(set(masks)) != len(masks):
-        raise ValueError("mask names must be unique")
+    if len(set(objects)) != len(objects):
+        raise ValueError("object names must be unique")
 
     from cp_measure.bulk import get_core_measurements, get_correlation_measurements
 
@@ -470,7 +432,7 @@ def make_featurizer(
 
     return Featurizer(
         channels=channels,
-        masks=masks,
+        objects=objects,
         channel_features=channel_features,
         shape_features=shape_features,
         correlation_features=correlation_features,
