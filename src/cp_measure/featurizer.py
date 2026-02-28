@@ -31,22 +31,24 @@ class Featurizer:
         Channel names corresponding to the first axis of the image array.
     objects : list[str]
         Object names corresponding to the first axis of the masks array.
-    channel_features : list[tuple[Callable, dict]]
-        Per-channel features as ``(func, params)`` tuples.
-    shape_features : list[tuple[Callable, dict]]
-        Mask-only shape features as ``(func, params)`` tuples.
+    channel_features : list[tuple[Callable, dict, bool]]
+        Per-channel features as ``(func, params, volumetric)`` tuples.
+        *volumetric* is ``True`` when the function supports 3D spatial
+        data; ``False`` for 2D-only functions.
+    shape_features : list[tuple[Callable, dict, bool]]
+        Mask-only shape features as ``(func, params, volumetric)`` tuples.
     correlation_features : list[tuple[Callable, dict, bool]]
         Pairwise correlation features as ``(func, params, symmetric)``
         tuples. Symmetric metrics use combinations; asymmetric use
-        permutations.
+        permutations. All correlation functions support volumetric data.
     """
 
     def __init__(
         self,
         channels: list[str],
         objects: list[str],
-        channel_features: list[tuple[Callable, dict]],
-        shape_features: list[tuple[Callable, dict]],
+        channel_features: list[tuple[Callable, dict, bool]],
+        shape_features: list[tuple[Callable, dict, bool]],
         correlation_features: list[tuple[Callable, dict, bool]],
     ):
         self._channels = list(channels)
@@ -67,12 +69,17 @@ class Featurizer:
         Parameters
         ----------
         image : numpy.ndarray
-            Multichannel image with shape ``(C, H, W)`` where ``C`` matches
+            Multichannel image with shape ``(C, H, W)`` for 2D spatial data
+            or ``(C, Z, H, W)`` for 3D volumetric data. ``C`` must match
             the number of channel names provided at construction time.
         masks : numpy.ndarray
-            Integer-labeled masks with shape ``(M, H, W)`` where ``M`` matches
-            the number of object names provided at construction time. Background
-            is 0, each object has a unique positive integer label per plane.
+            Integer-labeled masks with shape ``(M, H, W)`` or
+            ``(M, Z, H, W)``. Must have the same ``ndim`` as *image*.
+            ``M`` must match the number of object names provided at
+            construction time. Background is 0, each object has a unique
+            positive integer label per object mask. For volumetric (4D) inputs,
+            2D-only features (radial_distribution, radial_zernikes, zernike,
+            ferret) are automatically skipped with a warning.
         return_as : {"pyarrow", "polars", "pandas", "dict"}, default "pyarrow"
             Output format. ``"pyarrow"`` returns a :class:`pyarrow.Table`,
             ``"polars"`` returns a :class:`polars.DataFrame`,
@@ -96,6 +103,33 @@ class Featurizer:
         _check_return_format(return_as)
         self._validate(image, masks)
 
+        is_volumetric = image.ndim == 4
+
+        if is_volumetric:
+            skipped_names = [
+                f.__name__
+                for f, _p, v in (*self._channel_features, *self._shape_features)
+                if not v
+            ]
+            channel_feats = [(f, p) for f, p, v in self._channel_features if v]
+            shape_feats = [(f, p) for f, p, v in self._shape_features if v]
+
+            if not channel_feats and not shape_feats and not self._correlation_features:
+                raise ValueError(
+                    "no features left for volumetric input — all enabled "
+                    f"features are 2D-only ({', '.join(skipped_names)})"
+                )
+            if skipped_names:
+                warnings.warn(
+                    f"Skipped {len(skipped_names)} 2D-only feature(s) for "
+                    f"volumetric input ({', '.join(skipped_names)})",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        else:
+            channel_feats = [(f, p) for f, p, _v in self._channel_features]
+            shape_feats = [(f, p) for f, p, _v in self._shape_features]
+
         # Shape features (sizeshape, zernike, ferret) are purely geometric
         # and do not depend on pixel values. Their function signatures
         # require a pixels argument, but it is ignored; pass zeros.
@@ -104,10 +138,10 @@ class Featurizer:
         per_object_tables: list[pa.Table] = []
 
         for mask_idx, object_name in enumerate(self._objects):
-            mask_2d = masks[mask_idx]
-            # n_labels == mask_2d.max() is safe because _validate enforces
+            mask = masks[mask_idx]
+            # n_labels == mask.max() is safe because _validate enforces
             # contiguous labels 1..N with no gaps.
-            n_labels = mask_2d.max()
+            n_labels = mask.max()
 
             if n_labels == 0:
                 continue
@@ -115,15 +149,15 @@ class Featurizer:
             results: dict[str, np.ndarray | list] = {}
 
             # Shape features — purely geometric, run once per mask
-            for func, params in self._shape_features:
-                for key, values in func(mask_2d, _dummy_pixels, **params).items():
+            for func, params in shape_feats:
+                for key, values in func(mask, _dummy_pixels, **params).items():
                     results[f"{object_name}__{key}"] = values
 
             # Per-channel features
             for ch_idx, ch_name in enumerate(self._channels):
                 pixels = image[ch_idx]
-                for func, params in self._channel_features:
-                    for key, values in func(mask_2d, pixels, **params).items():
+                for func, params in channel_feats:
+                    for key, values in func(mask, pixels, **params).items():
                         results[f"{object_name}__{key}__{ch_name}"] = values
 
             # Correlation features — symmetric use combinations, asymmetric
@@ -137,14 +171,14 @@ class Featurizer:
                     result = func(
                         pixels_1=image[ch_i],
                         pixels_2=image[ch_j],
-                        masks=mask_2d,
+                        masks=mask,
                         **params,
                     )
                     for key, values in result.items():
                         col = f"{object_name}__{key}__{self._channels[ch_i]}__{self._channels[ch_j]}"
                         results[col] = values
 
-            labels = np.arange(1, n_labels + 1)
+            labels = np.arange(1, n_labels + 1, dtype=np.int32)
             arrays = [pa.array(labels)]
             names = ["label"]
             for col_name, col_values in results.items():
@@ -171,10 +205,21 @@ class Featurizer:
 
     def _validate(self, image: np.ndarray, masks: np.ndarray) -> None:
         """Validate inputs before featurization."""
-        if image.ndim != 3:
-            raise ValueError(f"image must be 3D (C, H, W), got shape {image.shape}")
-        if masks.ndim != 3:
-            raise ValueError(f"masks must be 3D (M, H, W), got shape {masks.shape}")
+        if image.ndim not in (3, 4):
+            raise ValueError(
+                f"image must be 3D (C, H, W) or 4D (C, Z, H, W), "
+                f"got shape {image.shape}"
+            )
+        if masks.ndim not in (3, 4):
+            raise ValueError(
+                f"masks must be 3D (M, H, W) or 4D (M, Z, H, W), "
+                f"got shape {masks.shape}"
+            )
+        if image.ndim != masks.ndim:
+            raise ValueError(
+                f"image and masks must have the same number of dimensions, "
+                f"got image.ndim={image.ndim} and masks.ndim={masks.ndim}"
+            )
         if image.shape[0] != len(self._channels):
             raise ValueError(
                 f"image has {image.shape[0]} channels but "
@@ -182,7 +227,7 @@ class Featurizer:
             )
         if masks.shape[0] != len(self._objects):
             raise ValueError(
-                f"masks has {masks.shape[0]} planes but "
+                f"masks has {masks.shape[0]} object masks but "
                 f"{len(self._objects)} object names were provided"
             )
         if image.shape[1:] != masks.shape[1:]:
@@ -277,12 +322,12 @@ def make_featurizer(
     ----------
     channels : list[str]
         Names for each channel in the image. The image passed to
-        :meth:`Featurizer.featurize` must have ``len(channels)`` planes
+        :meth:`Featurizer.featurize` must have ``len(channels)`` channels
         along the first axis.
     objects : list[str], optional
         Names for each object mask. The masks array passed to
-        :meth:`Featurizer.featurize` must have ``len(objects)`` planes
-        along the first axis. If ``None``, defaults to ``["object"]``.
+        :meth:`Featurizer.featurize` must have ``len(objects)`` object
+        masks along the first axis. If ``None``, defaults to ``["object"]``.
     intensity : bool
         Compute intensity features per channel.
     intensity_params : dict, optional
@@ -299,10 +344,12 @@ def make_featurizer(
         (e.g. ``{"granular_spectrum_length": 8}``).
     radial_distribution : bool
         Compute radial intensity distribution per channel.
+        **2D-only** — automatically skipped for volumetric (4D) inputs.
     radial_distribution_params : dict, optional
         Extra keyword arguments forwarded to ``get_radial_distribution``.
     radial_zernikes : bool
         Compute radial Zernike moments per channel.
+        **2D-only** — automatically skipped for volumetric (4D) inputs.
     radial_zernikes_params : dict, optional
         Extra keyword arguments forwarded to ``get_radial_zernikes``.
     sizeshape : bool
@@ -313,10 +360,12 @@ def make_featurizer(
         Extra keyword arguments forwarded to ``get_sizeshape``.
     zernike : bool
         Compute Zernike shape features (mask only, run once).
+        **2D-only** — automatically skipped for volumetric (4D) inputs.
     zernike_params : dict, optional
         Extra keyword arguments forwarded to ``get_zernike``.
     ferret : bool
         Compute Feret diameter features (mask only, run once).
+        **2D-only** — automatically skipped for volumetric (4D) inputs.
         ``get_ferret`` accepts no extra parameters.
     correlation_pearson : bool
         Compute Pearson correlation and slope for all channel permutations.
@@ -349,7 +398,7 @@ def make_featurizer(
     --------
     >>> from cp_measure.featurizer import make_featurizer
     >>> f = make_featurizer(["DNA", "ER"], objects=["nuclei", "cells"])
-    >>> table = f.featurize(image, masks)  # (C, H, W) and (M, H, W)
+    >>> table = f.featurize(image, masks)  # (C, H, W) / (C, Z, H, W)
     """
     if not channels:
         raise ValueError("channels must be a non-empty list of channel names")
@@ -371,30 +420,34 @@ def make_featurizer(
     core_funcs = get_core_measurements()
     corr_funcs = get_correlation_measurements()
 
-    channel_features: list[tuple[Callable, dict]] = []
+    # The third element of each tuple indicates volumetric (3D spatial)
+    # support.  2D-only features are automatically skipped for 4D inputs.
+    channel_features: list[tuple[Callable, dict, bool]] = []
     if intensity:
-        channel_features.append((core_funcs["intensity"], intensity_params or {}))
+        channel_features.append((core_funcs["intensity"], intensity_params or {}, True))
     if texture:
-        channel_features.append((core_funcs["texture"], texture_params or {}))
+        channel_features.append((core_funcs["texture"], texture_params or {}, True))
     if granularity:
-        channel_features.append((core_funcs["granularity"], granularity_params or {}))
+        channel_features.append(
+            (core_funcs["granularity"], granularity_params or {}, True)
+        )
     if radial_distribution:
         channel_features.append(
-            (core_funcs["radial_distribution"], radial_distribution_params or {})
+            (core_funcs["radial_distribution"], radial_distribution_params or {}, False)
         )
     if radial_zernikes:
         channel_features.append(
-            (core_funcs["radial_zernikes"], radial_zernikes_params or {})
+            (core_funcs["radial_zernikes"], radial_zernikes_params or {}, False)
         )
 
     # Shape features are purely geometric (do not depend on pixel values).
-    shape_features: list[tuple[Callable, dict]] = []
+    shape_features: list[tuple[Callable, dict, bool]] = []
     if sizeshape:
-        shape_features.append((core_funcs["sizeshape"], sizeshape_params or {}))
+        shape_features.append((core_funcs["sizeshape"], sizeshape_params or {}, True))
     if zernike:
-        shape_features.append((core_funcs["zernike"], zernike_params or {}))
+        shape_features.append((core_funcs["zernike"], zernike_params or {}, False))
     if ferret:
-        shape_features.append((core_funcs["ferret"], {}))
+        shape_features.append((core_funcs["ferret"], {}, False))
 
     # Symmetric metrics produce identical results for (A, B) and (B, A)
     # — either directly or via _1/_2 suffix swap — so combinations suffice.

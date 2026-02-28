@@ -1,6 +1,7 @@
 """Tests for the high-level Featurizer orchestrator."""
 
 import itertools
+import warnings
 
 import numpy as np
 import pyarrow as pa
@@ -20,6 +21,10 @@ _KNOWN_NAN_PATTERNS = {
     "NormalizedMoment_0_1",
     "NormalizedMoment_1_0",
 }
+
+# Column name patterns produced by 2D-only features; must be absent
+# from volumetric output.
+_2D_ONLY_PATTERNS = {"RadialDistribution", "RadialCV", "Zernike", "Feret"}
 
 # All feature flags set to False - tests override only what they need.
 _ALL_OFF = dict(
@@ -52,7 +57,7 @@ def _make_image_and_mask(
 ):
     """Create a small random image and labeled mask for testing.
 
-    Returns image ``(C, H, W)`` and mask ``(1, H, W)`` (single mask plane).
+    Returns image ``(C, H, W)`` and mask ``(1, H, W)`` (single object mask).
     """
     rng = np.random.default_rng(seed)
     image = rng.random((n_channels, size, size)).astype(dtype)
@@ -216,18 +221,33 @@ class TestParamsForwarding:
 
 
 class TestValidation:
-    def test_image_not_3d(self):
+    def test_image_2d_raises(self):
         image = np.ones((10, 10))
         mask = np.ones((1, 10, 10), dtype=np.int32)
         f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
-        with pytest.raises(ValueError, match="3D"):
+        with pytest.raises(ValueError, match="3D.*4D"):
             f.featurize(image, mask)
 
-    def test_masks_not_3d(self):
+    def test_image_5d_raises(self):
+        image = np.ones((1, 2, 3, 4, 5))
+        mask = np.ones((1, 2, 3, 4, 5), dtype=np.int32)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
+        with pytest.raises(ValueError, match="3D.*4D"):
+            f.featurize(image, mask)
+
+    def test_masks_2d_raises(self):
         image = np.ones((1, 10, 10))
         mask = np.ones((10, 10), dtype=np.int32)
         f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
-        with pytest.raises(ValueError, match="3D"):
+        with pytest.raises(ValueError, match="3D.*4D"):
+            f.featurize(image, mask)
+
+    def test_ndim_mismatch(self):
+        """3D image with 4D masks should raise ValueError."""
+        image = np.ones((1, 10, 10))
+        mask = np.ones((1, 2, 10, 10), dtype=np.int32)
+        f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
+        with pytest.raises(ValueError, match="same number of dimensions"):
             f.featurize(image, mask)
 
     def test_channel_count_mismatch(self):
@@ -291,6 +311,111 @@ class TestWarnings:
         f = make_featurizer(["DNA"], **{**_ALL_OFF, "intensity": True})
         with pytest.warns(UserWarning, match="integer dtype"):
             f.featurize(image_uint8, mask)
+
+
+# ---------------------------------------------------------------------------
+# Volumetric (3D spatial) tests
+# ---------------------------------------------------------------------------
+
+
+def _make_volumetric_image_and_mask(
+    n_channels: int = 2,
+    size: int = 32,
+    depth: int = 8,
+    n_objects: int = 2,
+    seed: int = 42,
+    dtype=np.float64,
+):
+    """Create a small random volumetric image and labeled mask.
+
+    Returns image ``(C, Z, H, W)`` and mask ``(1, Z, H, W)`` (single object mask).
+    """
+    rng = np.random.default_rng(seed)
+    image = rng.random((n_channels, depth, size, size)).astype(dtype)
+    mask = np.zeros((1, depth, size, size), dtype=np.int32)
+    # Place non-overlapping cubic objects
+    step = size // (n_objects + 1)
+    obj_size = max(step // 2, 4)
+    z_size = min(obj_size, depth - 1)
+    for i in range(n_objects):
+        r = step * (i + 1) - obj_size // 2
+        c = step * (i + 1) - obj_size // 2
+        z = 1
+        mask[0, z : z + z_size, r : r + obj_size, c : c + obj_size] = i + 1
+    return image, mask
+
+
+class TestVolumetric:
+    def test_volumetric_smoke(self):
+        """4D intensity + sizeshape runs and returns correct rows."""
+        image, mask = _make_volumetric_image_and_mask(n_channels=2)
+        f = make_featurizer(
+            ["DNA", "ER"],
+            **{**_ALL_OFF, "intensity": True, "sizeshape": True},
+        )
+        df = f.featurize(image, mask)
+
+        assert isinstance(df, pa.Table)
+        assert df.num_rows == 2
+        assert "label" in df.column_names
+        # Must produce actual feature columns beyond just "label"
+        feat_cols = _feature_columns(df)
+        assert len(feat_cols) > 0, "No feature columns produced"
+        assert any("Intensity" in c for c in feat_cols)
+        assert any("Area" in c or "Volume" in c for c in feat_cols)
+        # No column should be entirely null
+        all_null = [c for c in feat_cols if df.column(c).null_count == df.num_rows]
+        assert len(all_null) == 0, f"All-null columns: {all_null}"
+
+    def test_volumetric_skips_2d_only_features(self):
+        """Volumetric input with all features warns and omits 2D-only columns."""
+        image, mask = _make_volumetric_image_and_mask(n_channels=2)
+        f = make_featurizer(["DNA", "ER"])
+        with pytest.warns(UserWarning, match="2D-only"):
+            df = f.featurize(image, mask)
+
+        feat_cols = _feature_columns(df)
+        # 2D-only feature column patterns must be absent
+        present_2d = [c for c in feat_cols if any(p in c for p in _2D_ONLY_PATTERNS)]
+        assert present_2d == [], f"2D-only columns in volumetric output: {present_2d}"
+
+        # Volumetric features should be present
+        assert any("Intensity" in c for c in feat_cols)
+        assert any("Area" in c or "Volume" in c for c in feat_cols)
+
+    def test_volumetric_only_2d_features_raises(self):
+        """Volumetric input with only 2D-only features raises ValueError.
+
+        The ValueError must fire *without* a preceding warning (the
+        warning would be redundant when all features are filtered out).
+        """
+        image, mask = _make_volumetric_image_and_mask(n_channels=1)
+        f = make_featurizer(
+            ["DNA"],
+            **{
+                **_ALL_OFF,
+                "radial_distribution": True,
+                "zernike": True,
+                "ferret": True,
+            },
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(ValueError, match="no features left"):
+                f.featurize(image, mask)
+
+    def test_volumetric_correlation(self):
+        """Correlation features work end-to-end on volumetric data."""
+        image, mask = _make_volumetric_image_and_mask(n_channels=2)
+        f = make_featurizer(
+            ["DNA", "ER"],
+            **{**_ALL_OFF, "intensity": True, "correlation_pearson": True},
+        )
+        df = f.featurize(image, mask)
+
+        assert df.num_rows == 2
+        corr_cols = [c for c in df.column_names if "Correlation" in c]
+        assert len(corr_cols) > 0, "No correlation columns for volumetric input"
 
 
 # ---------------------------------------------------------------------------
@@ -361,8 +486,8 @@ class TestMultiMask:
                 f"Expected 'object__' prefix with default object name, got: {col}"
             )
 
-    def test_mask_plane_with_no_labels_skipped(self):
-        """A mask plane with all zeros is skipped gracefully."""
+    def test_empty_object_mask_skipped(self):
+        """An object mask with all zeros is skipped gracefully."""
         rng = np.random.default_rng(42)
         size = 64
         image = rng.random((1, size, size))
