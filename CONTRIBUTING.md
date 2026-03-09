@@ -39,11 +39,13 @@ We welcome various types of contributions:
 ### Making Changes
 
 1. Create a new branch for your changes:
+
    ```bash
    git checkout -b feature/your-feature-name
    ```
 
 2. Follow the existing code style and conventions:
+
    - Each measurement module should be as self-contained as possible
    - (Recommended) Use float32 values between 0 and 1 for images to match CellProfiler
 
@@ -57,6 +59,7 @@ We welcome various types of contributions:
 ### Code Quality Standards
 
 All contributions must pass:
+
 - **Linting**: `uv run ruff check src/`
 - **Formatting**: `uv run ruff format src/`
 - **Tests**: All existing and new tests must pass
@@ -96,6 +99,7 @@ The project is actively developing in these areas:
 ## Notes on Project Relationship to CellProfiler/cellprofiler_library
 
 cp_measure focuses specifically on reimplementing CellProfiler's measurement modules with a unified interface, while the CellProfiler team's `cellprofiler_library` project aims to port many CellProfiler modules, not only measurement modules. While there may be some overlap in the future, cp_measure maintains its focus on:
+
 - Minimal dependencies
 - Transparent, self-contained measurement implementations
 - Unified interface for ML/computational biology workflows
