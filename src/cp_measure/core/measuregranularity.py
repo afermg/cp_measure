@@ -54,7 +54,7 @@ References
 import numpy
 import scipy.ndimage
 import skimage.morphology
-from centrosome.cpmorphology import fixup_scipy_ndimage_result as fix
+from cp_measure.utils import _ensure_np_array as fix
 
 
 def get_granularity(

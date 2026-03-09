@@ -1,9 +1,7 @@
-import centrosome.cpmorphology
-import centrosome.filter
-import centrosome.outline
 import numpy
 import scipy.ndimage
 import skimage.segmentation
+from cp_measure.utils import _ensure_np_array as fix
 
 __doc__ = """
 MeasureObjectIntensity
@@ -195,20 +193,16 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
             mesh_y = mesh_y[lmask]
             mesh_z = mesh_z[lmask]
 
-            lcount = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.sum(numpy.ones(len(limg)), llabels, lindexes)
-            )
+            lcount = fix(scipy.ndimage.sum(numpy.ones(len(limg)), llabels, lindexes))
 
-            integrated_intensity[lindexes - 1] = (
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.sum(limg, llabels, lindexes)
-                )
+            integrated_intensity[lindexes - 1] = fix(
+                scipy.ndimage.sum(limg, llabels, lindexes)
             )
 
             mean_intensity[lindexes - 1] = integrated_intensity[lindexes - 1] / lcount
 
             std_intensity[lindexes - 1] = numpy.sqrt(
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
+                fix(
                     scipy.ndimage.mean(
                         (limg - mean_intensity[llabels - 1]) ** 2,
                         llabels,
@@ -217,23 +211,17 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
                 )
             )
 
-            min_intensity[lindexes - 1] = (
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.minimum(limg, llabels, lindexes)
-                )
+            min_intensity[lindexes - 1] = fix(
+                scipy.ndimage.minimum(limg, llabels, lindexes)
             )
 
-            max_intensity[lindexes - 1] = (
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.maximum(limg, llabels, lindexes)
-                )
+            max_intensity[lindexes - 1] = fix(
+                scipy.ndimage.maximum(limg, llabels, lindexes)
             )
 
             # Compute the position of the intensity maximum
             max_position = numpy.array(
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.maximum_position(limg, llabels, lindexes)
-                ),
+                fix(scipy.ndimage.maximum_position(limg, llabels, lindexes)),
                 dtype=int,
             )
             max_position = numpy.reshape(max_position, (max_position.shape[0],))
@@ -246,25 +234,13 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
             # of mass of the binary image and of the intensity image. The
             # center of mass is the average X or Y for the binary image
             # and the sum of X or Y * intensity / integrated intensity
-            cm_x = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.mean(mesh_x, llabels, lindexes)
-            )
-            cm_y = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.mean(mesh_y, llabels, lindexes)
-            )
-            cm_z = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.mean(mesh_z, llabels, lindexes)
-            )
+            cm_x = fix(scipy.ndimage.mean(mesh_x, llabels, lindexes))
+            cm_y = fix(scipy.ndimage.mean(mesh_y, llabels, lindexes))
+            cm_z = fix(scipy.ndimage.mean(mesh_z, llabels, lindexes))
 
-            i_x = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.sum(mesh_x * limg, llabels, lindexes)
-            )
-            i_y = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.sum(mesh_y * limg, llabels, lindexes)
-            )
-            i_z = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.sum(mesh_z * limg, llabels, lindexes)
-            )
+            i_x = fix(scipy.ndimage.sum(mesh_x * limg, llabels, lindexes))
+            i_y = fix(scipy.ndimage.sum(mesh_y * limg, llabels, lindexes))
+            i_z = fix(scipy.ndimage.sum(mesh_z * limg, llabels, lindexes))
 
             cmi_x[lindexes - 1] = i_x / integrated_intensity[lindexes - 1]
             cmi_y[lindexes - 1] = i_y / integrated_intensity[lindexes - 1]
@@ -334,14 +310,10 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
         has_edge = len(eimg) > 0
 
         if has_edge:
-            ecount = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.sum(numpy.ones(len(eimg)), elabels, lindexes)
-            )
+            ecount = fix(scipy.ndimage.sum(numpy.ones(len(eimg)), elabels, lindexes))
 
-            integrated_intensity_edge[lindexes - 1] = (
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.sum(eimg, elabels, lindexes)
-                )
+            integrated_intensity_edge[lindexes - 1] = fix(
+                scipy.ndimage.sum(eimg, elabels, lindexes)
             )
 
             mean_intensity_edge[lindexes - 1] = (
@@ -349,7 +321,7 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
             )
 
             std_intensity_edge[lindexes - 1] = numpy.sqrt(
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
+                fix(
                     scipy.ndimage.mean(
                         (eimg - mean_intensity_edge[elabels - 1]) ** 2,
                         elabels,
@@ -357,16 +329,12 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
                 )
             )
 
-            min_intensity_edge[lindexes - 1] = (
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.minimum(eimg, elabels, lindexes)
-                )
+            min_intensity_edge[lindexes - 1] = fix(
+                scipy.ndimage.minimum(eimg, elabels, lindexes)
             )
 
-            max_intensity_edge[lindexes - 1] = (
-                centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                    scipy.ndimage.maximum(eimg, elabels, lindexes)
-                )
+            max_intensity_edge[lindexes - 1] = fix(
+                scipy.ndimage.maximum(eimg, elabels, lindexes)
             )
     for category, feature_name, measurement in (
         (INTENSITY, INTEGRATED_INTENSITY, integrated_intensity),

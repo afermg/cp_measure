@@ -83,7 +83,7 @@ from functools import partial
 import numpy
 import scipy.ndimage
 import scipy.stats
-from centrosome.cpmorphology import fixup_scipy_ndimage_result as fix
+from cp_measure.utils import _ensure_np_array as fix
 from scipy.linalg import lstsq
 
 from cp_measure.utils import labels_to_binmasks
