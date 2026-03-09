@@ -5,6 +5,23 @@ Utilities reused in multiple measurements.
 import numpy
 
 
+def _ensure_np_array(value):
+    """Convert a result from scipy.ndimage to a numpy array
+
+    scipy.ndimage has the annoying habit of returning a single, bare
+    value instead of an array if the indexes passed in are of length 1.
+    For instance:
+    scind.maximum(image, labels, [1]) returns a float
+    but
+    scind.maximum(image, labels, [1,2]) returns a list
+    """
+    return numpy.array([value]) if numpy.isscalar(value) else numpy.array(value)
+
+
+def _ensure_np_scalar(value):
+    return value if numpy.isscalar(value) else numpy.array(value).squeeze()
+
+
 def get_test_pixels_mask():
     pixels = numpy.random.randint(100, size=64**2).reshape((64, 64))
     mask = numpy.zeros_like(pixels, dtype=bool)
@@ -32,7 +49,7 @@ def masks_to_ijv(masks: numpy.ndarray) -> numpy.ndarray:
     return masks_ijv
 
 
-def labels_to_binmasks(masks: numpy.ndarray) -> numpy.ndarray:
+def labels_to_binmasks(masks: numpy.ndarray) -> list:
     """
     Convert a label matrix to a boolean masks.
 
