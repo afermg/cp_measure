@@ -12,7 +12,7 @@ from cp_measure.examples import get_masks, get_pixels
 @pytest.mark.parametrize("pixels", [get_pixels()])
 def test_measurements(named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarray):
     exceptions = (
-        ("one", "ferret"),
+        ("one", "feret"),
         ("one", "zernike"),
         *list(  # Downsampling means trouble for the 'thin' masks
             product(
@@ -52,7 +52,7 @@ def test_3d_measurements():
     masks[:, 175:180, 180:210] = 2
 
     # 2D-only measurements should return empty dict for 3D input
-    only_2d = {"radial_distribution", "radial_zernikes", "zernike", "ferret"}
+    only_2d = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
     for name, v in get_core_measurements().items():
         result = v(masks, pixels)
         assert isinstance(result, dict), f"{name} did not return a dict"

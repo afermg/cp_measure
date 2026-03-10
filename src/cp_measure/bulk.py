@@ -21,7 +21,7 @@ def get_core_measurements() -> dict[str, Callable]:
         "intensity": measureobjectintensity.get_intensity,
         "sizeshape": measureobjectsizeshape.get_sizeshape,
         "zernike": measureobjectsizeshape.get_zernike,
-        "ferret": measureobjectsizeshape.get_ferret,
+        "feret": measureobjectsizeshape.get_feret,
         "texture": measuretexture.get_texture,
         "granularity": measuregranularity.get_granularity,
     }

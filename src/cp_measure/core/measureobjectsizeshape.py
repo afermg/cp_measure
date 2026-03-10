@@ -1028,7 +1028,7 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
     return results
 
 
-def get_ferret(masks: numpy.ndarray, pixels: numpy.ndarray):
+def get_feret(masks: numpy.ndarray, pixels: numpy.ndarray):
     # Feret diameter (2D only)
     if masks.ndim == 3:
         return {}

@@ -49,7 +49,7 @@ from cp_measure.bulk import get_core_measurements
 
 measurements = get_core_measurements()
 print(measurements.keys())
-# dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'ferret', 'texture', 'granularity'])
+# dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'feret', 'texture', 'granularity'])
 
 import numpy as np
 import pandas as pd
@@ -104,7 +104,7 @@ The other available functions are as follows:
 measureobjectintensitydistribution.get_radial_zernikes
 measureobjectintensity.get_intensity
 measureobjectsizeshape.get_zernike
-measureobjectsizeshape.get_ferret
+measureobjectsizeshape.get_feret
 measuregranularity.get_granularity
 measuretexture.get_texture
 ```
