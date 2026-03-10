@@ -16,7 +16,7 @@ cp_measure aims to be **lean in dependencies and complexity to maximize its acce
    ```
 3. Set up the development environment using [uv](https://github.com/astral-sh/uv?tab=readme-ov-file#installation):
    ```bash
-   uv sync --all-extras
+   uv sync --all-groups
    ```
 
 ## Types of Contributions
