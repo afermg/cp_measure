@@ -3,7 +3,7 @@ from itertools import product
 import numpy
 import pytest
 
-from cp_measure.bulk import get_core_measurements
+from cp_measure.bulk import get_core_measurements, get_core_measurements_3d
 from cp_measure.core.measurecolocalization import get_correlation_overlap
 from cp_measure.examples import get_masks, get_pixels
 
@@ -37,6 +37,41 @@ def test_measurements(named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarr
                 )
             else:
                 assert result != 0 and not numpy.isnan(result), text
+
+
+def test_3d_measurements():
+    """Test 3D support: 2D-only measurements return empty, 3D ones produce valid output."""
+    size = 240
+    rng = numpy.random.default_rng(42)
+    pixels = rng.integers(low=1, high=255, size=(32, size, size))
+
+    masks = numpy.zeros_like(pixels)
+    masks[:, 50:100, 50:100] = 1
+    masks[:, 80:120, 90:120] = 1
+    masks[:, 150:200, 150:200] = 2
+    masks[:, 175:180, 180:210] = 2
+
+    # 2D-only measurements should return empty dict for 3D input
+    only_2d = {"radial_distribution", "radial_zernikes", "zernike", "ferret"}
+    for name, v in get_core_measurements().items():
+        result = v(masks, pixels)
+        assert isinstance(result, dict), f"{name} did not return a dict"
+        if name in only_2d:
+            assert result == {}, f"{name} should return empty dict for 3D input"
+        else:
+            assert any(any(~(x == 0 | numpy.isnan(x))) for x in result.values()), (
+                f"{name} returned zero/null on 3D input"
+            )
+            assert all(len(x) == masks.max() for x in result.values()), (
+                f"{name}: output length doesn't match number of objects"
+            )
+
+    # get_core_measurements_3d should return only 3D-compatible measurements
+    measurements_3d = get_core_measurements_3d()
+    assert set(measurements_3d.keys()) == set(get_core_measurements().keys()) - only_2d
+    for name, v in measurements_3d.items():
+        result = v(masks, pixels)
+        assert len(result) > 0, f"{name} returned empty dict"
 
 
 def test_correlation_overlap():
