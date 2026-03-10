@@ -1,0 +1,21 @@
+name: Numba Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --all-groups --extra accel
+      - name: Run Numba benchmarks
+        continue-on-error: true
+        run: uv run python scripts/benchmark_numba.py | tee -a "$GITHUB_STEP_SUMMARY"

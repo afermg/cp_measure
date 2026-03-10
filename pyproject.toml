@@ -28,6 +28,9 @@ includes = [
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
+[project.optional-dependencies]
+accel = ["numba>=0.59"]
+
 [dependency-groups]
 dev = [
     "ruff>=0.12.1",

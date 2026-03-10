@@ -122,6 +122,18 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
     """
     masks is a labeled array where 0 are background images.
     """
+    if pixels.ndim == 2:
+        try:
+            from cp_measure.core._intensity_numba import get_intensity_numba
+
+            return get_intensity_numba(masks, pixels)
+        except ImportError:
+            pass
+    return _get_intensity_python(masks, pixels)
+
+
+def _get_intensity_python(masks: numpy.ndarray, pixels: numpy.ndarray):
+    """Pure-Python implementation (3D-capable, used as fallback)."""
     masked_image = pixels
 
     if pixels.ndim == 2:

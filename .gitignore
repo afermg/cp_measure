@@ -1,0 +1,15 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Numba cache
+*.nbi
+*.nbc
+
+# Distribution / packaging
+dist/
+*.egg-info/
+
+# OS
+.DS_Store
