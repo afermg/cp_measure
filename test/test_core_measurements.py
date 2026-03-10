@@ -59,9 +59,9 @@ def test_3d_measurements():
         if name in only_2d:
             assert result == {}, f"{name} should return empty dict for 3D input"
         else:
-            assert any(
-                any(~(x == 0 | numpy.isnan(x))) for x in result.values()
-            ), f"{name} returned zero/null on 3D input"
+            assert any(any(~(x == 0 | numpy.isnan(x))) for x in result.values()), (
+                f"{name} returned zero/null on 3D input"
+            )
             assert all(len(x) == masks.max() for x in result.values()), (
                 f"{name}: output length doesn't match number of objects"
             )
