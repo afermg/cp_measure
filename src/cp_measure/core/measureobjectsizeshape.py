@@ -1010,8 +1010,10 @@ def get_sizeshape(
 
 def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int = 9):
     #
-    # Zernike features
+    # Zernike features (2D only)
     #
+    if masks.ndim == 3:
+        return {}
     unique_indices = numpy.unique(masks)
     unique_indices = unique_indices[unique_indices > 0]
     indices = list(range(1, len(unique_indices) + 1))
@@ -1027,6 +1029,9 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
 
 
 def get_ferret(masks: numpy.ndarray, pixels: numpy.ndarray):
+    # Feret diameter (2D only)
+    if masks.ndim == 3:
+        return {}
     ijv = masks_to_ijv(masks)
     indices = numpy.unique(ijv[:, 2])
     indices = indices[indices > 0]

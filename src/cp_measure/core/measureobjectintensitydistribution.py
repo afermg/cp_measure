@@ -96,6 +96,8 @@ def get_radial_distribution(
     maximum_radius: int = 100,
 ):
     """
+    Radial features (2D only)
+
     zernike_degree : int
         Maximum zernike moment.
 
@@ -130,6 +132,9 @@ def get_radial_distribution(
         boundaries up to the maximum radius. Parts of the object that are beyond this
         radius will be counted in an overflow bin. The radius is measured in pixels.
     """
+
+    if labels.ndim == 3:
+        return {}
 
     if labels.dtype == bool:
         labels = labels.astype(numpy.integer)
@@ -300,6 +305,9 @@ def get_radial_distribution(
 def get_radial_zernikes(
     labels: numpy.ndarray, pixels: numpy.ndarray, zernike_degree: int = 9
 ):
+    # Radial Zernike features (2D only)
+    if labels.ndim == 3:
+        return {}
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
     unique_labels = numpy.unique(labels)  # Will be used later for scipy.ndimage.sum

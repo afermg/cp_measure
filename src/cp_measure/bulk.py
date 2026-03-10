@@ -27,6 +27,23 @@ def get_core_measurements() -> dict[str, Callable]:
     }
 
 
+def get_core_measurements_3d() -> dict[str, Callable]:
+    """Return only measurements that support 3D input."""
+    from cp_measure.core import (
+        measuregranularity,
+        measureobjectintensity,
+        measureobjectsizeshape,
+        measuretexture,
+    )
+
+    return {
+        "intensity": measureobjectintensity.get_intensity,
+        "sizeshape": measureobjectsizeshape.get_sizeshape,
+        "texture": measuretexture.get_texture,
+        "granularity": measuregranularity.get_granularity,
+    }
+
+
 def get_correlation_measurements() -> dict[str, Callable]:
     from cp_measure.core import measurecolocalization
 
