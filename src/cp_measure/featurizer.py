@@ -20,6 +20,9 @@ import warnings
 
 import numpy as np
 
+# Feature groups that only support 2D spatial data.
+_2D_ONLY = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
+
 
 def make_featurizer_config(
     channels: list[str] | None = None,
@@ -206,11 +209,13 @@ def featurize(
 
     from cp_measure.bulk import get_core_measurements, get_correlation_measurements
 
+    is_3d = image.ndim == 4
     core_funcs = get_core_measurements()
     corr_funcs = get_correlation_measurements()
 
-    channel_feats = _collect_channel_features(config, core_funcs)
-    shape_feats = _collect_shape_features(config, core_funcs)
+    skipped_2d = _warn_and_filter_2d_only(config, is_3d)
+    channel_feats = _collect_channel_features(config, core_funcs, skipped=skipped_2d)
+    shape_feats = _collect_shape_features(config, core_funcs, skipped=skipped_2d)
     corr_feats = _collect_correlation_features(config, corr_funcs, len(channels))
 
     # Shape features are purely geometric and ignore pixel values.
@@ -339,7 +344,9 @@ def _validate(
         raise TypeError(f"masks must be integer dtype, got {masks.dtype}")
 
 
-def _collect_channel_features(config: dict, core_funcs: dict) -> list[tuple]:
+def _collect_channel_features(
+    config: dict, core_funcs: dict, *, skipped: set[str]
+) -> list[tuple]:
     """Collect enabled per-channel feature functions and their params."""
     feats: list[tuple] = []
     for name in (
@@ -349,20 +356,37 @@ def _collect_channel_features(config: dict, core_funcs: dict) -> list[tuple]:
         "radial_distribution",
         "radial_zernikes",
     ):
-        if config[name]:
+        if config[name] and name not in skipped:
             feats.append((core_funcs[name], config[f"{name}_params"]))
     return feats
 
 
-def _collect_shape_features(config: dict, core_funcs: dict) -> list[tuple]:
+def _collect_shape_features(
+    config: dict, core_funcs: dict, *, skipped: set[str]
+) -> list[tuple]:
     """Collect enabled shape feature functions and their params."""
     feats: list[tuple] = []
     for name in ("sizeshape", "zernike"):
-        if config[name]:
+        if config[name] and name not in skipped:
             feats.append((core_funcs[name], config[f"{name}_params"]))
-    if config["feret"]:
+    if config["feret"] and "feret" not in skipped:
         feats.append((core_funcs["feret"], {}))
     return feats
+
+
+def _warn_and_filter_2d_only(config: dict, is_3d: bool) -> set[str]:
+    """Return the set of 2D-only feature names to skip, warning if any."""
+    if not is_3d:
+        return set()
+    skipped = {name for name in _2D_ONLY if config.get(name, False)}
+    if skipped:
+        warnings.warn(
+            f"3D input detected — skipping 2D-only features: "
+            f"{', '.join(sorted(skipped))}",
+            UserWarning,
+            stacklevel=3,
+        )
+    return skipped
 
 
 def _collect_correlation_features(

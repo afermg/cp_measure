@@ -106,6 +106,26 @@ class TestSmoke:
         assert len(corr_cols) > 0, "Expected correlation columns"
         assert data.shape[0] == 2
 
+    def test_3d_skips_2d_only_features(self):
+        rng = np.random.default_rng(42)
+        image = rng.random((2, 8, 32, 32))
+        mask = np.zeros((1, 8, 32, 32), dtype=np.int32)
+        mask[0, 2:6, 5:15, 5:15] = 1
+        mask[0, 2:6, 20:28, 20:28] = 2
+
+        config = make_featurizer_config(
+            ["DNA", "ER"],
+            **{**_ALL_OFF, "intensity": True, "sizeshape": True, "zernike": True},
+        )
+        with pytest.warns(UserWarning, match="3D input.*skipping 2D-only"):
+            data, columns, rows = featurize(image, mask, config)
+
+        assert data.shape[0] == 2
+        assert not any("Zernike" in c for c in columns)
+        # 3D-compatible features are still present
+        assert any("Intensity" in c for c in columns)
+        assert any("Area" in c for c in columns)
+
 
 # ---------------------------------------------------------------------------
 # Channel auto-naming
