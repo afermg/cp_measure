@@ -83,6 +83,21 @@ def mask_2d():
     return mask
 
 
+@pytest.fixture()
+def masks_2d_multi():
+    """Two-type 2D masks ``(2, H, W)``: nuclei (2 labels) + cells (3 labels)."""
+    nuclei = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
+    nuclei[5:15, 5:15] = 1
+    nuclei[30:40, 30:40] = 2
+    cells = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
+    cells[3:18, 3:18] = 1
+    cells[28:45, 28:45] = 2
+    cells[50:60, 50:60] = 3
+    masks = np.stack([nuclei, cells], axis=0)
+    assert masks[0].max() == 2 and masks[1].max() == 3  # sanity check
+    return masks
+
+
 # -- 3D fixtures -------------------------------------------------------------
 
 

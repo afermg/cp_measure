@@ -248,23 +248,13 @@ class TestMakeFeaturizer:
 
 
 class TestMultiMask:
-    def test_multi_mask_stacks_rows(self, image_2d_2ch):
-        nuclei = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
-        nuclei[5:15, 5:15] = 1
-        nuclei[30:40, 30:40] = 2
-
-        cells = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
-        cells[3:18, 3:18] = 1
-        cells[28:45, 28:45] = 2
-        cells[50:60, 50:60] = 3
-
-        masks = np.stack([nuclei, cells], axis=0)
+    def test_multi_mask_stacks_rows(self, image_2d_2ch, masks_2d_multi):
         config = make_featurizer_config(
             CELL_PAINTING_CHANNELS[:2],
             objects=["nuclei", "cells"],
             **{**ALL_OFF, "intensity": True, "sizeshape": True},
         )
-        data, columns, rows = featurize(image_2d_2ch, masks, config)
+        data, columns, rows = featurize(image_2d_2ch, masks_2d_multi, config)
 
         assert data.shape[0] == 5
         assert len(rows) == 5
