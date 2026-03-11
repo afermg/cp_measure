@@ -39,7 +39,7 @@ def make_featurizer_config(
     sizeshape_params: dict | None = None,
     zernike: bool = True,
     zernike_params: dict | None = None,
-    ferret: bool = True,
+    feret: bool = True,
     correlation_pearson: bool = True,
     correlation_costes: bool = True,
     correlation_costes_params: dict | None = None,
@@ -63,7 +63,7 @@ def make_featurizer_config(
     objects : list[str], optional
         Names for each object mask.  Defaults to ``["object"]``.
     intensity, texture, granularity, radial_distribution, radial_zernikes,
-    sizeshape, zernike, ferret : bool
+    sizeshape, zernike, feret : bool
         Enable / disable individual feature groups.
     intensity_params, texture_params, granularity_params,
     radial_distribution_params, radial_zernikes_params, sizeshape_params,
@@ -113,7 +113,7 @@ def make_featurizer_config(
         radial_zernikes,
         sizeshape,
         zernike,
-        ferret,
+        feret,
         correlation_pearson,
         correlation_costes,
         correlation_manders_fold,
@@ -148,7 +148,7 @@ def make_featurizer_config(
         "sizeshape_params": sizeshape_params if sizeshape_params is not None else {},
         "zernike": zernike,
         "zernike_params": zernike_params if zernike_params is not None else {},
-        "ferret": ferret,
+        "feret": feret,
         "correlation_pearson": correlation_pearson,
         "correlation_costes": correlation_costes,
         "correlation_costes_params": correlation_costes_params
@@ -360,8 +360,8 @@ def _collect_shape_features(config: dict, core_funcs: dict) -> list[tuple]:
     for name in ("sizeshape", "zernike"):
         if config[name]:
             feats.append((core_funcs[name], config[f"{name}_params"]))
-    if config["ferret"]:
-        feats.append((core_funcs["ferret"], {}))
+    if config["feret"]:
+        feats.append((core_funcs["feret"], {}))
     return feats
 
 
