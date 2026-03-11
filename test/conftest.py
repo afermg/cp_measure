@@ -22,13 +22,13 @@ ALL_OFF = dict(
 )
 
 
-def get_rng():
+def get_rng(seed=42):
     """Return a fresh RNG with a fixed seed for reproducible test data.
 
     Each caller gets an independent generator so fixture output does not
     depend on execution order.
     """
-    return np.random.default_rng(42)
+    return np.random.default_rng(seed)
 
 
 SIZE_2D = 64

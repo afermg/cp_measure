@@ -384,15 +384,7 @@ def _warn_and_filter_2d_only(config: dict, is_3d: bool) -> set[str]:
     """Return the set of 2D-only feature names to skip, warning if any."""
     if not is_3d:
         return set()
-    skipped = {name for name in _2D_ONLY if config.get(name, False)}
-    if skipped:
-        warnings.warn(
-            f"3D input detected — skipping 2D-only features: "
-            f"{', '.join(sorted(skipped))}",
-            UserWarning,
-            stacklevel=3,
-        )
-    return skipped
+    return {name for name in _2D_ONLY if config.get(name, False)}
 
 
 def _collect_correlation_features(
