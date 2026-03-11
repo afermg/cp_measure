@@ -104,3 +104,16 @@ def mask_3d():
     mask = np.zeros((1, DEPTH_3D, SIZE_3D, SIZE_3D), dtype=np.int32)
     _stamp_objects_3d(mask[0])
     return mask
+
+
+@pytest.fixture()
+def masks_3d_multi():
+    """Two-type 3D masks ``(2, Z, H, W)``: nuclei (1 label) + cells (2 labels)."""
+    nuclei = np.zeros((DEPTH_3D, SIZE_3D, SIZE_3D), dtype=np.int32)
+    nuclei[2:6, 5:15, 5:15] = 1
+    cells = np.zeros((DEPTH_3D, SIZE_3D, SIZE_3D), dtype=np.int32)
+    cells[2:6, 3:18, 3:18] = 1
+    cells[2:6, 20:28, 20:28] = 2
+    masks = np.stack([nuclei, cells], axis=0)
+    assert masks[0].max() == 1 and masks[1].max() == 2  # sanity check
+    return masks

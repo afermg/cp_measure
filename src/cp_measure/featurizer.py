@@ -184,7 +184,9 @@ def featurize(
     masks : numpy.ndarray
         Integer-labeled masks with shape ``(M, H, W)`` or
         ``(M, Z, H, W)``.  Must have the same ``ndim`` as *image*.
-        Background is 0; each object has a unique positive integer label.
+        Background is 0; labels must be contiguous integers ``1..N``
+        (standard cp_measure convention, see
+        ``skimage.segmentation.relabel_sequential``).
     config : dict, optional
         Configuration dictionary produced by :func:`make_featurizer_config`.
         If ``None``, all features are enabled with default parameters.
@@ -255,7 +257,11 @@ def featurize(
                 ).items():
                     results[f"{key}__{channels[ch_i]}__{channels[ch_j]}"] = values
 
-        # Build column list from the first non-empty mask
+        # Build column list from the first non-empty mask.
+        # Order-sensitive comparison is safe: all measurement functions
+        # return plain dicts whose insertion order is deterministic in
+        # Python 3.7+ and we iterate channels/pairs in the same order
+        # for every mask.
         col_names = list(results.keys())
         if columns is None:
             columns = col_names
@@ -414,7 +420,7 @@ def _collect_correlation_features(
                 "correlation features require at least 2 channels; "
                 "skipping correlation since only 1 channel was provided",
                 UserWarning,
-                stacklevel=4,
+                stacklevel=3,
             )
         return []
 

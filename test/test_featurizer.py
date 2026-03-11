@@ -5,7 +5,7 @@ import pytest
 
 from cp_measure.featurizer import featurize, make_featurizer_config
 
-from conftest import ALL_OFF, CELL_PAINTING_CHANNELS, get_rng
+from conftest import ALL_OFF, CELL_PAINTING_CHANNELS, SIZE_2D, get_rng
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +69,24 @@ class TestSmoke:
         data, columns, rows = featurize(image_3d_1ch, mask_3d, config)
         assert data.shape[0] == 2
         assert any("Intensity" in c for c in columns)
+        assert any("Area" in c for c in columns)
+
+    def test_3d_two_channels(self, image_3d_2ch, mask_3d):
+        config = make_featurizer_config(
+            CELL_PAINTING_CHANNELS[:2],
+            **{
+                **ALL_OFF,
+                "intensity": True,
+                "sizeshape": True,
+                "correlation_pearson": True,
+            },
+        )
+        data, columns, rows = featurize(image_3d_2ch, mask_3d, config)
+        assert data.shape[0] == 2
+        assert data.shape[1] == len(columns)
+        assert any("__DNA" in c for c in columns)
+        assert any("__ER" in c for c in columns)
+        assert any("Correlation" in c or "Slope" in c for c in columns)
 
     def test_3d_skips_2d_only_features(self, image_3d_2ch, mask_3d):
         config = make_featurizer_config(
@@ -98,7 +116,7 @@ class TestChannelAutoNaming:
         assert any("__ch1" in c for c in columns)
 
     def test_zero_padded_when_many_channels(self, mask_2d):
-        image = get_rng().random((12, 64, 64))
+        image = get_rng().random((12, SIZE_2D, SIZE_2D))
         config = make_featurizer_config(**{**ALL_OFF, "intensity": True})
         with pytest.warns(UserWarning, match="No channel names"):
             _, columns, _ = featurize(image, mask_2d, config)
@@ -231,12 +249,11 @@ class TestMakeFeaturizer:
 
 class TestMultiMask:
     def test_multi_mask_stacks_rows(self, image_2d_2ch):
-        size = 64
-        nuclei = np.zeros((size, size), dtype=np.int32)
+        nuclei = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
         nuclei[5:15, 5:15] = 1
         nuclei[30:40, 30:40] = 2
 
-        cells = np.zeros((size, size), dtype=np.int32)
+        cells = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
         cells[3:18, 3:18] = 1
         cells[28:45, 28:45] = 2
         cells[50:60, 50:60] = 3
@@ -258,11 +275,33 @@ class TestMultiMask:
         assert rows[4] == (None, "cells", 3)
         assert data.shape[1] == len(columns)
 
+    @pytest.mark.parametrize(
+        "image_fixture,channels",
+        [
+            ("image_3d_2ch", CELL_PAINTING_CHANNELS[:2]),
+            ("image_3d_1ch", ["DNA"]),
+        ],
+    )
+    def test_3d_multi_mask(self, request, image_fixture, channels, masks_3d_multi):
+        image = request.getfixturevalue(image_fixture)
+        config = make_featurizer_config(
+            channels,
+            objects=["nuclei", "cells"],
+            **{**ALL_OFF, "intensity": True, "sizeshape": True},
+        )
+        data, columns, rows = featurize(image, masks_3d_multi, config)
+
+        assert data.shape[0] == 3
+        assert len(rows) == 3
+        assert rows[0] == (None, "nuclei", 1)
+        assert rows[1] == (None, "cells", 1)
+        assert rows[2] == (None, "cells", 2)
+        assert data.shape[1] == len(columns)
+
     def test_empty_mask_skipped(self, image_2d_1ch):
-        size = 64
-        mask1 = np.zeros((size, size), dtype=np.int32)
+        mask1 = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
         mask1[5:15, 5:15] = 1
-        mask2 = np.zeros((size, size), dtype=np.int32)
+        mask2 = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
 
         masks = np.stack([mask1, mask2], axis=0)
         config = make_featurizer_config(
