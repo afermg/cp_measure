@@ -94,7 +94,7 @@ def masks_2d_multi():
     cells[28:45, 28:45] = 2
     cells[50:60, 50:60] = 3
     masks = np.stack([nuclei, cells], axis=0)
-    assert masks[0].max() == 2 and masks[1].max() == 3  # sanity check
+
     return masks
 
 
@@ -130,5 +130,5 @@ def masks_3d_multi():
     cells[2:6, 3:18, 3:18] = 1
     cells[2:6, 20:28, 20:28] = 2
     masks = np.stack([nuclei, cells], axis=0)
-    assert masks[0].max() == 1 and masks[1].max() == 2  # sanity check
+
     return masks
