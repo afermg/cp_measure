@@ -2,14 +2,14 @@
 
 Provides two stateless functions:
 
-- :func:`make_featurizer` builds a plain configuration dictionary.
+- :func:`make_featurizer_config` builds a plain configuration dictionary.
 - :func:`featurize` takes that configuration together with image and mask
   arrays and returns a numpy feature matrix with column and row metadata.
 
 Example
 -------
->>> from cp_measure.featurizer import make_featurizer, featurize
->>> config = make_featurizer(["DNA", "ER"], objects=["nuclei", "cells"])
+>>> from cp_measure.featurizer import make_featurizer_config, featurize
+>>> config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
 >>> data, columns, rows = featurize(image, masks, config)
 """
 
@@ -21,7 +21,7 @@ import warnings
 import numpy as np
 
 
-def make_featurizer(
+def make_featurizer_config(
     channels: list[str] | None = None,
     *,
     objects: list[str] | None = None,
@@ -89,8 +89,8 @@ def make_featurizer(
 
     Examples
     --------
-    >>> config = make_featurizer(["DNA", "ER"], objects=["nuclei", "cells"])
-    >>> config = make_featurizer()  # auto-named channels, single "object" mask
+    >>> config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
+    >>> config = make_featurizer_config()  # auto-named channels, single "object" mask
     """
     if channels is not None:
         if len(channels) == 0:
@@ -168,7 +168,7 @@ def make_featurizer(
 def featurize(
     image: np.ndarray,
     masks: np.ndarray,
-    config: dict,
+    config: dict | None = None,
     *,
     image_id: str | int | None = None,
 ) -> tuple[np.ndarray, list[str], list[tuple]]:
@@ -182,8 +182,9 @@ def featurize(
         Integer-labeled masks with shape ``(M, H, W)`` or
         ``(M, Z, H, W)``.  Must have the same ``ndim`` as *image*.
         Background is 0; each object has a unique positive integer label.
-    config : dict
-        Configuration dictionary produced by :func:`make_featurizer`.
+    config : dict, optional
+        Configuration dictionary produced by :func:`make_featurizer_config`.
+        If ``None``, all features are enabled with default parameters.
     image_id : str | int | None, optional
         Identifier for this image, stored in each row tuple.
 
@@ -198,6 +199,8 @@ def featurize(
     rows : list[tuple]
         One ``(image_id, object_name, label)`` tuple per row.
     """
+    if config is None:
+        config = make_featurizer_config()
     channels, objects = _resolve_names(config, image.shape[0])
     _validate(image, masks, channels, objects)
 
