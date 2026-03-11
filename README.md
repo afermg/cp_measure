@@ -31,6 +31,55 @@ pip install cp-measure
 
 ### Usage
 
+#### Featurizer (recommended)
+
+The featurizer wraps all measurements into a two-step workflow: configure once with `make_featurizer`, then call `featurize` on each image. It returns plain numpy arrays and Python lists — no extra dependencies required.
+
+```python
+import numpy as np
+from cp_measure.featurizer import make_featurizer, featurize
+
+# image: (C, H, W) float array, masks: (N_masks, H, W) integer labels
+image = np.random.default_rng(42).random((5, 240, 240))
+masks = np.zeros((1, 240, 240), dtype=np.int32)
+masks[0, 50:100, 50:100] = 1
+masks[0, 150:200, 150:200] = 2
+
+# Channel names are matched positionally to the image's first axis.
+# They control how per-channel features are labeled in the output columns
+# (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named ch0, ch1, ...
+config = make_featurizer(["DNA", "ER", "RNA", "AGP", "Mito"])
+
+data, columns, rows = featurize(image, masks, config)
+# data:    np.ndarray of shape (n_objects, n_features)
+# columns: ["Area", "Intensity_MeanIntensity__DNA", ...] — feature names
+# rows:    [(None, "object", 1), (None, "object", 2)]  — (image_id, object_name, label) per row
+```
+
+When you have multiple segmentation masks (e.g. nuclei and cells), pass them stacked along the first axis and name them with `objects`. Each mask can have a different number of labels; all rows share the same feature columns.
+
+```python
+config = make_featurizer(["DNA", "ER"], objects=["nuclei", "cells"])
+
+masks = np.zeros((2, 240, 240), dtype=np.int32)
+masks[0, 50:100, 50:100] = 1    # nucleus 1
+masks[1, 40:110, 40:110] = 1    # cell 1
+masks[1, 150:200, 150:200] = 2  # cell 2
+
+data, columns, rows = featurize(image[:2], masks, config)
+# rows: [(None, "nuclei", 1), (None, "cells", 1), (None, "cells", 2)]
+```
+
+The output is plain numpy + lists, so converting to a DataFrame is straightforward:
+
+```python
+import pandas as pd
+row_names = [f"{img}__{obj}__{label}" for img, obj, label in rows]
+df = pd.DataFrame(data, index=row_names, columns=columns)
+```
+
+#### Bulk API
+
 Users usually want to calculate all the features. There are four type of measurements, based on their inputs:
 
 -   Type 1: 1 image + 1 set of masks (e.g., intensity)
