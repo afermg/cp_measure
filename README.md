@@ -75,6 +75,8 @@ data, columns, rows = featurize(image, masks, config)
 # rows: [(None, "nuclei", 1), (None, "cells", 1), (None, "cells", 2)]
 ```
 
+Volumetric `(C, Z, H, W)` data is supported. The featurizer automatically skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`) with a warning. All other features (intensity, sizeshape, texture, granularity, correlations) work for both 2D and 3D.
+
 The output is plain numpy + lists, so converting to a DataFrame is straightforward:
 
 ```python
