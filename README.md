@@ -85,20 +85,21 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 #### Bulk API
 
-Users usually want to calculate all the features. There are four type of measurements, based on their inputs:
+For measurement types not yet covered by the featurizer — such as mask-to-mask overlap (Type 3) or skeleton measurements (Type 4) — use the bulk API directly. It operates on single 2D images and masks following the scikit-image convention.
+
+There are four types of measurements based on their inputs:
 
 -   Type 1: 1 image + 1 set of masks (e.g., intensity)
 -   Type 2: 2 images + 1 set of masks (e.g., colocalization)
 -   Type 3: 2 sets of masks (e.g., number of neighbors)
 -   Type 4: 1 image + 2 sets of masks (e.g., skeleton)
 
-This shows the simplest way to use the first set (1 image, 1 mask set), which currently follows the style of scikit-image (1 image, 1 matrix with non-overlapping labels). **IMPORTANT:** If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
+**IMPORTANT:** If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
 
 NOTE: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
 
 ```python
 import numpy as np
-
 from cp_measure.bulk import get_core_measurements
 
 measurements = get_core_measurements()
@@ -116,43 +117,28 @@ pixels = rng.integers(low=1, high=255, size=(size, size))
 
 # Create two similar-sized objects
 masks = np.zeros_like(pixels)
-masks[50:100, 50:100] = 1  # First square 50x50
-masks[80:120, 90:120] = 1  # Major asymmetries on bottom right edge
-masks[150:200, 150:200] = 2  # Second square 50x50
-masks[175:180, 180:210] = 2  # Minor asymmetries on bottom right edge
+masks[50:100, 50:100] = 1
+masks[150:200, 150:200] = 2
 
-# Get measurements
 measurements = get_core_measurements()
-
 results = {}
-for name, v in measurements.items():
-    results = {**results, **v(masks, pixels)}
-
-"""
-{'RadialDistribution_FracAtD_1of4': array([0.03673493, 0.05640786]),
- 'RadialDistribution_MeanFrac_1of4': array([1.02857809, 1.15072037]),
- 'RadialDistribution_RadialCV_1of4': array([0.05539421, 0.04635982]),
- ...
- 'Granularity_16': array([97.65759629, 97.64371833])}
-"""
+for name, func in measurements.items():
+    results = {**results, **func(masks, pixels)}
 ```
-
 
 #### Call specific measurements
 
-If you need a specific measurement/feature you can just import it. Note that measurements come in sets, so you have to fetch the one that you specifically require from the resultant dictionary. Any available measurement can be found using code as follows:
+Individual measurement functions can be imported directly. Each returns a dictionary of feature arrays.
 
 ```python
-import numpy as np
-
 from cp_measure.minimal.measureobjectsizeshape import get_sizeshape
 
 mask = np.zeros((50, 50))
 mask[5:-6, 5:-6] = 1
-get_sizeshape(mask, None) # pixels, the second argument, is not necessary for this particular measurement
+get_sizeshape(mask, None)
 ```
 
-The other available functions are as follows:
+Available Type 1 and 2 functions:
 
 ```
 measureobjectintensitydistribution.get_radial_zernikes
@@ -161,19 +147,14 @@ measureobjectsizeshape.get_zernike
 measureobjectsizeshape.get_feret
 measuregranularity.get_granularity
 measuretexture.get_texture
-```
-
-And for Type 2 functions:
-
-```
 measurecolocalization.get_correlation_pearson
 measurecolocalization.get_correlation_manders_fold
 measurecolocalization.get_correlation_rwc
 measurecolocalization.get_correlation_costes
 measurecolocalization.get_correlation_overlap
 ```
-  
-For Type 3 functions:
+
+Type 3 functions:
 
 ```
 measureobjectoverlap.measureobjectoverlap
