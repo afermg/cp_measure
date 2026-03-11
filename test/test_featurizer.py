@@ -47,7 +47,7 @@ def _make_image_and_mask(n_channels=2, size=64, n_objects=2, seed=42, dtype=np.f
 # Smoke tests
 # ---------------------------------------------------------------------------
 
-
+# End-to-end test to validate that the individual components produce valid output
 class TestSmoke:
     def test_intensity_and_sizeshape(self):
         channels = CELL_PAINTING_CHANNELS[:2]
