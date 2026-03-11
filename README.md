@@ -85,7 +85,7 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 #### Bulk API
 
-For measurement types not yet covered by the featurizer — such as mask-to-mask overlap (Type 3) or skeleton measurements (Type 4) — use the bulk API directly. It operates on single 2D images and masks following the scikit-image convention.
+For measurement types not yet covered by the featurizer — such as mask-to-mask overlap (Type 3) or skeleton measurements (Type 4) — use the bulk API directly. It operates on single images and masks following the scikit-image convention.
 
 There are four types of measurements based on their inputs:
 
