@@ -5,6 +5,15 @@ import pytest
 
 from cp_measure.bulk import get_core_measurements, get_core_measurements_3d
 from cp_measure.core.measurecolocalization import get_correlation_overlap
+from cp_measure.core.measureobjectintensity import (
+    INTEGRATED_INTENSITY_EDGE,
+    INTENSITY,
+    MAX_INTENSITY_EDGE,
+    MEAN_INTENSITY_EDGE,
+    MIN_INTENSITY_EDGE,
+    STD_INTENSITY_EDGE,
+    get_intensity,
+)
 from cp_measure.examples import get_masks, get_pixels
 
 
@@ -88,3 +97,36 @@ def test_correlation_overlap():
     get_correlation_overlap(
         pixels_1=pixels[..., 0], pixels_2=pixels[..., 0], masks=masks
     )
+
+
+def test_get_intensity_edge_measurements_flag():
+    """With edge_measurements=True (default) edge keys are present; with False they are omitted."""
+    masks = get_masks()["one"]
+    pixels = get_pixels()
+    n_objects = int(masks.max())
+
+    edge_keys = [
+        f"{INTENSITY}_{INTEGRATED_INTENSITY_EDGE}",
+        f"{INTENSITY}_{MEAN_INTENSITY_EDGE}",
+        f"{INTENSITY}_{STD_INTENSITY_EDGE}",
+        f"{INTENSITY}_{MIN_INTENSITY_EDGE}",
+        f"{INTENSITY}_{MAX_INTENSITY_EDGE}",
+    ]
+
+    result_default = get_intensity(masks, pixels.copy())
+    for key in edge_keys:
+        assert key in result_default, f"default (edge_measurements=True) should include {key}"
+
+    result_with_edge = get_intensity(masks, pixels.copy(), edge_measurements=True)
+    for key in edge_keys:
+        assert key in result_with_edge, f"edge_measurements=True should include {key}"
+        assert len(result_with_edge[key]) == n_objects
+
+    result_without_edge = get_intensity(masks, pixels.copy(), edge_measurements=False)
+    for key in edge_keys:
+        assert key not in result_without_edge, (
+            f"edge_measurements=False should omit {key}"
+        )
+    assert "Intensity_IntegratedIntensity" in result_without_edge
+    assert "Intensity_MeanIntensity" in result_without_edge
+    assert all(len(v) == n_objects for v in result_without_edge.values())

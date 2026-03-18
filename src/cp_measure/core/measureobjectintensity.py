@@ -118,7 +118,9 @@ ALL_LOCATION_MEASUREMENTS = [
 ]
 
 
-def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
+def get_intensity(
+    masks: numpy.ndarray, pixels: numpy.ndarray, edge_measurements: bool = True
+):
     """
     masks is a labeled array where 0 are background images.
     """
@@ -135,15 +137,10 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
     nobjects = (unique_vals > 0).sum()
 
     integrated_intensity = numpy.zeros((nobjects,))
-    integrated_intensity_edge = numpy.zeros((nobjects,))
     mean_intensity = numpy.zeros((nobjects,))
-    mean_intensity_edge = numpy.zeros((nobjects,))
     std_intensity = numpy.zeros((nobjects,))
-    std_intensity_edge = numpy.zeros((nobjects,))
     min_intensity = numpy.zeros((nobjects,))
-    min_intensity_edge = numpy.zeros((nobjects,))
     max_intensity = numpy.zeros((nobjects,))
-    max_intensity_edge = numpy.zeros((nobjects,))
     mass_displacement = numpy.zeros((nobjects,))
     lower_quartile_intensity = numpy.zeros((nobjects,))
     median_intensity = numpy.zeros((nobjects,))
@@ -155,6 +152,13 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
     max_x = numpy.zeros((nobjects,))
     max_y = numpy.zeros((nobjects,))
     max_z = numpy.zeros((nobjects,))
+
+    if edge_measurements:
+        integrated_intensity_edge = numpy.zeros((nobjects,))
+        mean_intensity_edge = numpy.zeros((nobjects,))
+        std_intensity_edge = numpy.zeros((nobjects,))
+        min_intensity_edge = numpy.zeros((nobjects,))
+        max_intensity_edge = numpy.zeros((nobjects,))
 
     label_matrices = numpy.zeros((nobjects, *masks.shape), dtype=int)  # N,Y,X
     unique_labels = unique_vals[unique_vals > 0]
@@ -171,10 +175,7 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
         if pixels.ndim == 2:
             labels = labels.reshape(1, *labels.shape)
 
-        outlines = skimage.segmentation.find_boundaries(labels, mode="inner")
-
         masked_labels = labels
-        masked_outlines = outlines
 
         lmask = masked_labels > 0 & numpy.isfinite(masked_image)  # Ignore NaNs, Infs
         has_objects = numpy.any(lmask)
@@ -304,49 +305,50 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
 
             # END OF ITERATIONS
 
-        emask = masked_outlines > 0
-        eimg = masked_image[emask]
-        elabels = labels[emask]
-        has_edge = len(eimg) > 0
+        if edge_measurements:
+            outlines = skimage.segmentation.find_boundaries(labels, mode="inner")
+            masked_outlines = outlines
+            emask = masked_outlines > 0
+            eimg = masked_image[emask]
+            elabels = labels[emask]
+            has_edge = len(eimg) > 0
 
-        if has_edge:
-            ecount = fix(scipy.ndimage.sum(numpy.ones(len(eimg)), elabels, lindexes))
+            if has_edge:
+                ecount = fix(
+                    scipy.ndimage.sum(numpy.ones(len(eimg)), elabels, lindexes)
+                )
 
-            integrated_intensity_edge[lindexes - 1] = fix(
-                scipy.ndimage.sum(eimg, elabels, lindexes)
-            )
+                integrated_intensity_edge[lindexes - 1] = fix(
+                    scipy.ndimage.sum(eimg, elabels, lindexes)
+                )
 
-            mean_intensity_edge[lindexes - 1] = (
-                integrated_intensity_edge[lindexes - 1] / ecount
-            )
+                mean_intensity_edge[lindexes - 1] = (
+                    integrated_intensity_edge[lindexes - 1] / ecount
+                )
 
-            std_intensity_edge[lindexes - 1] = numpy.sqrt(
-                fix(
-                    scipy.ndimage.mean(
-                        (eimg - mean_intensity_edge[elabels - 1]) ** 2,
-                        elabels,
+                std_intensity_edge[lindexes - 1] = numpy.sqrt(
+                    fix(
+                        scipy.ndimage.mean(
+                            (eimg - mean_intensity_edge[elabels - 1]) ** 2,
+                            elabels,
+                        )
                     )
                 )
-            )
 
-            min_intensity_edge[lindexes - 1] = fix(
-                scipy.ndimage.minimum(eimg, elabels, lindexes)
-            )
+                min_intensity_edge[lindexes - 1] = fix(
+                    scipy.ndimage.minimum(eimg, elabels, lindexes)
+                )
 
-            max_intensity_edge[lindexes - 1] = fix(
-                scipy.ndimage.maximum(eimg, elabels, lindexes)
-            )
-    for category, feature_name, measurement in (
+                max_intensity_edge[lindexes - 1] = fix(
+                    scipy.ndimage.maximum(eimg, elabels, lindexes)
+                )
+
+    measurement_names = [
         (INTENSITY, INTEGRATED_INTENSITY, integrated_intensity),
         (INTENSITY, MEAN_INTENSITY, mean_intensity),
         (INTENSITY, STD_INTENSITY, std_intensity),
         (INTENSITY, MIN_INTENSITY, min_intensity),
         (INTENSITY, MAX_INTENSITY, max_intensity),
-        (INTENSITY, INTEGRATED_INTENSITY_EDGE, integrated_intensity_edge),
-        (INTENSITY, MEAN_INTENSITY_EDGE, mean_intensity_edge),
-        (INTENSITY, STD_INTENSITY_EDGE, std_intensity_edge),
-        (INTENSITY, MIN_INTENSITY_EDGE, min_intensity_edge),
-        (INTENSITY, MAX_INTENSITY_EDGE, max_intensity_edge),
         (INTENSITY, MASS_DISPLACEMENT, mass_displacement),
         (INTENSITY, LOWER_QUARTILE_INTENSITY, lower_quartile_intensity),
         (INTENSITY, MEDIAN_INTENSITY, median_intensity),
@@ -358,7 +360,18 @@ def get_intensity(masks: numpy.ndarray, pixels: numpy.ndarray):
         (C_LOCATION, LOC_MAX_X, max_x),
         (C_LOCATION, LOC_MAX_Y, max_y),
         (C_LOCATION, LOC_MAX_Z, max_z),
-    ):
+    ]
+    if edge_measurements:
+        measurement_names.extend(
+            [
+                (INTENSITY, INTEGRATED_INTENSITY_EDGE, integrated_intensity_edge),
+                (INTENSITY, MEAN_INTENSITY_EDGE, mean_intensity_edge),
+                (INTENSITY, STD_INTENSITY_EDGE, std_intensity_edge),
+                (INTENSITY, MIN_INTENSITY_EDGE, min_intensity_edge),
+                (INTENSITY, MAX_INTENSITY_EDGE, max_intensity_edge),
+            ]
+        )
+    for category, feature_name, measurement in measurement_names:
         measurement_name = "{}_{}".format(category, feature_name)
         # MODIFIED: Selected first
         result[measurement_name] = measurement
