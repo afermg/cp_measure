@@ -23,3 +23,11 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
       - name: Check nix formatting
         run: nix fmt -- --check
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v1
+      - uses: astral-sh/ruff-action@v1
+        with:
+          args: "format --check"
