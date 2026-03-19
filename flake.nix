@@ -58,9 +58,13 @@
               '';
               NIX_LD_LIBRARY_PATH = lib.makeLibraryPath libList;
               packages = [
+                gcc
+                pkgs.dprint
+                pkgs.nixfmt
+                pkgs.nixfmt-tree
+                prek
                 pwp
                 uv
-                pkgs.gcc
               ]
               ++ libList;
               venvDir = "./.venv";
@@ -82,6 +86,7 @@
               '';
             };
         };
+        formatter = pkgs.nixfmt;
       }
     );
 }

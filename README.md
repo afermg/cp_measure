@@ -3,13 +3,14 @@
 </div>
 
 # cp_measure: Morphological features for imaging data
+
 Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but you want to do it in a programmatic way? Look no more, this package was developed by and for the click-a-phobic scientists.
 
-
 ### Preprint
+
 [Here](https://arxiv.org/abs/2507.01163) is the current version of the preprint.
 
-If you used cp\_measure in your project, please cite using the following bib entry:
+If you used cp_measure in your project, please cite using the following bib entry:
 
 ```
 @article{munoz2025cpmeasure,
@@ -22,7 +23,6 @@ If you used cp\_measure in your project, please cite using the following bib ent
 
 ## Quick overview
 
-
 ### Installation
 
 ```bash
@@ -33,10 +33,10 @@ pip install cp-measure
 
 Users usually want to calculate all the features. There are four type of measurements, based on their inputs:
 
--   Type 1: 1 image + 1 set of masks (e.g., intensity)
--   Type 2: 2 images + 1 set of masks (e.g., colocalization)
--   Type 3: 2 sets of masks (e.g., number of neighbors)
--   Type 4: 1 image + 2 sets of masks (e.g., skeleton)
+- Type 1: 1 image + 1 set of masks (e.g., intensity)
+- Type 2: 2 images + 1 set of masks (e.g., colocalization)
+- Type 3: 2 sets of masks (e.g., number of neighbors)
+- Type 4: 1 image + 2 sets of masks (e.g., skeleton)
 
 This shows the simplest way to use the first set (1 image, 1 mask set), which currently follows the style of scikit-image (1 image, 1 matrix with non-overlapping labels). **IMPORTANT:** If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
 
@@ -83,7 +83,6 @@ for name, v in measurements.items():
 """
 ```
 
-
 #### Call specific measurements
 
 If you need a specific measurement/feature you can just import it. Note that measurements come in sets, so you have to fetch the one that you specifically require from the resultant dictionary. Any available measurement can be found using code as follows:
@@ -118,7 +117,7 @@ measurecolocalization.get_correlation_rwc
 measurecolocalization.get_correlation_costes
 measurecolocalization.get_correlation_overlap
 ```
-  
+
 For Type 3 functions:
 
 ```
@@ -150,19 +149,17 @@ uv sync --all-groups
 
 You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing).
 
-
 ### Done
 
--   Type 1 and 2 in sklearn style (multiple integer labels in one mask array)
+- Type 1 and 2 in sklearn style (multiple integer labels in one mask array)
 
 ### Pending
 
--   Add a wrapper for type 3 measurements
--   Type 4 measurements (ObjectSkeleton). We don't know if it is worth implementing.
-
+- Add a wrapper for type 3 measurements
+- Type 4 measurements (ObjectSkeleton). We don't know if it is worth implementing.
 
 # Design notes
 
-- cp\_measure is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
+- cp_measure is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
 - The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
 - The functions do not include guardrails (e.g., checks of type or value). They will fail if provided with empty masks. Not all functions will fail if provided with masks only.

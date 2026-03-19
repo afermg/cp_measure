@@ -12,7 +12,7 @@ def get_pixels(size: int = 789, seed: int = 42) -> numpy.ndarray:
     return random_pixels
 
 
-def get_masks(size: int = 789, mask_width: int = 9) -> tuple[numpy.ndarray]:
+def get_masks(size: int = 789, mask_width: int = 9) -> dict:
     full = numpy.ones(
         (size, size), dtype=numpy.uint16
     )  # A mask that covers the entire image
