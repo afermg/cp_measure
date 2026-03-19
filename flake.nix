@@ -61,6 +61,7 @@
                 gcc
                 pkgs.dprint
                 pkgs.nixfmt
+                pkgs.nixfmt-tree
                 prek
                 pwp
                 uv
