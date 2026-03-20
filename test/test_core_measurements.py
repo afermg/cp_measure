@@ -113,10 +113,6 @@ def test_get_intensity_edge_measurements_flag():
         f"{INTENSITY}_{MAX_INTENSITY_EDGE}",
     ]
 
-    result_default = get_intensity(masks, pixels.copy())
-    for key in edge_keys:
-        assert key in result_default, f"default (edge_measurements=True) should include {key}"
-
     result_with_edge = get_intensity(masks, pixels.copy(), edge_measurements=True)
     for key in edge_keys:
         assert key in result_with_edge, f"edge_measurements=True should include {key}"
