@@ -85,6 +85,8 @@ row_names = [f"{img}__{obj}__{label}" for img, obj, label in rows]
 df = pd.DataFrame(data, index=row_names, columns=columns)
 ```
 
+Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
+
 #### Bulk API
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
@@ -108,9 +110,6 @@ measurements = get_core_measurements()
 print(measurements.keys())
 # dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'feret', 'texture', 'granularity'])
 
-import numpy as np
-from cp_measure.bulk import get_core_measurements
-
 # Create synthetic data
 size = 240
 rng = np.random.default_rng(42)
@@ -132,6 +131,7 @@ for name, func in measurements.items():
 Individual measurement functions can be imported directly. Each returns a dictionary of feature arrays.
 
 ```python
+import numpy as np
 from cp_measure.minimal.measureobjectsizeshape import get_sizeshape
 
 mask = np.zeros((50, 50))
