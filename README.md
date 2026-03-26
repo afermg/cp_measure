@@ -10,7 +10,7 @@ Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but
 
 [Here](https://arxiv.org/abs/2507.01163) is the current version of the preprint.
 
-If you used cp_measure in your project, please cite using the following bib entry:
+If you used cp_measure in your project, please cite using the following .bib entry:
 
 ```
 @article{munoz2025cpmeasure,
@@ -31,7 +31,7 @@ pip install cp-measure
 
 ### Usage
 
-#### Featurizer (recommended)
+#### Featurizer (Recommended for small datasets)
 
 The simplest way to extract all features from an image and its masks:
 
@@ -87,7 +87,7 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
 
-#### Bulk API
+#### API (Recommended for large datasets)
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
@@ -124,6 +124,14 @@ measurements = get_core_measurements()
 results = {}
 for name, func in measurements.items():
     results = {**results, **func(masks, pixels)}
+
+"""
+{'RadialDistribution_FracAtD_1of4': array([0.03673493, 0.05640786]),
+ 'RadialDistribution_MeanFrac_1of4': array([1.02857809, 1.15072037]),
+ 'RadialDistribution_RadialCV_1of4': array([0.05539421, 0.04635982]),
+ ...
+ 'Granularity_16': array([97.65759629, 97.64371833])}
+"""
 ```
 
 #### Call specific measurements
