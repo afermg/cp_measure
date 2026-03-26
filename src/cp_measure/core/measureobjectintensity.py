@@ -170,7 +170,7 @@ def get_intensity(
 
         masked_labels = labels
 
-        lmask = masked_labels > 0 & numpy.isfinite(masked_image)  # Ignore NaNs, Infs
+        lmask = (masked_labels > 0) & numpy.isfinite(masked_image)  # Ignore NaNs, Infs
         has_objects = numpy.any(lmask)
         if has_objects:
             limg = masked_image[lmask]
