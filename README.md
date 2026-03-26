@@ -70,6 +70,7 @@ masks = np.zeros((2, 240, 240), dtype=np.int32)
 masks[0, 50:100, 50:100] = 1    # nucleus 1
 masks[1, 40:110, 40:110] = 1    # cell 1
 masks[1, 150:200, 150:200] = 2  # cell 2
+masks[1, 175:180, 180:210] = 2  # Minor asymmetries on bottom right edge of cells
 
 data, columns, rows = featurize(image, masks, config)
 # rows: [(None, "nuclei", 1), (None, "cells", 1), (None, "cells", 2)]
