@@ -96,8 +96,6 @@ def make_featurizer_config(
     >>> config = make_featurizer_config()  # auto-named channels, single "object" mask
     """
     if channels is not None:
-        if len(channels) == 0:
-            raise ValueError("channels must be a non-empty list when provided")
         if len(set(channels)) != len(channels):
             raise ValueError("channel names must be unique")
 
@@ -332,7 +330,7 @@ def _validate(
             f"image and masks must have the same number of dimensions, "
             f"got image.ndim={image.ndim} and masks.ndim={masks.ndim}"
         )
-    if image.shape[0] != len(channels):
+    if channels and image.shape[0] != len(channels):
         raise ValueError(
             f"image has {image.shape[0]} channels but "
             f"{len(channels)} channel names were provided"

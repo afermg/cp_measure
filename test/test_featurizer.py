@@ -210,9 +210,12 @@ class TestMakeFeaturizer:
         with pytest.raises(ValueError, match="at least one feature"):
             make_featurizer_config(["DNA"], **ALL_OFF)
 
-    def test_empty_channels_raises(self):
-        with pytest.raises(ValueError, match="non-empty"):
-            make_featurizer_config([], **{**ALL_OFF, "intensity": True})
+    def test_empty_channels_with_shape_only(self):
+        config = make_featurizer_config(
+            [], **{**ALL_OFF, "sizeshape": True, "zernike": True, "feret": True}
+        )
+        assert config["channels"] == []
+        assert config["sizeshape"] is True
 
     def test_empty_objects_raises(self):
         with pytest.raises(ValueError, match="non-empty"):
