@@ -13,7 +13,6 @@ Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but
 <details>
 <summary>Please cite using the following .bib entry</summary>
 
-
 ```
 @article{munoz2025cpmeasure,
   title={cp\_measure: API-first feature extraction for image-based profiling workflows},
@@ -34,6 +33,7 @@ pip install cp-measure
 ```
 
 ### Usage
+
 #### Featurizer (Recommended for small datasets)
 
 The simplest way to extract all features from an image and its masks:
@@ -154,7 +154,6 @@ for name, func in measurements.items():
 }
 """
 ```
-
 
 #### Import a subset of measurements
 
