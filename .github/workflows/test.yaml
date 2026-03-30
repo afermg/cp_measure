@@ -47,4 +47,4 @@ jobs:
           PLATFORM: ${{ matrix.os }}
           DISPLAY: :42
         run: |
-          pytest --cov --color=yes --cov-report=xml
+          pytest README.md --markdown-docs --cov --color=yes --cov-report=xml

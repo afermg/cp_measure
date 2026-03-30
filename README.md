@@ -54,10 +54,17 @@ data, columns, rows = featurize(image, masks)
 # rows:    [(None, "object", 1), (None, "object", 2)]  — (image_id, object_name, label) per row
 ```
 
-To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's first axis and control how per-channel features are labeled in the output columns (e.g. `"Intensity_MeanIntensity__DNA"`). If omitted, channels are auto-named `ch0`, `ch1`, ...
+To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's first axis and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
 
 ```python
-from cp_measure.featurizer import make_featurizer_config
+import numpy as np
+from cp_measure.featurizer import featurize, make_featurizer_config
+
+# Recreate variables from previous examples for this block to run in isolation
+image = np.random.default_rng(42).random((2, 240, 240))
+masks = np.zeros((1, 240, 240), dtype=np.int32)
+masks[0, 50:100, 50:100] = 1
+masks[0, 150:200, 150:200] = 2
 
 # Disable texture features, name channels explicitly
 config = make_featurizer_config(["DNA", "ER"], texture=False)
@@ -67,6 +74,12 @@ data, columns, rows = featurize(image, masks, config)
 Multiple mask types (e.g. nuclei and cells) are supported by stacking them along the first axis:
 
 ```python
+import numpy as np
+from cp_measure.featurizer import featurize, make_featurizer_config
+
+# Recreate variables from previous examples for this block to run in isolation
+image = np.random.default_rng(42).random((2, 240, 240))
+
 config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
 
 masks = np.zeros((2, 240, 240), dtype=np.int32)
@@ -83,7 +96,7 @@ Volumetric `(C, Z, H, W)` data is supported. The featurizer automatically skips 
 
 The output is plain numpy + lists, so converting to a DataFrame is straightforward:
 
-```python
+```python notest
 import pandas as pd
 row_names = [f"{img}__{obj}__{label}" for img, obj, label in rows]
 df = pd.DataFrame(data, index=row_names, columns=columns)
@@ -137,7 +150,8 @@ for name, func in measurements.items():
  'RadialDistribution_MeanFrac_1of4': array([1.02857809, 1.15072037]),
  'RadialDistribution_RadialCV_1of4': array([0.05539421, 0.04635982]),
  ...
- 'Granularity_16': array([97.65759629, 97.64371833])}
+ 'Granularity_16': array([97.65759629, 97.64371833])
+}
 """
 ```
 
@@ -148,9 +162,9 @@ Individual measurement functions can be imported directly. Each returns a dictio
 
 ```python
 import numpy as np
-from cp_measure.minimal.measureobjectsizeshape import get_sizeshape
+from cp_measure.core.measureobjectsizeshape import get_sizeshape
 
-mask = np.zeros((50, 50))
+mask = np.zeros((50, 50), dtype=np.int32)
 mask[5:-6, 5:-6] = 1
 get_sizeshape(mask, None)
 ```
