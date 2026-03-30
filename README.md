@@ -200,18 +200,9 @@ measureobjectneghbors.measureobjectneighboors
 <details>
 <summary>Current work</summary>
 
-## Current work
-
 You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing).
 
-### Done
-
-- Type 1 and 2 in sklearn style (multiple integer labels in one mask array)
-
-### Pending
-
-- Add a wrapper for type 3 measurements
-- Type 4 measurements (ObjectSkeleton). We don't know if it is worth implementing.
+Most features are implemented, but Type 3 measurements (e.g., `ObjectNeighbors`) does not have a wrapper. We do not plan to implement `ObjectSkeleton`.
 
 </details>
 
