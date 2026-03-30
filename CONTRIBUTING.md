@@ -63,7 +63,8 @@ All contributions must pass:
 - **Linting & Formatting**: `uv run ruff format;  dprint fmt;`
 - **Tests**: All existing and new tests must pass `pytest --markdown-docs`
 
-There is CI setup that 
+CI will check for all these before it can be merged into the main branch.
+
 ### Submitting Your Contribution
 
 1. Commit your changes with clear, descriptive commit messages
