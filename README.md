@@ -127,7 +127,7 @@ import numpy as np
 from cp_measure.bulk import get_core_measurements
 
 measurements = get_core_measurements()
-print(measurements.keys())
+# print(measurements.keys())
 # dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'feret', 'texture', 'granularity'])
 
 # Create synthetic data
