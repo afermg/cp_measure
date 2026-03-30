@@ -53,17 +53,17 @@ We welcome various types of contributions:
 
 4. Run the test suite:
    ```bash
-   uv run pytest --cov --color=yes --cov-report=xml
+   uv run pytest --markdown-docs --cov --color=yes --cov-report=xml
    ```
 
 ### Code Quality Standards
 
 All contributions must pass:
 
-- **Linting**: `uv run ruff check src/`
-- **Formatting**: `uv run ruff format src/`
-- **Tests**: All existing and new tests must pass
+- **Linting & Formatting**: `uv run ruff format;  dprint fmt;`
+- **Tests**: All existing and new tests must pass `pytest --markdown-docs`
 
+There is CI setup that 
 ### Submitting Your Contribution
 
 1. Commit your changes with clear, descriptive commit messages
@@ -89,6 +89,12 @@ The project is actively developing in these areas:
 2. **Numerical validation**: Comprehensive tests comparing cp_measure to CellProfiler outputs
 3. **Interface formalization**: Standardizing input/output formats for 2D/3D images and masks
 4. **Documentation**: Improving examples and API documentation
+
+### Notes on the current design
+
+- cp_measure is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
+- The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
+- The functions do not include guardrails (e.g., checks of type or value). They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
 
 ## Communication
 

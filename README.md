@@ -24,17 +24,17 @@ Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but
 
 </details>
 
-## Quick overview
+# Quick overview
 
-### Installation
+## Installation
 
 ```bash
 pip install cp-measure
 ```
 
-### Usage
+## Usage
 
-#### Featurizer (Recommended for small datasets)
+### Featurizer (Recommended for small datasets)
 
 The simplest way to extract all features from an image and its masks:
 
@@ -104,16 +104,16 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
 
-#### Important notes
+## Important notes
 
 - **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
 - **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
-- **Speed** The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
+- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
 
 <details>
 <summary>API Overview (develop your own pipelines)</summary>
 
-#### Bulk API
+### Bulk API
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
@@ -155,7 +155,7 @@ for name, func in measurements.items():
 """
 ```
 
-#### Import a subset of measurements
+### Import a subset of measurements
 
 Individual measurement functions can be imported directly. Each returns a dictionary of arrays.
 
@@ -197,19 +197,6 @@ measureobjectneghbors.measureobjectneighboors
 
 </details>
 
-### Contributing
-
-Please use GitHub issues to report bugs and issues or submit a Pull Request.
-
-#### Development installation
-
-If you want to install it for development use [uv](https://docs.astral.sh/uv/).
-
-```bash
-git clone git@github.com:afermg/cp_measure.git
-cd cp_measure
-uv sync --all-groups
-```
 
 <details>
 <summary>Current work</summary>
@@ -229,8 +216,6 @@ You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPw
 
 </details>
 
-# Design notes
+## Contributing
 
-- cp_measure is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
-- The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
-- The functions do not include guardrails (e.g., checks of type or value). They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
