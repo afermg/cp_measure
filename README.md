@@ -6,6 +6,9 @@
 
 Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but you want to do it in a programmatic way? Look no more, this package was developed by and for the click-a-phobic scientists.
 
+<details>
+<summary>Bib Section</summary>
+
 ### Preprint
 
 [Here](https://arxiv.org/abs/2507.01163) is the current version of the preprint.
@@ -20,6 +23,8 @@ If you used cp_measure in your project, please cite using the following .bib ent
   year={2025}
 }
 ```
+
+</details>
 
 ## Quick overview
 
@@ -88,6 +93,9 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
 
+<details>
+<summary>API</summary>
+
 #### API (Recommended for large datasets)
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
@@ -135,6 +143,8 @@ for name, func in measurements.items():
 """
 ```
 
+</details>
+
 #### Call specific measurements
 
 Individual measurement functions can be imported directly. Each returns a dictionary of feature arrays.
@@ -177,11 +187,11 @@ measureobjectneghbors.measureobjectneighboors
 - [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 
-### Contribute
+### Contributing
 
 Please use GitHub issues to report bugs and issues or submit a Pull Request.
 
-### Development installation
+#### Development installation
 
 If you want to install it for development use [uv](https://docs.astral.sh/uv/).
 
@@ -190,6 +200,9 @@ git clone git@github.com:afermg/cp_measure.git
 cd cp_measure
 uv sync --all-groups
 ```
+
+<details>
+<summary>Current work</summary>
 
 ## Current work
 
@@ -203,6 +216,8 @@ You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPw
 
 - Add a wrapper for type 3 measurements
 - Type 4 measurements (ObjectSkeleton). We don't know if it is worth implementing.
+
+</details>
 
 # Design notes
 
