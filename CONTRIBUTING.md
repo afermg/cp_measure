@@ -80,7 +80,7 @@ CI will check for all these before it can be merged into the main branch.
 - Unit tests should be added for all new functionality
 - Tests go in the `test/` directory following the existing structure
 - When adding new measurements, include validation against CellProfiler's output where possible
-- CI runs on Python 3.10 and 3.12, on both Ubuntu and macOS
+- CI runs on Python 3.10-3.14, on both Ubuntu and macOS
 
 ## Current Roadmap & Priorities
 
