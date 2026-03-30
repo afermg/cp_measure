@@ -8,9 +8,10 @@ Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but
 
 ### Preprint
 
-[Here](https://arxiv.org/abs/2507.01163) is the current version of the preprint.
+[Here](https://arxiv.org/abs/2507.01163) is the preprint. Published as a workshop paper for ICML 2025's CODEML.
 
-If you used cp_measure in your project, please cite using the following .bib entry:
+<details>
+<summary>Please cite using the following .bib entry</summary>
 
 ```
 @article{munoz2025cpmeasure,
@@ -21,17 +22,19 @@ If you used cp_measure in your project, please cite using the following .bib ent
 }
 ```
 
-## Quick overview
+</details>
 
-### Installation
+# Quick overview
+
+## Installation
 
 ```bash
 pip install cp-measure
 ```
 
-### Usage
+## Usage
 
-#### Featurizer (Recommended for small datasets)
+### Featurizer (Recommended for small datasets)
 
 The simplest way to extract all features from an image and its masks:
 
@@ -51,10 +54,17 @@ data, columns, rows = featurize(image, masks)
 # rows:    [(None, "object", 1), (None, "object", 2)]  — (image_id, object_name, label) per row
 ```
 
-To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's first axis and control how per-channel features are labeled in the output columns (e.g. `"Intensity_MeanIntensity__DNA"`). If omitted, channels are auto-named `ch0`, `ch1`, ...
+To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's first axis and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
 
 ```python
-from cp_measure.featurizer import make_featurizer_config
+import numpy as np
+from cp_measure.featurizer import featurize, make_featurizer_config
+
+# Recreate variables from previous examples for this block to run in isolation
+image = np.random.default_rng(42).random((2, 240, 240))
+masks = np.zeros((1, 240, 240), dtype=np.int32)
+masks[0, 50:100, 50:100] = 1
+masks[0, 150:200, 150:200] = 2
 
 # Disable texture features, name channels explicitly
 config = make_featurizer_config(["DNA", "ER"], texture=False)
@@ -64,6 +74,12 @@ data, columns, rows = featurize(image, masks, config)
 Multiple mask types (e.g. nuclei and cells) are supported by stacking them along the first axis:
 
 ```python
+import numpy as np
+from cp_measure.featurizer import featurize, make_featurizer_config
+
+# Recreate variables from previous examples for this block to run in isolation
+image = np.random.default_rng(42).random((2, 240, 240))
+
 config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
 
 masks = np.zeros((2, 240, 240), dtype=np.int32)
@@ -80,7 +96,7 @@ Volumetric `(C, Z, H, W)` data is supported. The featurizer automatically skips 
 
 The output is plain numpy + lists, so converting to a DataFrame is straightforward:
 
-```python
+```python notest
 import pandas as pd
 row_names = [f"{img}__{obj}__{label}" for img, obj, label in rows]
 df = pd.DataFrame(data, index=row_names, columns=columns)
@@ -88,27 +104,30 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
 
-#### API (Recommended for large datasets)
+## Important notes
+
+- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
+- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
+- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
+
+<details>
+<summary>API Overview (develop your own pipelines)</summary>
+
+### Bulk API
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
-There are four types of measurements based on their inputs:
+cp\_measure currently provides two types of measurements based on their inputs:
 
 - Type 1: 1 image + 1 set of masks (e.g., intensity)
 - Type 2: 2 images + 1 set of masks (e.g., colocalization)
-- Type 3: 2 sets of masks (e.g., number of neighbors)
-- Type 4: 1 image + 2 sets of masks (e.g., skeleton)
-
-**IMPORTANT:** If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
-
-NOTE: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
 
 ```python
 import numpy as np
 from cp_measure.bulk import get_core_measurements
 
 measurements = get_core_measurements()
-print(measurements.keys())
+# print(measurements.keys())
 # dict_keys(['radial_distribution', 'radial_zernikes', 'intensity', 'sizeshape', 'zernike', 'feret', 'texture', 'granularity'])
 
 # Create synthetic data
@@ -131,24 +150,23 @@ for name, func in measurements.items():
  'RadialDistribution_MeanFrac_1of4': array([1.02857809, 1.15072037]),
  'RadialDistribution_RadialCV_1of4': array([0.05539421, 0.04635982]),
  ...
- 'Granularity_16': array([97.65759629, 97.64371833])}
+ 'Granularity_16': array([97.65759629, 97.64371833])
+}
 """
 ```
 
-#### Call specific measurements
+### Import a subset of measurements
 
-Individual measurement functions can be imported directly. Each returns a dictionary of feature arrays.
+Individual measurement functions can be imported directly. Each returns a dictionary of arrays.
 
 ```python
 import numpy as np
-from cp_measure.minimal.measureobjectsizeshape import get_sizeshape
+from cp_measure.core.measureobjectsizeshape import get_sizeshape
 
-mask = np.zeros((50, 50))
+mask = np.zeros((50, 50), dtype=np.int32)
 mask[5:-6, 5:-6] = 1
 get_sizeshape(mask, None)
 ```
-
-Available Type 1 and 2 functions:
 
 ```
 measureobjectintensitydistribution.get_radial_zernikes
@@ -177,35 +195,17 @@ measureobjectneghbors.measureobjectneighboors
 - [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 
-### Contribute
+</details>
 
-Please use GitHub issues to report bugs and issues or submit a Pull Request.
-
-### Development installation
-
-If you want to install it for development use [uv](https://docs.astral.sh/uv/).
-
-```bash
-git clone git@github.com:afermg/cp_measure.git
-cd cp_measure
-uv sync --all-groups
-```
-
-## Current work
+<details>
+<summary>Current work</summary>
 
 You can follow progress [here](https://docs.google.com/spreadsheets/d/1_7jQ8EjPwOr2MUnO5Tw56iu4Y0udAzCJEny-LQMgRGE/edit?usp=sharing).
 
-### Done
+Most features are implemented, but Type 3 measurements (e.g., `ObjectNeighbors`) does not have a wrapper. We do not plan to implement `ObjectSkeleton`.
 
-- Type 1 and 2 in sklearn style (multiple integer labels in one mask array)
+</details>
 
-### Pending
+## Contributing
 
-- Add a wrapper for type 3 measurements
-- Type 4 measurements (ObjectSkeleton). We don't know if it is worth implementing.
-
-# Design notes
-
-- cp_measure is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
-- The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
-- The functions do not include guardrails (e.g., checks of type or value). They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
