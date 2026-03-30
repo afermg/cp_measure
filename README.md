@@ -6,14 +6,13 @@
 
 Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but you want to do it in a programmatic way? Look no more, this package was developed by and for the click-a-phobic scientists.
 
-<details>
-<summary>Bib Section</summary>
-
 ### Preprint
 
-[Here](https://arxiv.org/abs/2507.01163) is the current version of the preprint.
+[Here](https://arxiv.org/abs/2507.01163) is the preprint. Published as a workshop paper for ICML 2025's CODEML.
 
-If you used cp_measure in your project, please cite using the following .bib entry:
+<details>
+<summary>Please cite using the following .bib entry</summary>
+
 
 ```
 @article{munoz2025cpmeasure,
@@ -35,7 +34,6 @@ pip install cp-measure
 ```
 
 ### Usage
-
 #### Featurizer (Recommended for small datasets)
 
 The simplest way to extract all features from an image and its masks:
@@ -93,23 +91,23 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
 
-<details>
-<summary>API</summary>
+#### Important notes
 
-#### API (Recommended for large datasets)
+- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
+- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
+- **Speed** The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
+
+<details>
+<summary>API Overview (develop your own pipelines)</summary>
+
+#### Bulk API
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
-There are four types of measurements based on their inputs:
+cp\_measure currently provides two types of measurements based on their inputs:
 
 - Type 1: 1 image + 1 set of masks (e.g., intensity)
 - Type 2: 2 images + 1 set of masks (e.g., colocalization)
-- Type 3: 2 sets of masks (e.g., number of neighbors)
-- Type 4: 1 image + 2 sets of masks (e.g., skeleton)
-
-**IMPORTANT:** If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
-
-NOTE: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
 
 ```python
 import numpy as np
@@ -143,11 +141,10 @@ for name, func in measurements.items():
 """
 ```
 
-</details>
 
-#### Call specific measurements
+#### Import a subset of measurements
 
-Individual measurement functions can be imported directly. Each returns a dictionary of feature arrays.
+Individual measurement functions can be imported directly. Each returns a dictionary of arrays.
 
 ```python
 import numpy as np
@@ -157,8 +154,6 @@ mask = np.zeros((50, 50))
 mask[5:-6, 5:-6] = 1
 get_sizeshape(mask, None)
 ```
-
-Available Type 1 and 2 functions:
 
 ```
 measureobjectintensitydistribution.get_radial_zernikes
@@ -186,6 +181,8 @@ measureobjectneghbors.measureobjectneighboors
 - [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
 - [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
+
+</details>
 
 ### Contributing
 
