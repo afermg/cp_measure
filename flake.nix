@@ -73,6 +73,7 @@
       {
         checks = {
           inherit pre-commit-check;
+          formatting = treefmtEval.config.build.check;
         };
 
         devShells = {
