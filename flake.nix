@@ -52,20 +52,31 @@
           programs.ruff-format.enable = true;
           programs.ruff-check.enable = true;
           programs.dprint.enable = true;
+          programs.dprint.includes = [
+            "*.json"
+            "*.md"
+            "*.yaml"
+            "*.yml"
+          ];
+          programs.dprint.settings = {
+            plugins = pkgs.dprint-plugins.getPluginList (
+              plugins: with plugins; [
+                dprint-plugin-json
+                dprint-plugin-markdown
+                g-plane-pretty_yaml
+              ]
+            );
+          };
         };
 
         pre-commit-check = git-hooks.lib.${system}.run {
           src = ./.;
+          package = pkgs.prek;
           hooks = {
-            dprint = {
+            treefmt = {
               enable = true;
-              name = "dprint";
-              entry = "${pkgs.dprint}/bin/dprint fmt";
-              files = "\\.(json|md|yaml|yml)$";
+              package = treefmtEval.config.build.wrapper;
             };
-            nixfmt.enable = true;
-            ruff.enable = true;
-            ruff-format.enable = true;
           };
         };
       in
@@ -73,9 +84,9 @@
       {
         checks = {
           inherit pre-commit-check;
-          formatting = treefmtEval.config.build.check;
+          formatting = treefmtEval.config.build.check self;
         };
-
+        formatter = treefmtEval.config.build.wrapper;
         devShells = {
           default =
             let
@@ -97,13 +108,8 @@
               NIX_LD_LIBRARY_PATH = lib.makeLibraryPath libList;
               packages = [
                 gcc
-                pkgs.dprint
-                pkgs.nixfmt
-                pkgs.nixfmt-tree
-                prek
                 pwp
                 uv
-                treefmt
               ]
               ++ libList;
               venvDir = "./.venv";
@@ -126,7 +132,6 @@
               '';
             };
         };
-        formatter = treefmtEval.config.build.wrapper;
       }
     );
 }
