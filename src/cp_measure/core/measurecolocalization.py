@@ -154,6 +154,7 @@ def extract_pixels(
     fi = pixels_1[mask]
     si = pixels_2[mask]
     labels = mask.astype(numpy.uint32)[mask]
+    labels.setflags(write=False)
     lrange = numpy.arange(labels.max(), dtype=numpy.int32) + 1
     return fi, si, labels, lrange
 
