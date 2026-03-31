@@ -5,6 +5,14 @@
     systems.url = "github:nix-systems/default";
     flake-utils.url = "github:numtide/flake-utils";
     flake-utils.inputs.systems.follows = "systems";
+    git-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -13,6 +21,8 @@
       nixpkgs,
       flake-utils,
       systems,
+      git-hooks,
+      treefmt-nix,
       ...
     }@inputs:
     flake-utils.lib.eachDefaultSystem (
@@ -35,9 +45,36 @@
           pkgs.libGL
           pkgs.glib
         ];
+
+        treefmtEval = treefmt-nix.lib.evalModule pkgs {
+          projectRootFile = "flake.nix";
+          programs.nixfmt.enable = true;
+          programs.ruff-format.enable = true;
+          programs.ruff-check.enable = true;
+          programs.dprint.enable = true;
+        };
+
+        pre-commit-check = git-hooks.lib.${system}.run {
+          src = ./.;
+          hooks = {
+            dprint = {
+              enable = true;
+              name = "dprint";
+              entry = "${pkgs.dprint}/bin/dprint fmt";
+              files = "\\.(json|md|yaml|yml)$";
+            };
+            nixfmt.enable = true;
+            ruff.enable = true;
+            ruff-format.enable = true;
+          };
+        };
       in
       with pkgs;
       {
+        checks = {
+          inherit pre-commit-check;
+        };
+
         devShells = {
           default =
             let
@@ -65,6 +102,7 @@
                 prek
                 pwp
                 uv
+                treefmt
               ]
               ++ libList;
               venvDir = "./.venv";
@@ -75,6 +113,7 @@
                 unset SOURCE_DATE_EPOCH
               '';
               shellHook = ''
+                ${pre-commit-check.shellHook}
                 export UV_PYTHON=${pkgs.python313}
                 export LD_LIBRARY_PATH=$NIX_LD_LIBRARY_PATH:$LD_LIBRARY_PATH
                 export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
@@ -86,7 +125,7 @@
               '';
             };
         };
-        formatter = pkgs.nixfmt;
+        formatter = treefmtEval.config.build.wrapper;
       }
     );
 }
