@@ -13,7 +13,12 @@ def config_2ch():
     return make_featurizer_config(
         ["DNA", "ER"],
         objects=["nuclei"],
-        **{**ALL_OFF, "intensity": True, "sizeshape": True, "correlation_pearson": True},
+        **{
+            **ALL_OFF,
+            "intensity": True,
+            "sizeshape": True,
+            "correlation_pearson": True,
+        },
     )
 
 
@@ -22,7 +27,12 @@ def config_2ch_multi():
     return make_featurizer_config(
         ["DNA", "ER"],
         objects=["nuclei", "cells"],
-        **{**ALL_OFF, "intensity": True, "sizeshape": True, "correlation_pearson": True},
+        **{
+            **ALL_OFF,
+            "intensity": True,
+            "sizeshape": True,
+            "correlation_pearson": True,
+        },
     )
 
 
@@ -75,7 +85,9 @@ class TestReturnAsPandas:
         assert (df["object_type"] == "nuclei").all()
 
     def test_multi_mask(self, image_2d_2ch, masks_2d_multi, config_2ch_multi):
-        df = featurize(image_2d_2ch, masks_2d_multi, config_2ch_multi, return_as="pandas")
+        df = featurize(
+            image_2d_2ch, masks_2d_multi, config_2ch_multi, return_as="pandas"
+        )
         assert set(df["object_type"]) == {"nuclei", "cells"}
         assert len(df[df["object_type"] == "nuclei"]) == 2
         assert len(df[df["object_type"] == "cells"]) == 3
@@ -168,7 +180,13 @@ class TestReturnAsAnnData:
 
     def test_var_columns(self, image_2d_2ch, mask_2d, config_2ch):
         adata = featurize(image_2d_2ch, mask_2d, config_2ch, return_as="anndata")
-        for col in ("feature_group", "feature_type", "feature_name", "channel", "channel_2"):
+        for col in (
+            "feature_group",
+            "feature_type",
+            "feature_name",
+            "channel",
+            "channel_2",
+        ):
             assert col in adata.var.columns
 
     def test_var_names(self, image_2d_2ch, mask_2d, config_2ch):

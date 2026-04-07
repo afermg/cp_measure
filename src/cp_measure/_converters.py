@@ -43,7 +43,9 @@ def _to_pandas(*, data, columns, rows, **_kwargs):
     return df
 
 
-def _to_pyarrow(*, data, columns, rows, col_meta, config, channels, objects, is_3d, **_kwargs):
+def _to_pyarrow(
+    *, data, columns, rows, col_meta, config, channels, objects, is_3d, **_kwargs
+):
     pa = _lazy_import("pyarrow", "pyarrow")
 
     image_ids, object_types, labels = _unpack_rows(rows)
@@ -80,7 +82,9 @@ def _to_pyarrow(*, data, columns, rows, col_meta, config, channels, objects, is_
     return table.cast(schema)
 
 
-def _to_anndata(*, data, columns, rows, col_meta, config, channels, objects, is_3d, **_kwargs):
+def _to_anndata(
+    *, data, columns, rows, col_meta, config, channels, objects, is_3d, **_kwargs
+):
     ad = _lazy_import("anndata", "anndata")
     pd = _lazy_import("pandas", "anndata")
 

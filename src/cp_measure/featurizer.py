@@ -311,9 +311,7 @@ def featurize(
             results.update(raw)
             if building_meta:
                 for key in raw:
-                    meta_entries.append(
-                        _meta_entry(group_name, "shape", key)
-                    )
+                    meta_entries.append(_meta_entry(group_name, "shape", key))
 
         for ch_idx, ch_name in enumerate(channels):
             pixels = image[ch_idx]
@@ -401,7 +399,12 @@ def featurize(
 
 
 def _meta_entry(
-    group: str, ftype: str, name: str, *, channel: str | None = None, channel_2: str | None = None
+    group: str,
+    ftype: str,
+    name: str,
+    *,
+    channel: str | None = None,
+    channel_2: str | None = None,
 ) -> dict:
     """Build a per-column metadata dict for ``var`` / schema metadata."""
     return {
