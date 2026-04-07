@@ -304,7 +304,7 @@ def featurize(
 
         results: dict[str, np.ndarray] = {}
         building_meta = collect_meta and columns is None
-        meta_entries: list[dict] = [] if building_meta else []
+        meta_entries: list[dict] = []
 
         for func, params, group_name in shape_feats:
             raw = func(mask, dummy_pixels, **params)
@@ -513,7 +513,14 @@ def _warn_and_filter_2d_only(config: dict, is_3d: bool) -> set[str]:
     """Return the set of 2D-only feature names to skip, warning if any."""
     if not is_3d:
         return set()
-    return {name for name in _2D_ONLY if config.get(name, False)}
+    skipped = {name for name in _2D_ONLY if config.get(name, False)}
+    if skipped:
+        warnings.warn(
+            f"Skipping 2D-only features for volumetric data: {sorted(skipped)}",
+            UserWarning,
+            stacklevel=2,
+        )
+    return skipped
 
 
 def _collect_correlation_features(

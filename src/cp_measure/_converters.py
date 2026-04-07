@@ -57,7 +57,6 @@ def _to_pyarrow(*, data, columns, rows, col_meta, config, channels, objects, is_
 
     table = pa.table(arrays)
 
-    # Attach per-column metadata to feature columns in the schema.
     fields = []
     for i, field in enumerate(table.schema):
         if i < 3:
@@ -86,7 +85,7 @@ def _to_anndata(*, data, columns, rows, col_meta, config, channels, objects, is_
     pd = _lazy_import("pandas", "anndata")
 
     obs = pd.DataFrame(rows, columns=["image_id", "object_type", "label"])
-    if obs["image_id"].iloc[0] is not None:
+    if rows[0][0] is not None:
         obs.index = [f"{r[0]}_{r[1]}_{r[2]}" for r in rows]
     else:
         obs.index = [f"{r[1]}_{r[2]}" for r in rows]
