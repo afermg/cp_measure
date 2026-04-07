@@ -17,8 +17,14 @@ from __future__ import annotations
 
 import itertools
 import warnings
+from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import anndata as ad
+    import pandas as pd
+    import pyarrow as pa
 
 # Feature groups that only support 2D spatial data.
 _2D_ONLY = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
@@ -166,13 +172,58 @@ def make_featurizer_config(
     }
 
 
+@overload
+def featurize(
+    image: np.ndarray,
+    masks: np.ndarray,
+    config: dict | None = ...,
+    *,
+    image_id: str | int | None = ...,
+    return_as: Literal["tuple"] = ...,
+) -> tuple[np.ndarray, list[str], list[tuple]]: ...
+
+
+@overload
+def featurize(
+    image: np.ndarray,
+    masks: np.ndarray,
+    config: dict | None = ...,
+    *,
+    image_id: str | int | None = ...,
+    return_as: Literal["pandas"],
+) -> pd.DataFrame: ...
+
+
+@overload
+def featurize(
+    image: np.ndarray,
+    masks: np.ndarray,
+    config: dict | None = ...,
+    *,
+    image_id: str | int | None = ...,
+    return_as: Literal["pyarrow"],
+) -> pa.Table: ...
+
+
+@overload
+def featurize(
+    image: np.ndarray,
+    masks: np.ndarray,
+    config: dict | None = ...,
+    *,
+    image_id: str | int | None = ...,
+    return_as: Literal["anndata"],
+) -> ad.AnnData: ...
+
+
 def featurize(
     image: np.ndarray,
     masks: np.ndarray,
     config: dict | None = None,
     *,
     image_id: str | int | None = None,
-) -> tuple[np.ndarray, list[str], list[tuple]]:
+    return_as: Literal["tuple", "pandas", "pyarrow", "anndata"] = "tuple",
+):
     """Compute all configured features for the given image and masks.
 
     Parameters
@@ -190,18 +241,35 @@ def featurize(
         If ``None``, all features are enabled with default parameters.
     image_id : str | int | None, optional
         Identifier for this image, stored in each row tuple.
+    return_as : str, optional
+        Output format.  One of ``"tuple"`` (default), ``"pandas"``,
+        ``"pyarrow"``, or ``"anndata"``.  Non-tuple formats require the
+        corresponding package to be installed (e.g.
+        ``pip install cp_measure[anndata]``).
 
     Returns
     -------
-    data : numpy.ndarray
-        2-D float array of shape ``(n_rows, n_features)``.
-    columns : list[str]
-        Feature column names.  Shape features are bare names (e.g.
-        ``"Area"``), per-channel features are ``"{feature}__{channel}"``,
-        and correlation features are ``"{feature}__{ch1}__{ch2}"``.
-    rows : list[tuple]
-        One ``(image_id, object_name, label)`` tuple per row.
+    tuple or pd.DataFrame or pa.Table or anndata.AnnData
+        When ``return_as="tuple"`` (default): ``(data, columns, rows)``
+        where *data* is a 2-D float array, *columns* is a list of
+        feature names, and *rows* is a list of
+        ``(image_id, object_name, label)`` tuples.
+
+        When ``return_as="pandas"``: a DataFrame with feature columns
+        plus ``image_id``, ``object_type``, and ``label`` columns.
+
+        When ``return_as="pyarrow"``: a PyArrow Table with per-column
+        metadata in the schema.
+
+        When ``return_as="anndata"``: an AnnData object with features
+        in ``X``, object metadata in ``obs``, feature metadata in
+        ``var``, and configuration in ``uns``.
     """
+    _valid_return_as = {"tuple", "pandas", "pyarrow", "anndata"}
+    if return_as not in _valid_return_as:
+        raise ValueError(
+            f"return_as must be one of {_valid_return_as!r}, got {return_as!r}"
+        )
     if config is None:
         config = make_featurizer_config()
     channels, objects = _resolve_names(config, image.shape[0])
@@ -220,10 +288,12 @@ def featurize(
 
     # Shape features are purely geometric and ignore pixel values.
     dummy_pixels = None
+    collect_meta = return_as != "tuple"
 
     all_rows: list[tuple] = []
     all_blocks: list[np.ndarray] = []
     columns: list[str] | None = None
+    col_meta: list[dict] | None = None
 
     for mask_idx, object_name in enumerate(objects):
         mask = masks[mask_idx]
@@ -233,27 +303,49 @@ def featurize(
             continue
 
         results: dict[str, np.ndarray] = {}
+        building_meta = collect_meta and columns is None
+        meta_entries: list[dict] = []
 
-        for func, params in shape_feats:
-            results.update(func(mask, dummy_pixels, **params))
+        for func, params, group_name in shape_feats:
+            raw = func(mask, dummy_pixels, **params)
+            results.update(raw)
+            if building_meta:
+                for key in raw:
+                    meta_entries.append(_meta_entry(group_name, "shape", key))
 
         for ch_idx, ch_name in enumerate(channels):
             pixels = image[ch_idx]
-            for func, params in channel_feats:
-                for key, values in func(mask, pixels, **params).items():
+            for func, params, group_name in channel_feats:
+                raw = func(mask, pixels, **params)
+                for key, values in raw.items():
                     results[f"{key}__{ch_name}"] = values
+                    if building_meta:
+                        meta_entries.append(
+                            _meta_entry(group_name, "channel", key, channel=ch_name)
+                        )
 
         n_ch = len(channels)
-        for func, params, symmetric in corr_feats:
+        for func, params, symmetric, group_name in corr_feats:
             iter_fn = itertools.combinations if symmetric else itertools.permutations
             for ch_i, ch_j in iter_fn(range(n_ch), 2):
-                for key, values in func(
+                raw = func(
                     pixels_1=image[ch_i],
                     pixels_2=image[ch_j],
                     masks=mask,
                     **params,
-                ).items():
+                )
+                for key, values in raw.items():
                     results[f"{key}__{channels[ch_i]}__{channels[ch_j]}"] = values
+                    if building_meta:
+                        meta_entries.append(
+                            _meta_entry(
+                                group_name,
+                                "correlation",
+                                key,
+                                channel=channels[ch_i],
+                                channel_2=channels[ch_j],
+                            )
+                        )
 
         # Build column list from the first non-empty mask.
         # Order-sensitive comparison is safe: all measurement functions
@@ -263,6 +355,8 @@ def featurize(
         col_names = list(results.keys())
         if columns is None:
             columns = col_names
+            if building_meta:
+                col_meta = meta_entries
         elif col_names != columns:
             raise RuntimeError(
                 f"feature keys for object {object_name!r} differ from "
@@ -280,12 +374,46 @@ def featurize(
         raise ValueError("all masks have no labels (all zeros)")
 
     data = np.vstack(all_blocks)
-    return data, columns, all_rows
+
+    if return_as == "tuple":
+        return data, columns, all_rows
+
+    from cp_measure._converters import convert
+
+    return convert(
+        return_as,
+        data=data,
+        columns=columns,
+        rows=all_rows,
+        col_meta=col_meta,
+        config=config,
+        channels=channels,
+        objects=objects,
+        is_3d=is_3d,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _meta_entry(
+    group: str,
+    ftype: str,
+    name: str,
+    *,
+    channel: str | None = None,
+    channel_2: str | None = None,
+) -> dict:
+    """Build a per-column metadata dict for ``var`` / schema metadata."""
+    return {
+        "feature_group": group,
+        "feature_type": ftype,
+        "feature_name": name,
+        "channel": channel,
+        "channel_2": channel_2,
+    }
 
 
 def _resolve_channels(n_channels: int) -> list[str]:
@@ -351,7 +479,10 @@ def _validate(
 def _collect_channel_features(
     config: dict, core_funcs: dict, *, skipped: set[str]
 ) -> list[tuple]:
-    """Collect enabled per-channel feature functions and their params."""
+    """Collect enabled per-channel feature functions and their params.
+
+    Each element is ``(func, params, group_name)``.
+    """
     feats: list[tuple] = []
     for name in (
         "intensity",
@@ -361,20 +492,23 @@ def _collect_channel_features(
         "radial_zernikes",
     ):
         if config[name] and name not in skipped:
-            feats.append((core_funcs[name], config[f"{name}_params"]))
+            feats.append((core_funcs[name], config[f"{name}_params"], name))
     return feats
 
 
 def _collect_shape_features(
     config: dict, core_funcs: dict, *, skipped: set[str]
 ) -> list[tuple]:
-    """Collect enabled shape feature functions and their params."""
+    """Collect enabled shape feature functions and their params.
+
+    Each element is ``(func, params, group_name)``.
+    """
     feats: list[tuple] = []
     for name in ("sizeshape", "zernike"):
         if config[name] and name not in skipped:
-            feats.append((core_funcs[name], config[f"{name}_params"]))
+            feats.append((core_funcs[name], config[f"{name}_params"], name))
     if config["feret"] and "feret" not in skipped:
-        feats.append((core_funcs["feret"], {}))
+        feats.append((core_funcs["feret"], {}, "feret"))
     return feats
 
 
@@ -382,7 +516,14 @@ def _warn_and_filter_2d_only(config: dict, is_3d: bool) -> set[str]:
     """Return the set of 2D-only feature names to skip, warning if any."""
     if not is_3d:
         return set()
-    return {name for name in _2D_ONLY if config.get(name, False)}
+    skipped = {name for name in _2D_ONLY if config.get(name, False)}
+    if skipped:
+        warnings.warn(
+            f"Skipping 2D-only features for volumetric data: {sorted(skipped)}",
+            UserWarning,
+            stacklevel=2,
+        )
+    return skipped
 
 
 def _collect_correlation_features(
@@ -393,7 +534,8 @@ def _collect_correlation_features(
     """Collect enabled correlation feature functions.
 
     The third element of each tuple indicates whether the metric is
-    symmetric (combinations) or asymmetric (permutations).
+    symmetric (combinations) or asymmetric (permutations).  The fourth
+    element is the feature group name.
     """
     if n_channels < 2:
         has_corr = any(
@@ -430,5 +572,5 @@ def _collect_correlation_features(
     for cfg_key, func_key, params_key, symmetric in specs:
         if config[cfg_key]:
             params = config[params_key] if params_key else {}
-            feats.append((corr_funcs[func_key], params, symmetric))
+            feats.append((corr_funcs[func_key], params, symmetric, cfg_key))
     return feats

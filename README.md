@@ -94,15 +94,31 @@ data, columns, rows = featurize(image, masks, config)
 
 Volumetric `(C, Z, H, W)` data is supported. The featurizer automatically skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`). All other features (`intensity`, `sizeshape`, `texture`, `granularity`, correlations) work for both 2D and 3D.
 
-The output is plain numpy + lists, so converting to a DataFrame is straightforward:
+The default output is plain numpy + lists. Use `return_as` to get structured output directly:
 
 ```python notest
-import pandas as pd
-row_names = [f"{img}__{obj}__{label}" for img, obj, label in rows]
-df = pd.DataFrame(data, index=row_names, columns=columns)
+# pip install cp_measure[pandas]
+df = featurize(image, masks, config, return_as="pandas")
+#   image_id object_type  label   Area  BoundingBoxArea  ...
+#       None      object      1 2500.0           2500.0
+#       None      object      2 2500.0           2500.0
+# Shape: (2, 123) — 3 metadata columns + 120 feature columns
+
+# pip install cp_measure[anndata]
+adata = featurize(image, masks, config, return_as="anndata")
+# AnnData object with n_obs x n_vars = 2 x 120
+#     obs: 'image_id', 'object_type', 'label'
+#     var: 'feature_group', 'feature_type', 'feature_name', 'channel', 'channel_2'
+#     uns: 'config', 'channels', 'objects', 'is_3d'
+
+# pip install cp_measure[pyarrow]
+table = featurize(image, masks, config, return_as="pyarrow")
+# pyarrow.Table with 2 rows, 123 columns
+# Per-column metadata in schema fields, table-level metadata:
+#   'cp_measure_config', 'channels', 'objects', 'is_3d'
 ```
 
-Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
+These are optional dependencies — install only what you need (or `pip install cp_measure[all]`).
 
 ## Important notes
 

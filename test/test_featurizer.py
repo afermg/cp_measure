@@ -93,7 +93,8 @@ class TestSmoke:
             ["DNA", "ER"],
             **{**ALL_OFF, "intensity": True, "sizeshape": True, "zernike": True},
         )
-        data, columns, rows = featurize(image_3d_2ch, mask_3d, config)
+        with pytest.warns(UserWarning, match="Skipping 2D-only features"):
+            data, columns, rows = featurize(image_3d_2ch, mask_3d, config)
 
         assert data.shape[0] == 2
         assert not any("Zernike" in c for c in columns)
