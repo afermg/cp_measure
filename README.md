@@ -111,9 +111,8 @@ Note: DataFrame libraries must be installed independently, to keep the dependenc
 - **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
 
 <details>
-<summary>API Overview (develop your own pipelines)</summary>
 
-### Bulk API
+### API Overview (develop your own pipelines)
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
