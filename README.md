@@ -104,19 +104,19 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
 
-## Important notes
+### Important notes
 
 - **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
 - **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
 - **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
 
-<details>
-
-### API Overview (develop your own pipelines)
+## API Overview
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
-cp\_measure currently provides two types of measurements based on their inputs:
+<details>
+
+cp_measure currently provides two types of measurements based on their inputs:
 
 - Type 1: 1 image + 1 set of masks (e.g., intensity)
 - Type 2: 2 images + 1 set of masks (e.g., colocalization)
