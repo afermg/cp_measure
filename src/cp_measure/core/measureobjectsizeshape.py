@@ -1,13 +1,4 @@
-from typing import Optional
-
-import centrosome.cpmorphology
-import centrosome.zernike
-import numpy
-import scipy.ndimage
-import skimage.measure
-from cp_measure.utils import masks_to_ijv, _ensure_np_scalar
-
-__doc__ = """\
+"""\
 MeasureObjectSizeShape
 ======================
 
@@ -157,6 +148,15 @@ References
 .. _Section 2.4.3 - Statistical shape properties: http://www.scribd.com/doc/58004056/Principles-of-Digital-Image-Processing#page=49
 .. _(link): https://ieeexplore.ieee.org/abstract/document/1057692
 """
+
+from typing import Optional
+
+import centrosome.cpmorphology
+import centrosome.zernike
+import numpy
+import scipy.ndimage
+import skimage.measure
+from cp_measure.utils import masks_to_ijv, _ensure_np_scalar
 
 """The category of the per-object measurements made by this module"""
 AREA_SHAPE = "AreaShape"
@@ -571,7 +571,35 @@ def get_sizeshape(
     new_features: bool = True,
     spacing: Optional[tuple] = None,
 ):
-    """Compute the measurements for multiple object masks."""
+    """Measure area and shape features for each labeled object.
+
+    Computes standard morphological features (area/volume, perimeter, radii,
+    Feret diameters, etc.) using ``skimage.measure.regionprops``. Optionally
+    includes advanced moment and inertia tensor features.
+
+    Parameters
+    ----------
+    masks : numpy.ndarray
+        Labeled mask array (2D or 3D) where each positive integer identifies
+        an object and 0 is background.
+    pixels : numpy.ndarray
+        Intensity image with the same shape as ``masks``.
+    calculate_advanced : bool, optional
+        If True, compute additional moment and inertia tensor features (2D)
+        or solidity (3D), by default True.
+    new_features : bool, optional
+        If True, compute features not present in CellProfiler 4 (e.g.,
+        ``PerimeterCrofton``, ``FilledArea``), by default True.
+    spacing : tuple of float, optional
+        Voxel spacing for 3D surface area calculation. If None, unit spacing
+        is assumed.
+
+    Returns
+    -------
+    dict of {str: numpy.ndarray}
+        Dictionary mapping feature names to 1-D arrays of per-object
+        measurements.
+    """
     # Properties available for both 2d and 3d
     desired_properties = [
         "image",
@@ -1009,6 +1037,23 @@ def get_sizeshape(
 
 
 def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int = 9):
+    """Compute Zernike shape features for labeled objects (2D only).
+
+    Parameters
+    ----------
+    masks : numpy.ndarray
+        Labeled mask array (2D or 3D). Returns an empty dict for 3D inputs.
+    pixels : numpy.ndarray
+        Intensity image with the same shape as ``masks``.
+    zernike_numbers : int, optional
+        Maximum Zernike polynomial order, by default 9.
+
+    Returns
+    -------
+    dict of {str: numpy.ndarray}
+        Dictionary mapping ``Zernike_n_m`` feature names to 1-D arrays of
+        per-object measurements.
+    """
     #
     # Zernike features (2D only)
     #
@@ -1029,6 +1074,23 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
 
 
 def get_feret(masks: numpy.ndarray, pixels: numpy.ndarray):
+    """Compute minimum and maximum Feret diameters for labeled objects (2D only).
+
+    The Feret diameter is the distance between two parallel tangent lines on
+    opposite sides of the object.
+
+    Parameters
+    ----------
+    masks : numpy.ndarray
+        Labeled mask array (2D or 3D). Returns an empty dict for 3D inputs.
+    pixels : numpy.ndarray
+        Intensity image (unused, present for API consistency).
+
+    Returns
+    -------
+    dict of {str: numpy.ndarray}
+        Dictionary with keys ``MinFeretDiameter`` and ``MaxFeretDiameter``.
+    """
     # Feret diameter (2D only)
     if masks.ndim == 3:
         return {}

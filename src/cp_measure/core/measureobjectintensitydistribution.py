@@ -1,13 +1,11 @@
-import centrosome.cpmorphology
-import centrosome.propagate
-import centrosome.zernike
-import numpy
-import numpy.ma
-import scipy.ndimage
-import scipy.sparse
-from cp_measure.utils import masks_to_ijv
+"""
+MeasureObjectIntensityDistribution
+===================================
 
-""""
+**MeasureObjectIntensityDistribution** measures the distribution of
+intensities within each object, producing radial distribution and
+Zernike moment features.
+
 ============ ============ ===============
 Supports 2D? Supports 3D? Respects masks?
 ============ ============ ===============
@@ -17,7 +15,7 @@ YES          NO           YES
 See also
 ^^^^^^^^
 
-See also **MeasureObjectIntensity** and **/MeasureTexture**.
+See also **MeasureObjectIntensity** and **MeasureTexture**.
 
 Measurements made by this module
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -34,8 +32,16 @@ Measurements made by this module
    the other. The ZernikeMagnitude feature records the rotationally
    invariant degree magnitude of the moment and the ZernikePhase feature
    gives the moment’s orientation.
-
 """
+
+import centrosome.cpmorphology
+import centrosome.propagate
+import centrosome.zernike
+import numpy
+import numpy.ma
+import scipy.ndimage
+import scipy.sparse
+from cp_measure.utils import masks_to_ijv
 
 Z_NONE = "None"
 Z_MAGNITUDES = "Magnitudes only"
@@ -95,42 +101,33 @@ def get_radial_distribution(
     bin_count: int = 4,
     maximum_radius: int = 100,
 ):
-    """
-    Radial features (2D only)
+    """Measure the radial distribution of intensity within labeled objects (2D only).
 
-    zernike_degree : int
-        Maximum zernike moment.
+    Computes fraction at distance, mean fraction, and radial coefficient of
+    variation features for concentric rings radiating from each object's center.
 
-        This is the maximum radial moment that will be calculated. There are
-        increasing numbers of azimuthal moments as you increase the radial
-        moment, so higher values are increasingly expensive to calculate.
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Labeled 2D mask array where each positive integer identifies an object.
+        Returns an empty dict for 3D inputs.
+    pixels : numpy.ndarray
+        Grayscale intensity image with the same shape as ``labels``.
+    scaled : bool, optional
+        If True, divide each object radially into ``bin_count`` bins scaled to
+        the object size. If False, use absolute distance bins up to
+        ``maximum_radius``, by default True.
+    bin_count : int, optional
+        Number of concentric rings for the radial distribution, by default 4.
+    maximum_radius : int, optional
+        Maximum radius in pixels for unscaled bins, by default 100. Only used
+        when ``scaled`` is False.
 
-    scaled : bool
-        Scale the bins?
-
-        When True divide the object radially into the number of bins
-        that you specify. Otherwise create the number of bins you specify
-        based on distance. If True, it will use a maximum distance so
-        that each object will have the same measurements (which might be zero
-        for small objects) and so that the measurements can be taken without
-        knowing the maximum object radius before the run starts.
-
-    bin_count : int
-        Number of bins
-
-        Specify the number of bins that you want to use to measure the distribution.
-        Radial distribution is measured with respect to a series of concentric
-        rings starting from the object center (or more generally, between contours
-        at a normalized distance from the object center). This number specifies
-        the number of rings into which the distribution is to be divided.
-
-    maximum_radius : int
-        Maximum radius
-
-        Specify the maximum radius for the unscaled bins. The unscaled binning method
-        creates the number of bins that you specify and creates equally spaced bin
-        boundaries up to the maximum radius. Parts of the object that are beyond this
-        radius will be counted in an overflow bin. The radius is measured in pixels.
+    Returns
+    -------
+    dict of {str: numpy.ndarray}
+        Dictionary mapping feature names (FracAtD, MeanFrac, RadialCV) to
+        1-D arrays of per-object measurements.
     """
 
     if labels.ndim == 3:
@@ -305,6 +302,30 @@ def get_radial_distribution(
 def get_radial_zernikes(
     labels: numpy.ndarray, pixels: numpy.ndarray, zernike_degree: int = 9
 ):
+    """Compute radial Zernike moment features for labeled objects (2D only).
+
+    Zernike polynomials characterize the spatial distribution of intensity
+    within each object, producing magnitude and phase features for each
+    polynomial order.
+
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Labeled 2D mask array where each positive integer identifies an object.
+        Returns an empty dict for 3D inputs.
+    pixels : numpy.ndarray
+        Grayscale intensity image with the same shape as ``labels``.
+    zernike_degree : int, optional
+        Maximum radial degree for Zernike polynomials, by default 9.
+
+    Returns
+    -------
+    dict of {str: numpy.ndarray}
+        Dictionary mapping Zernike feature names
+        (``RadialDistribution_ZernikeMagnitude_n_m`` and
+        ``RadialDistribution_ZernikePhase_n_m``) to 1-D arrays of per-object
+        measurements.
+    """
     # Radial Zernike features (2D only)
     if labels.ndim == 3:
         return {}

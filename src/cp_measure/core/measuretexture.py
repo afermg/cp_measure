@@ -1,4 +1,4 @@
-__doc__ = """\
+"""\
 MeasureTexture
 ==============
 
@@ -159,36 +159,37 @@ def get_texture(
     scale: int = 3,
     gray_levels: int = 256,
 ):
-    """
+    """Measure Haralick texture features for each labeled object.
+
+    Computes 13 Haralick features from the grey-level co-occurrence matrix
+    (GLCM) at the given scale and number of grey levels, for each direction.
+
     Parameters
     ----------
-    gray_levels : int, optional (default is 256)
-        Number of gray levels. Measuring at more levels gives you _potentially_
-        more detailed information about your image, but at the cost of somewhat
-        decreased processing speed (default is 256).
-    texture_scale : int, optional (default is 3)
-        You can specify the scale of texture to be measured, in pixel units; the
-        texture scale is the distance between correlated intensities in the
-        image. A higher number for the scale of texture measures larger patterns
-        of texture whereas smaller numbers measure more localized patterns of
-        texture. It is best to measure texture on a scale smaller than your
-        objects’ sizes, so be sure that the value entered for scale of texture
-        is smaller than most of your objects. For very small objects (smaller
-        than the scale of texture you are measuring), the texture cannot be
-        measured and will result in a undefined value in the output file.
+    masks : numpy.ndarray
+        Labeled mask array (2D or 3D) where each positive integer identifies
+        an object and 0 is background.
+    pixels : numpy.ndarray
+        Grayscale intensity image with the same shape as ``masks``.
+    scale : int, optional
+        Distance in pixels between compared intensities in the GLCM, by
+        default 3. A higher value captures larger-scale texture patterns.
+    gray_levels : int, optional
+        Number of grey levels for GLCM quantisation, by default 256.
+        More levels yield finer detail at the cost of processing speed.
 
     Returns
     -------
-    Dictionary of list of floats.
+    dict of {str: numpy.ndarray}
+        Dictionary mapping feature names
+        (``{Feature}_{scale}_{direction}_{gray_levels}``) to 1-D arrays of
+        per-object measurements.
 
     Notes
     -----
-    Before processing, your image will be rescaled from its current pixel values
-    to 0 - [gray levels - 1]. The texture features will then be calculated.
-
-    In all CellProfiler 2 versions, this value was fixed at 8; in all
-    CellProfiler 3 versions it was fixed at 256.  The minimum number of levels is
-    2, the maximum is 256.
+    Before processing, the image is rescaled to the range
+    ``[0, gray_levels - 1]``. The minimum number of levels is 2 and the
+    maximum is 256.
     """
     unique_labels = numpy.unique(masks)
     unique_labels = unique_labels[unique_labels > 0]

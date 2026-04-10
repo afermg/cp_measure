@@ -1,9 +1,4 @@
-import numpy
-import scipy.ndimage
-import skimage.segmentation
-from cp_measure.utils import _ensure_np_array as fix
-
-__doc__ = """
+"""
 MeasureObjectIntensity
 ======================
 
@@ -67,6 +62,11 @@ Measurements made by this module
    object.
 """
 
+import numpy
+import scipy.ndimage
+import skimage.segmentation
+from cp_measure.utils import _ensure_np_array as fix
+
 INTENSITY = "Intensity"
 INTEGRATED_INTENSITY = "IntegratedIntensity"
 MEAN_INTENSITY = "MeanIntensity"
@@ -121,8 +121,23 @@ ALL_LOCATION_MEASUREMENTS = [
 def get_intensity(
     masks: numpy.ndarray, pixels: numpy.ndarray, edge_measurements: bool = True
 ):
-    """
-    masks is a labeled array where 0 are background images.
+    """Measure intensity features for each labeled object.
+
+    Parameters
+    ----------
+    masks : numpy.ndarray
+        Labeled mask array where 0 is background and each positive integer
+        identifies a distinct object.
+    pixels : numpy.ndarray
+        Grayscale intensity image (2D or 3D).
+    edge_measurements : bool, optional
+        If True, also compute edge-based intensity features, by default True.
+
+    Returns
+    -------
+    dict of {str: numpy.ndarray}
+        Dictionary mapping feature names to 1-D arrays of per-object
+        measurements.
     """
     masked_image = pixels
 

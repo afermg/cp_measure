@@ -124,10 +124,10 @@ def get_granularity(
 
     Returns
     -------
-    Dictionary of 1-d arrays where each value contains the specific granularity feature for a given cells.
-
-    Examples
-
+    dict of {str: numpy.ndarray}
+        Dictionary mapping ``Granularity_{n}`` feature names to 1-D arrays of
+        per-object measurements, where *n* ranges from 1 to
+        ``granular_spectrum_length``.
     """
     #
     # Downsample the image and mask

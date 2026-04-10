@@ -151,6 +151,28 @@ fast_costes : {M_FASTER, M_FAST, M_ACCURATE}, optional
 def extract_pixels(
     pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray
 ):
+    """Extract pixel values from two images within a binary mask.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    mask : numpy.ndarray
+        Binary or labeled mask indicating regions of interest.
+
+    Returns
+    -------
+    fi : numpy.ndarray
+        Pixel values from ``pixels_1`` within the mask.
+    si : numpy.ndarray
+        Pixel values from ``pixels_2`` within the mask.
+    labels : numpy.ndarray
+        Label array derived from the mask, matching the extracted pixels.
+    lrange : numpy.ndarray
+        Array of unique label indices.
+    """
     fi = pixels_1[mask]
     si = pixels_2[mask]
     labels = mask.astype(numpy.uint32)[mask]
@@ -165,6 +187,32 @@ def calculate_threshold(
     mask: numpy.ndarray,
     thr: int,
 ):
+    """Compute intensity thresholds per label as a percentage of maximum intensity.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    mask : numpy.ndarray
+        Binary or labeled mask indicating regions of interest.
+    thr : int
+        Threshold as a percentage (0--99) of the maximum intensity per label.
+
+    Returns
+    -------
+    fi_thresh : numpy.ndarray
+        First-image pixel values that pass the combined threshold.
+    si_thresh : numpy.ndarray
+        Second-image pixel values that pass the combined threshold.
+    tot_fi_thr : numpy.ndarray
+        Sum of first-image intensities above the per-label threshold.
+    tot_si_thr : numpy.ndarray
+        Sum of second-image intensities above the per-label threshold.
+    combined_thresh : numpy.ndarray
+        Boolean array indicating pixels passing the threshold in both channels.
+    """
     # Threshold as percentage of maximum intensity of objects in each channel
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
@@ -192,6 +240,22 @@ def calculate_threshold(
 def get_correlation_pearson_ind(
     pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray
 ) -> dict[str, float]:
+    """Compute Pearson correlation and regression slope for a single mask.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    mask : numpy.ndarray
+        Binary or labeled mask indicating the region of interest.
+
+    Returns
+    -------
+    dict of {str: float}
+        Dictionary with keys ``Correlation_Pearson`` and ``Correlation_Slope``.
+    """
     fi, si, _, _ = extract_pixels(pixels_1, pixels_2, mask)
     #
     # Perform the correlation, which returns:
@@ -211,6 +275,25 @@ def get_correlation_pearson_ind(
 def get_correlation_manders_fold_ind(
     pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray, thr: int = 15
 ) -> dict[str, float]:
+    """Compute the Manders colocalization coefficients for a single mask.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    mask : numpy.ndarray
+        Binary or labeled mask indicating the region of interest.
+    thr : int, optional
+        Threshold as a percentage of maximum intensity, by default 15.
+
+    Returns
+    -------
+    dict of {str: float}
+        Dictionary with keys ``Correlation_Manders_1`` and
+        ``Correlation_Manders_2``.
+    """
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
     )
@@ -241,6 +324,24 @@ def get_correlation_manders_fold_ind(
 def get_correlation_rwc_ind(
     pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray, thr: int = 15
 ) -> dict[str, float]:
+    """Compute the Rank Weighted Colocalization coefficients for a single mask.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    mask : numpy.ndarray
+        Binary or labeled mask indicating the region of interest.
+    thr : int, optional
+        Threshold as a percentage of maximum intensity, by default 15.
+
+    Returns
+    -------
+    dict of {str: float}
+        Dictionary with keys ``Correlation_RWC_1`` and ``Correlation_RWC_2``.
+    """
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
     )
@@ -306,6 +407,27 @@ def get_correlation_costes_ind(
     fast_costes: str = M_FASTER,
     thr: int = 15,
 ):
+    """Compute the Costes automatic threshold colocalization for a single mask.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    mask : numpy.ndarray
+        Binary or labeled mask indicating the region of interest.
+    fast_costes : {M_FASTER, M_FAST, M_ACCURATE}, optional
+        Method for Costes threshold calculation, by default ``M_FASTER``.
+    thr : int, optional
+        Threshold as a percentage of maximum intensity, by default 15.
+
+    Returns
+    -------
+    dict of {str: float}
+        Dictionary with keys ``Correlation_Costes_1`` and
+        ``Correlation_Costes_2``.
+    """
     # Orthogonal Regression for Costes' automated threshold
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
@@ -373,11 +495,34 @@ def linear_costes(
     scale_max: int = 255,
     fast_costes: str = M_FASTER,
 ):
-    """
-    Finds the Costes Automatic Threshold for colocalization using a linear algorithm.
-    Candiate thresholds are gradually decreased until Pearson R falls below 0.
-    If "Fast" mode is enabled the "steps" between tested thresholds will be increased
-    when Pearson R is much greater than 0.
+    """Find the Costes automatic threshold using a linear descent algorithm.
+
+    Candidate thresholds are gradually decreased until the Pearson R value
+    falls below 0. In "Fast" mode, larger steps are taken when Pearson R is
+    far from 0.
+
+    Parameters
+    ----------
+    first_pixels : numpy.ndarray
+        First intensity image (full frame).
+    second_pixels : numpy.ndarray
+        Second intensity image (full frame).
+    fi : numpy.ndarray
+        Extracted first-image pixel values within the mask.
+    si : numpy.ndarray
+        Extracted second-image pixel values within the mask.
+    scale_max : int, optional
+        Maximum intensity scale of the image, by default 255.
+    fast_costes : str, optional
+        Speed mode (``M_FAST``, ``M_FASTER``, or ``M_ACCURATE``),
+        by default ``M_FASTER``.
+
+    Returns
+    -------
+    thr_fi_c : float
+        Costes threshold for the first image.
+    thr_si_c : float
+        Costes threshold for the second image.
     """
     i_step = 1 / scale_max
     non_zero = (fi > 0) | (si > 0)
@@ -451,13 +596,35 @@ def bisection_costes(
     scale_max: int = 255,
     fast_costes: str = M_FASTER,
 ):
-    """
-    Finds the Costes Automatic Threshold for colocalization using a bisection algorithm.
-    Candidate thresholds are selected from within a window of possible intensities,
-    this window is narrowed based on the R value of each tested candidate.
-    We're looking for the first point below 0, and R value can become highly variable
-    at lower thresholds in some samples. Therefore the candidate tested in each
-    loop is 1/6th of the window size below the maximum value (as opposed to the midpoint).
+    """Find the Costes automatic threshold using a bisection algorithm.
+
+    Candidate thresholds are selected from within a shrinking window of
+    possible intensities, narrowed based on the Pearson R value. The
+    candidate tested in each iteration is 1/6th of the window below the
+    maximum (rather than the midpoint) to handle the high variability of R
+    at lower thresholds.
+
+    Parameters
+    ----------
+    first_pixels : numpy.ndarray
+        First intensity image (full frame).
+    second_pixels : numpy.ndarray
+        Second intensity image (full frame).
+    fi : numpy.ndarray
+        Extracted first-image pixel values within the mask.
+    si : numpy.ndarray
+        Extracted second-image pixel values within the mask.
+    scale_max : int, optional
+        Maximum intensity scale of the image, by default 255.
+    fast_costes : str, optional
+        Speed mode, by default ``M_FASTER``.
+
+    Returns
+    -------
+    thr_fi_c : float
+        Costes threshold for the first image.
+    thr_si_c : float
+        Costes threshold for the second image.
     """
 
     non_zero = (fi > 0) | (si > 0)
@@ -523,6 +690,25 @@ def get_correlation_overlap_ind(
     mask: numpy.ndarray,
     thr: int = 15,
 ):
+    """Compute the overlap and K coefficients for a single mask.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    mask : numpy.ndarray
+        Binary or labeled mask indicating the region of interest.
+    thr : int, optional
+        Threshold as a percentage of maximum intensity, by default 15.
+
+    Returns
+    -------
+    dict of {str: float}
+        Dictionary with keys ``Correlation_Overlap``, ``Correlation_K_1``,
+        and ``Correlation_K_2``.
+    """
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
     )
@@ -584,6 +770,18 @@ def get_correlation_overlap_ind(
 # MODIFIED: This reproduces the behaviour of the block at
 #  https://github.com/cellprofiler/CellProfiler/blob/450abdc2eaa0332cb6d1d4aaed4bf0a4b843368d/src/subpackages/core/cellprofiler_core/image/abstract_image/file/_file_image.py#L396-L405
 def infer_scale(data: numpy.ndarray) -> int:
+    """Infer the maximum intensity scale from the array dtype.
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        Input image array.
+
+    Returns
+    -------
+    int
+        Maximum intensity value for the inferred dtype (e.g., 255 for uint8).
+    """
     if data.dtype in [numpy.int8, numpy.uint8]:
         scale = 255
     elif data.dtype in [numpy.int16, numpy.uint16]:
@@ -603,6 +801,22 @@ def infer_scale(data: numpy.ndarray) -> int:
 def get_correlation_pearson(
     pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, masks: numpy.ndarray
 ):
+    """Compute Pearson correlation and slope for each labeled object.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    masks : numpy.ndarray
+        Labeled mask array where each positive integer identifies an object.
+
+    Returns
+    -------
+    dict of {str: list of float}
+        Pearson correlation and slope values per object.
+    """
     return apply_correlation_fun(get_correlation_pearson_ind, pixels_1, pixels_2, masks)
 
 
@@ -612,6 +826,24 @@ def get_correlation_manders_fold(
     masks: numpy.ndarray,
     thr: int = 15,
 ):
+    """Compute Manders colocalization coefficients for each labeled object.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    masks : numpy.ndarray
+        Labeled mask array where each positive integer identifies an object.
+    thr : int, optional
+        Threshold as a percentage of maximum intensity, by default 15.
+
+    Returns
+    -------
+    dict of {str: list of float}
+        Manders coefficients per object.
+    """
     return apply_correlation_fun(
         get_correlation_manders_fold_ind, pixels_1, pixels_2, masks, thr=thr
     )
@@ -623,6 +855,24 @@ def get_correlation_rwc(
     masks: numpy.ndarray,
     thr: int = 15,
 ):
+    """Compute Rank Weighted Colocalization coefficients for each labeled object.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    masks : numpy.ndarray
+        Labeled mask array where each positive integer identifies an object.
+    thr : int, optional
+        Threshold as a percentage of maximum intensity, by default 15.
+
+    Returns
+    -------
+    dict of {str: list of float}
+        RWC coefficients per object.
+    """
     return apply_correlation_fun(
         get_correlation_rwc_ind, pixels_1, pixels_2, masks, thr=thr
     )
@@ -635,6 +885,26 @@ def get_correlation_costes(
     fast_costes: str = M_FASTER,
     thr: int = 15,
 ):
+    """Compute Costes automatic threshold colocalization for each labeled object.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    masks : numpy.ndarray
+        Labeled mask array where each positive integer identifies an object.
+    fast_costes : {M_FASTER, M_FAST, M_ACCURATE}, optional
+        Method for Costes threshold calculation, by default ``M_FASTER``.
+    thr : int, optional
+        Threshold as a percentage of maximum intensity, by default 15.
+
+    Returns
+    -------
+    dict of {str: list of float}
+        Costes colocalization coefficients per object.
+    """
     return apply_correlation_fun(
         get_correlation_costes_ind,
         pixels_1,
@@ -651,6 +921,24 @@ def get_correlation_overlap(
     masks: numpy.ndarray,
     thr: int = 15,
 ):
+    """Compute overlap and K coefficients for each labeled object.
+
+    Parameters
+    ----------
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    masks : numpy.ndarray
+        Labeled mask array where each positive integer identifies an object.
+    thr : int, optional
+        Threshold as a percentage of maximum intensity, by default 15.
+
+    Returns
+    -------
+    dict of {str: list of float}
+        Overlap and K coefficients per object.
+    """
     return apply_correlation_fun(get_correlation_overlap_ind, pixels_1, pixels_2, masks)
 
 
@@ -664,9 +952,25 @@ def apply_correlation_fun(
     masks: numpy.ndarray,
     **kwargs,
 ):
-    """
-    Apply `corr_function` to the subsequent args and kwargs. It assumes that pixels (arrays containing images) are passed, as well as
-    masks in a 2-d labels format. Any kwargs are passed to corr_functions.
+    """Apply a correlation function to each object in a labeled mask.
+
+    Parameters
+    ----------
+    corr_function : callable
+        Single-mask correlation function to apply.
+    pixels_1 : numpy.ndarray
+        First intensity image.
+    pixels_2 : numpy.ndarray
+        Second intensity image.
+    masks : numpy.ndarray
+        Labeled mask array where each positive integer identifies an object.
+    **kwargs
+        Additional keyword arguments passed to ``corr_function``.
+
+    Returns
+    -------
+    dict of {str: list}
+        Aggregated results from ``corr_function`` across all objects.
     """
     results = []
     partial_corr_fun = partial(corr_function, pixels_1, pixels_2)
