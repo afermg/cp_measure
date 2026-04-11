@@ -132,29 +132,35 @@ def get_granularity(
     #
     # Downsample the image and mask
     #
-    new_shape = numpy.array(pixels.shape)
-    # MODIFIED: Remove subsample
-    # if subsample_size < 1:
-    #     new_shape = new_shape * subsample_size
-    #     if pixels.ndim == 2:
-    #         i, j = (
-    #             numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
-    #             / subsample_size
-    #         )
-    #         pixels = scipy.ndimage.map_coordinates(pixels, (i, j), order=1)
-    #         mask = scipy.ndimage.map_coordinates(mask.astype(float), (i, j)) > 0.9
-    #     else:
-    #         k, i, j = (
-    #             numpy.mgrid[
-    #                 0 : new_shape[0], 0 : new_shape[1], 0 : new_shape[2]
-    #             ].astype(float)
-    #             / subsample_size
-    #         )
-    #         pixels = scipy.ndimage.map_coordinates(pixels, (k, i, j), order=1)
-    #         mask = scipy.ndimage.map_coordinates(mask.astype(float), (k, i, j)) > 0.9
-    # else:
-    pixels = pixels.copy()
-    mask = mask.copy()
+    orig_shape = numpy.array(pixels.shape)
+    orig_pixels = pixels  # original, non-background-subtracted, used for start_mean
+    orig_mask = mask
+    new_shape = orig_shape.copy()
+    if subsample_size < 1:
+        new_shape = (orig_shape * subsample_size).astype(int)
+        if pixels.ndim == 2:
+            i, j = (
+                numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
+                / subsample_size
+            )
+            pixels = scipy.ndimage.map_coordinates(pixels, (i, j), order=1)
+            mask = scipy.ndimage.map_coordinates(mask, (i, j), order=0).astype(
+                orig_mask.dtype
+            )
+        else:
+            k, i, j = (
+                numpy.mgrid[
+                    0 : new_shape[0], 0 : new_shape[1], 0 : new_shape[2]
+                ].astype(float)
+                / subsample_size
+            )
+            pixels = scipy.ndimage.map_coordinates(pixels, (k, i, j), order=1)
+            mask = scipy.ndimage.map_coordinates(mask, (k, i, j), order=0).astype(
+                orig_mask.dtype
+            )
+    else:
+        pixels = pixels.copy()
+        mask = mask.copy()
     #
     # Remove background pixels using a greyscale tophat filter
     #
@@ -226,59 +232,38 @@ def get_granularity(
     # THIS IMPLEMENTATION INSTEAD OF OPENING USES EROSION FOLLOWED BY RECONSTRUCTION
     #
     ng = granular_spectrum_length
-    # startmean = numpy.mean(pixels[mask])
-    startmean = numpy.mean(pixels)
-    ero = pixels.copy()
-    # Mask the test image so that masked pixels will have no effect
-    # during reconstruction
-    #
-    # ero[~mask] = 0
-    startmean = max(startmean, numpy.finfo(float).eps)
 
     if pixels.ndim == 2:
         footprint = skimage.morphology.disk(1, dtype=bool)
     else:
         footprint = skimage.morphology.ball(1, dtype=bool)
 
-    unique_labels = numpy.unique(mask)
-    unique_labels = unique_labels[unique_labels > 0]
+    ero = pixels.copy()
 
-    # Info on objects
-    range_ = numpy.arange(1, numpy.max(mask) + 1)
-    labels = mask.copy()
-    current_mean = fix(scipy.ndimage.mean(pixels, labels, range_))
+    # Per-object stats use original-scale labels so the cell boundaries are exact.
+    # start_mean uses the raw (non-background-subtracted) original pixels, matching
+    # CellProfiler's ObjectRecord initialisation which also uses im_pixel_data directly.
+    unique_labels = numpy.unique(orig_mask)
+    unique_labels = unique_labels[unique_labels > 0]
+    range_ = numpy.arange(1, numpy.max(orig_mask) + 1)
+
+    current_mean = fix(scipy.ndimage.mean(orig_pixels, orig_mask, range_))
     start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
 
     results = {}
     for granularity_id in range(1, ng + 1):
-        # NOTE: This seems to be an iterative process of sequential
-        # erosions and reconstructions
-        # ero_mask = numpy.zeros_like(ero)
-        # ero_mask[mask == True] = ero[mask == True]
         ero_mask = ero.copy()
         # Shrink bright regions
         ero = skimage.morphology.erosion(ero_mask, footprint=footprint)
-        # Use a mask (footprint) to make bright sections bigger
+        # Reconstruct: undo erosion for pixels that were already small
         rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
-        # currentmean = numpy.mean(rec[mask])
-        # gs is the image granularity
-        # gs = (prevmean - currentmean) * 100 / startmean
-        # image_granularity = gs
 
-        # Restore the reconstructed image to the shape of the
-        # original image so we can match against object labels
-        #
-        orig_shape = pixels.shape
-        # TODO DRY This can be easily cleaned up
+        # Restore reconstructed image to original scale to match object labels
         if pixels.ndim == 2:
             i, j = numpy.mgrid[0 : orig_shape[0], 0 : orig_shape[1]].astype(float)
-            #
-            # Make sure the mapping only references the index range of
-            # back_pixels.
-            #
             i *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
             j *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
-            rec = scipy.ndimage.map_coordinates(rec, (i, j), order=1)
+            rec_orig = scipy.ndimage.map_coordinates(rec, (i, j), order=1)
         else:
             k, i, j = numpy.mgrid[
                 0 : orig_shape[0], 0 : orig_shape[1], 0 : orig_shape[2]
@@ -286,18 +271,14 @@ def get_granularity(
             k *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
             i *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
             j *= float(new_shape[2] - 1) / float(orig_shape[2] - 1)
-            rec = scipy.ndimage.map_coordinates(rec, (k, i, j), order=1)
+            rec_orig = scipy.ndimage.map_coordinates(rec, (k, i, j), order=1)
 
         # Calculate the means for the objects
         gss = numpy.zeros((0,))
         if unique_labels.any():
-            #
-            # Calculate the means for the objects
-            #
-            # MODIFIED: These metrics were defined inside ObjectRecord originally
-
-            new_mean = fix(scipy.ndimage.mean(rec, labels, range_))
+            new_mean = fix(scipy.ndimage.mean(rec_orig, orig_mask, range_))
             gss = (current_mean - new_mean) * 100 / start_mean
+            current_mean = new_mean  # update running mean for next iteration
 
         results[f"Granularity_{granularity_id}"] = gss
 
