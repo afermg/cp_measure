@@ -79,8 +79,10 @@ References
 """
 
 from functools import partial
+from typing import Callable
 
 import numpy
+from numpy.typing import NDArray
 import scipy.ndimage
 import scipy.stats
 from cp_measure.utils import _ensure_np_array as fix
@@ -149,8 +151,10 @@ fast_costes : {M_FASTER, M_FAST, M_ACCURATE}, optional
 
 
 def extract_pixels(
-    pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray
-):
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    mask: NDArray[numpy.integer],
+) -> tuple[numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray]:
     fi = pixels_1[mask]
     si = pixels_2[mask]
     labels = mask.astype(numpy.uint32)[mask]
@@ -160,11 +164,11 @@ def extract_pixels(
 
 
 def calculate_threshold(
-    pixels_1: numpy.ndarray,
-    pixels_2: numpy.ndarray,
-    mask: numpy.ndarray,
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    mask: NDArray[numpy.integer],
     thr: int,
-):
+) -> tuple[numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray]:
     # Threshold as percentage of maximum intensity of objects in each channel
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
@@ -190,7 +194,9 @@ def calculate_threshold(
 
 
 def get_correlation_pearson_ind(
-    pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    mask: NDArray[numpy.integer],
 ) -> dict[str, float]:
     fi, si, _, _ = extract_pixels(pixels_1, pixels_2, mask)
     #
@@ -209,7 +215,10 @@ def get_correlation_pearson_ind(
 
 
 def get_correlation_manders_fold_ind(
-    pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray, thr: int = 15
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    mask: NDArray[numpy.integer],
+    thr: int = 15,
 ) -> dict[str, float]:
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
@@ -239,7 +248,10 @@ def get_correlation_manders_fold_ind(
 
 
 def get_correlation_rwc_ind(
-    pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, mask: numpy.ndarray, thr: int = 15
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    mask: NDArray[numpy.integer],
+    thr: int = 15,
 ) -> dict[str, float]:
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
@@ -249,8 +261,6 @@ def get_correlation_rwc_ind(
     )
 
     # RWC Coefficient
-    RWC1 = numpy.zeros(len(lrange))
-    RWC2 = numpy.zeros(len(lrange))
     [Rank1] = numpy.lexsort(([labels], [first_pixels]))
     [Rank2] = numpy.lexsort(([labels], [second_pixels]))
     Rank1_U = numpy.hstack(
@@ -277,8 +287,8 @@ def get_correlation_rwc_ind(
     weight = (R - Di) * 1.0 / R
     weight_thresh = weight[combined_thresh]
 
-    RWC1 = 0.0
-    RWC2 = 0.0
+    RWC1: float | numpy.ndarray = 0.0
+    RWC2: float | numpy.ndarray = 0.0
     if combined_thresh.any():  # TODO adjust this to support multiple labels
         RWC1 = numpy.array(
             scipy.ndimage.sum(
@@ -290,22 +300,22 @@ def get_correlation_rwc_ind(
                 si_thresh * weight_thresh, labels[combined_thresh], lrange
             )
         ) / numpy.array(tot_si_thr)
-        RWC1 = RWC1[0]
-        RWC2 = RWC2[0]
+        RWC1 = RWC1[0]  # type: ignore[index]
+        RWC2 = RWC2[0]  # type: ignore[index]
 
     return {
-        f"{F_RWC_FORMAT}_1": RWC1,
-        f"{F_RWC_FORMAT}_2": RWC2,
+        f"{F_RWC_FORMAT}_1": RWC1,  # type: ignore[dict-item]
+        f"{F_RWC_FORMAT}_2": RWC2,  # type: ignore[dict-item]
     }
 
 
 def get_correlation_costes_ind(
-    pixels_1: numpy.ndarray,
-    pixels_2: numpy.ndarray,
-    mask: numpy.ndarray,
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    mask: NDArray[numpy.integer],
     fast_costes: str = M_FASTER,
     thr: int = 15,
-):
+) -> dict[str, float]:
     # Orthogonal Regression for Costes' automated threshold
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
@@ -350,7 +360,9 @@ def get_correlation_costes_ind(
         )
 
     # Costes Automated Threshold
-    C1, C2 = ([0.0], [0.0])  # Cover fringe case of no pixels above threshold
+    C1: list[float] | numpy.ndarray
+    C2: list[float] | numpy.ndarray
+    C1, C2 = [0.0], [0.0]  # Cover fringe case of no pixels above threshold
     if len(fi_thresh_c) and len(si_thresh_c):
         C1 = numpy.array(
             scipy.ndimage.sum(fi_thresh_c, labels[combined_thresh_c], lrange)
@@ -366,13 +378,13 @@ def get_correlation_costes_ind(
 
 
 def linear_costes(
-    first_pixels: numpy.ndarray,
-    second_pixels: numpy.ndarray,
-    fi: numpy.ndarray,
-    si: numpy.ndarray,
+    first_pixels: NDArray[numpy.floating],
+    second_pixels: NDArray[numpy.floating],
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
     scale_max: int = 255,
     fast_costes: str = M_FASTER,
-):
+) -> tuple[float, float]:
     """
     Finds the Costes Automatic Threshold for colocalization using a linear algorithm.
     Candiate thresholds are gradually decreased until Pearson R falls below 0.
@@ -444,13 +456,13 @@ def linear_costes(
 
 
 def bisection_costes(
-    first_pixels: numpy.ndarray,
-    second_pixels: numpy.ndarray,
-    fi: numpy.ndarray,
-    si: numpy.ndarray,
+    first_pixels: NDArray[numpy.floating],
+    second_pixels: NDArray[numpy.floating],
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
     scale_max: int = 255,
     fast_costes: str = M_FASTER,
-):
+) -> tuple[float, float]:
     """
     Finds the Costes Automatic Threshold for colocalization using a bisection algorithm.
     Candidate thresholds are selected from within a window of possible intensities,
@@ -480,12 +492,12 @@ def bisection_costes(
     b = ymean - a * xmean
 
     # Initialise variables
-    left = 1
-    right = scale_max
-    mid = ((right - left) // (6 / 5)) + left
-    lastmid = 0
+    left: float = 1
+    right: float = scale_max
+    mid: float = ((right - left) // (6 / 5)) + left
+    lastmid: float = 0
     # Marks the value with the last positive R value.
-    valid = 1
+    valid: float = 1
 
     while lastmid != mid:
         thr_fi_c = mid / scale_max
@@ -518,18 +530,18 @@ def bisection_costes(
 
 
 def get_correlation_overlap_ind(
-    pixels_1: numpy.ndarray,
-    pixels_2: numpy.ndarray,
-    mask: numpy.ndarray,
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    mask: NDArray[numpy.integer],
     thr: int = 15,
-):
+) -> dict[str, float]:
     first_pixels, second_pixels, labels, lrange = extract_pixels(
         pixels_1, pixels_2, mask
     )
     _, _, _, _, combined_thresh = calculate_threshold(pixels_1, pixels_2, mask, thr)
     # Overlap Coefficient
-    K1 = 0.0
-    K2 = 0.0
+    K1: float | numpy.ndarray = 0.0
+    K2: float | numpy.ndarray = 0.0
     if combined_thresh.any():  # TODO adjust for multiple labels
         fpsq = scipy.ndimage.sum(
             first_pixels[combined_thresh] ** 2,
@@ -571,13 +583,13 @@ def get_correlation_overlap_ind(
         )
 
         # TODO Revert this block once integer labels are supported
-        K1 = K1[0]
-        K2 = K2[0]
+        K1 = K1[0]  # type: ignore[index]
+        K2 = K2[0]  # type: ignore[index]
     is_scalar = numpy.isscalar(K1)
     return {
         F_OVERLAP_FORMAT: overlap[0],
-        f"{F_K_FORMAT}_1": K1 if is_scalar else K1[0],
-        f"{F_K_FORMAT}_2": K2 if is_scalar else K2[0],
+        f"{F_K_FORMAT}_1": K1 if is_scalar else K1[0],  # type: ignore[index, dict-item]
+        f"{F_K_FORMAT}_2": K2 if is_scalar else K2[0],  # type: ignore[index, dict-item]
     }
 
 
@@ -601,40 +613,42 @@ def infer_scale(data: numpy.ndarray) -> int:
 ## Define functions using skimage style
 # The implementation of these correlation functions makes it irrelevant to vectorize the input.
 def get_correlation_pearson(
-    pixels_1: numpy.ndarray, pixels_2: numpy.ndarray, masks: numpy.ndarray
-):
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
+) -> dict[str, list[float]]:
     return apply_correlation_fun(get_correlation_pearson_ind, pixels_1, pixels_2, masks)
 
 
 def get_correlation_manders_fold(
-    pixels_1: numpy.ndarray,
-    pixels_2: numpy.ndarray,
-    masks: numpy.ndarray,
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
     thr: int = 15,
-):
+) -> dict[str, list[float]]:
     return apply_correlation_fun(
         get_correlation_manders_fold_ind, pixels_1, pixels_2, masks, thr=thr
     )
 
 
 def get_correlation_rwc(
-    pixels_1: numpy.ndarray,
-    pixels_2: numpy.ndarray,
-    masks: numpy.ndarray,
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
     thr: int = 15,
-):
+) -> dict[str, list[float]]:
     return apply_correlation_fun(
         get_correlation_rwc_ind, pixels_1, pixels_2, masks, thr=thr
     )
 
 
 def get_correlation_costes(
-    pixels_1: numpy.ndarray,
-    pixels_2: numpy.ndarray,
-    masks: numpy.ndarray,
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
     fast_costes: str = M_FASTER,
     thr: int = 15,
-):
+) -> dict[str, list[float]]:
     return apply_correlation_fun(
         get_correlation_costes_ind,
         pixels_1,
@@ -646,11 +660,11 @@ def get_correlation_costes(
 
 
 def get_correlation_overlap(
-    pixels_1: numpy.ndarray,
-    pixels_2: numpy.ndarray,
-    masks: numpy.ndarray,
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
     thr: int = 15,
-):
+) -> dict[str, list[float]]:
     return apply_correlation_fun(get_correlation_overlap_ind, pixels_1, pixels_2, masks)
 
 
@@ -658,12 +672,12 @@ def get_correlation_overlap(
 
 
 def apply_correlation_fun(
-    corr_function,
-    pixels_1: numpy.ndarray,
-    pixels_2: numpy.ndarray,
-    masks: numpy.ndarray,
+    corr_function: Callable[..., dict[str, float]],
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
     **kwargs,
-):
+) -> dict[str, list[float]]:
     """
     Apply `corr_function` to the subsequent args and kwargs. It assumes that pixels (arrays containing images) are passed, as well as
     masks in a 2-d labels format. Any kwargs are passed to corr_functions.

@@ -55,16 +55,17 @@ import numpy
 import scipy.ndimage
 import skimage.morphology
 from cp_measure.utils import _ensure_np_array as fix
+from numpy.typing import NDArray
 
 
 def get_granularity(
-    mask: numpy.ndarray,
-    pixels: numpy.ndarray,
+    mask: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
     subsample_size: float = 0.25,
     image_sample_size: float = 0.25,
     element_size: int = 10,
     granular_spectrum_length: int = 16,
-) -> dict[str, float]:
+) -> dict[str, NDArray[numpy.floating]]:
     """
     1. (Outcommented) Subsample image
     2.  Remove background pixels using a greyscale tophat filter
@@ -250,7 +251,7 @@ def get_granularity(
     current_mean = fix(scipy.ndimage.mean(orig_pixels, orig_mask, range_))
     start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
 
-    results = {}
+    results: dict[str, NDArray[numpy.floating]] = {}
     for granularity_id in range(1, ng + 1):
         ero_mask = ero.copy()
         # Shrink bright regions

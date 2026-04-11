@@ -1,5 +1,7 @@
 from typing import Optional
 
+from numpy.typing import NDArray
+
 import centrosome.cpmorphology
 import centrosome.zernike
 import numpy
@@ -565,12 +567,12 @@ new_features : bool, optional
 
 
 def get_sizeshape(
-    masks: numpy.ndarray,
-    pixels: numpy.ndarray,
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None,
     calculate_advanced: bool = True,
     new_features: bool = True,
-    spacing: Optional[tuple] = None,
-):
+    spacing: Optional[tuple[float, ...]] = None,
+) -> dict[str, NDArray[numpy.floating]]:
     """Compute the measurements for multiple object masks."""
     # Properties available for both 2d and 3d
     desired_properties = [
@@ -628,7 +630,7 @@ def get_sizeshape(
 
     labels = masks
     nobjects = (numpy.unique(masks) > 0).sum()
-    results = {}
+    results: dict[str, NDArray[numpy.floating]] = {}
     if labels.ndim == 2:
         props = skimage.measure.regionprops_table(
             labels, pixels, properties=desired_properties
@@ -1008,7 +1010,11 @@ def get_sizeshape(
     return results
 
 
-def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int = 9):
+def get_zernike(
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None,
+    zernike_numbers: int = 9,
+) -> dict[str, NDArray[numpy.floating]]:
     #
     # Zernike features (2D only)
     #
@@ -1022,13 +1028,15 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
 
     zf_l = centrosome.zernike.zernike(zernike_numbers, labels, indices)
     results = {}
-    for (n, m), z in zip(zernike_numbers, zf_l.transpose()):
+    for (n, m), z in zip(zernike_numbers, zf_l.transpose()):  # type: ignore[call-overload]
         results[f"Zernike_{n}_{m}"] = z
 
     return results
 
 
-def get_feret(masks: numpy.ndarray, pixels: numpy.ndarray):
+def get_feret(
+    masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
+) -> dict[str, NDArray[numpy.floating]]:
     # Feret diameter (2D only)
     if masks.ndim == 3:
         return {}
