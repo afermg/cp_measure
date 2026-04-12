@@ -28,7 +28,7 @@ def get_transposed_mask(size: int = 789):
     ("Adjacent", "Expand until adjacent", "Within a specified distance"),
 )
 def test_neighbors(masks: numpy.ndarray, distance_method: str):
-    return measureobjectneighbors(masks, masks, distance_method=distance_method)
+    measureobjectneighbors(masks, masks, distance_method=distance_method)
 
 
 @pytest.mark.parametrize("masks1", get_transposed_mask())
@@ -41,6 +41,6 @@ def test_overlap(
     decimation_method: str,
     wants_emd: bool,
 ):
-    return measureobjectoverlap(
+    measureobjectoverlap(
         masks1, masks2, decimation_method=decimation_method, wants_emd=wants_emd
     )
