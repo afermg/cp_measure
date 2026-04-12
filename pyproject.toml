@@ -28,12 +28,21 @@ includes = [
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
+[tool.mypy]
+python_version = "3.13"  # default; nox overrides per-version via --python-version
+ignore_missing_imports = true
+warn_unused_ignores = true
+files = ["src/cp_measure/core"]
+
 [dependency-groups]
 dev = [
     "ruff>=0.12.1",
     "ipdb>=0.13.13",
     "jupyter>=1.0.0",
     "jupytext>=1.15.0",
+    "mypy>=1.0,<1.20",
+    "pathspec>=0.10",
+    "nox>=2026.4.10",
 ]
 test = [
     "pytest",

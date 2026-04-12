@@ -6,6 +6,7 @@ import numpy.ma
 import scipy.ndimage
 import scipy.sparse
 from cp_measure.utils import masks_to_ijv
+from numpy.typing import NDArray
 
 """"
 ============ ============ ===============
@@ -89,12 +90,12 @@ MEASUREMENT_ALIASES = {
 
 
 def get_radial_distribution(
-    labels: numpy.ndarray,
-    pixels: numpy.ndarray,
+    labels: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
     scaled: bool = True,
     bin_count: int = 4,
     maximum_radius: int = 100,
-):
+) -> dict[str, NDArray[numpy.floating]]:
     """
     Radial features (2D only)
 
@@ -228,7 +229,7 @@ def get_radial_distribution(
     fraction_at_distance = histogram / sum_by_object_per_bin
 
     number_at_distance = scipy.sparse.coo_matrix(
-        (numpy.ones(ngood_pixels), labels_and_bins), (nobjects, bin_count + 1)
+        (numpy.ones(int(ngood_pixels)), labels_and_bins), (nobjects, bin_count + 1)
     ).toarray()
 
     sum_by_object = numpy.sum(number_at_distance, 1)
@@ -281,7 +282,9 @@ def get_radial_distribution(
 
         mask = pixel_count == 0
 
-        radial_means = numpy.ma.masked_array(radial_values / pixel_count, mask)
+        radial_means: numpy.ma.MaskedArray = numpy.ma.masked_array(
+            radial_values / pixel_count, mask
+        )
 
         radial_cv = numpy.std(radial_means, 1) / numpy.mean(radial_means, 1)
 
@@ -303,8 +306,10 @@ def get_radial_distribution(
 
 
 def get_radial_zernikes(
-    labels: numpy.ndarray, pixels: numpy.ndarray, zernike_degree: int = 9
-):
+    labels: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
+    zernike_degree: int = 9,
+) -> dict[str, NDArray[numpy.floating]]:
     # Radial Zernike features (2D only)
     if labels.ndim == 3:
         return {}
@@ -340,9 +345,9 @@ def get_radial_zernikes(
     l_ = l_[ijv_mask]
     z_ = z[ijv_mask, :]
 
+    results: dict[str, NDArray[numpy.floating]] = {}
     if len(l_) == 0:
         # Cover fringe case in which all labels were filtered out
-        results = {}
         for mag_or_phase in ("Magnitude", "Phase"):
             for n, m in zernike_indexes:
                 name = f"{M_CATEGORY}_Zernike{mag_or_phase}_{n}_{m}"
@@ -359,7 +364,6 @@ def get_radial_zernikes(
         # n - the radial moment of the Zernike
         # m - the azimuthal moment of the Zernike
         #
-        results = {}
         for i, (n, m) in enumerate(zernike_indexes):
             vr = scipy.ndimage.sum_labels(
                 pixels[ijv[:, 0], ijv[:, 1]] * z_[:, i].real,

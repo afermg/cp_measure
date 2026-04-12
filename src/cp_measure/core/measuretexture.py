@@ -146,6 +146,7 @@ import mahotas.features
 import numpy
 import skimage.exposure
 import skimage.measure
+from numpy.typing import NDArray
 import skimage.util
 
 F_HARALICK = """AngularSecondMoment Contrast Correlation Variance
@@ -154,11 +155,11 @@ DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
 
 
 def get_texture(
-    masks: numpy.ndarray,
-    pixels: numpy.ndarray,
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
     scale: int = 3,
     gray_levels: int = 256,
-):
+) -> dict[str, NDArray[numpy.floating]]:
     """
     Parameters
     ----------

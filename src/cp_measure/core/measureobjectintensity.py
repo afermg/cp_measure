@@ -2,6 +2,7 @@ import numpy
 import scipy.ndimage
 import skimage.segmentation
 from cp_measure.utils import _ensure_np_array as fix
+from numpy.typing import NDArray
 
 __doc__ = """
 MeasureObjectIntensity
@@ -119,8 +120,10 @@ ALL_LOCATION_MEASUREMENTS = [
 
 
 def get_intensity(
-    masks: numpy.ndarray, pixels: numpy.ndarray, edge_measurements: bool = True
-):
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
+    edge_measurements: bool = True,
+) -> dict[str, NDArray[numpy.floating]]:
     """
     masks is a labeled array where 0 are background images.
     """
