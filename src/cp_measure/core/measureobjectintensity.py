@@ -4,7 +4,7 @@ import skimage.segmentation
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 
-__doc__ = """
+__doc__ = r"""
 MeasureObjectIntensity
 ======================
 
@@ -239,9 +239,17 @@ def get_intensity(
             i_y = fix(scipy.ndimage.sum(mesh_y * limg, llabels, lindexes))
             i_z = fix(scipy.ndimage.sum(mesh_z * limg, llabels, lindexes))
 
-            cmi_x[lindexes - 1] = i_x / integrated_intensity[lindexes - 1]
-            cmi_y[lindexes - 1] = i_y / integrated_intensity[lindexes - 1]
-            cmi_z[lindexes - 1] = i_z / integrated_intensity[lindexes - 1]
+            ii = integrated_intensity[lindexes - 1]
+            nan_out = numpy.full(len(ii), numpy.nan)
+            cmi_x[lindexes - 1] = numpy.divide(
+                i_x, ii, where=ii != 0, out=nan_out.copy()
+            )
+            cmi_y[lindexes - 1] = numpy.divide(
+                i_y, ii, where=ii != 0, out=nan_out.copy()
+            )
+            cmi_z[lindexes - 1] = numpy.divide(
+                i_z, ii, where=ii != 0, out=nan_out.copy()
+            )
 
             diff_x = cm_x - cmi_x[lindexes - 1]
             diff_y = cm_y - cmi_y[lindexes - 1]

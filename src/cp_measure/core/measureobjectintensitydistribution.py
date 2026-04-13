@@ -226,7 +226,12 @@ def get_radial_distribution(
 
     sum_by_object_per_bin = numpy.dstack([sum_by_object] * (bin_count + 1))[0]
 
-    fraction_at_distance = histogram / sum_by_object_per_bin
+    fraction_at_distance = numpy.divide(
+        histogram,
+        sum_by_object_per_bin,
+        where=sum_by_object_per_bin != 0,
+        out=numpy.zeros_like(histogram, dtype=float),
+    )
 
     number_at_distance = scipy.sparse.coo_matrix(
         (numpy.ones(int(ngood_pixels)), labels_and_bins), (nobjects, bin_count + 1)
@@ -283,7 +288,13 @@ def get_radial_distribution(
         mask = pixel_count == 0
 
         radial_means: numpy.ma.MaskedArray = numpy.ma.masked_array(
-            radial_values / pixel_count, mask
+            numpy.divide(
+                radial_values,
+                pixel_count,
+                where=~mask,
+                out=numpy.zeros_like(radial_values, dtype=float),
+            ),
+            mask,
         )
 
         radial_cv = numpy.std(radial_means, 1) / numpy.mean(radial_means, 1)
@@ -331,7 +342,13 @@ def get_radial_zernikes(
 
     l_ = ijv[:, 2]  # (N,1) vector with labels
 
-    yx = (ijv[:, :2] - ij[l_ - 1, :]) / r[l_ - 1, numpy.newaxis]
+    r_per_pixel = r[l_ - 1, numpy.newaxis]
+    yx = numpy.divide(
+        ijv[:, :2] - ij[l_ - 1, :],
+        r_per_pixel,
+        where=r_per_pixel != 0,
+        out=numpy.zeros((len(l_), 2), dtype=float),
+    )
 
     z = centrosome.zernike.construct_zernike_polynomials(
         yx[:, 1], yx[:, 0], zernike_indexes

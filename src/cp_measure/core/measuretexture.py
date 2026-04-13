@@ -1,4 +1,4 @@
-__doc__ = """\
+__doc__ = r"""
 MeasureTexture
 ==============
 
@@ -91,7 +91,7 @@ n_02... for each scale *n*. In 2D, the directions and correspondence vectors *(y
 for each measurement are given below:
 
 - _00 = horizontal -, 0 degrees   (0, 1)
-- _01 = diagonal \\\\, 135 degrees or NW-SE   (1, 1)
+- _01 = diagonal \\, 135 degrees or NW-SE   (1, 1)
 - _02 = vertical \|, 90 degrees   (1, 0)
 - _03 = diagonal /, 45 degrees or NE-SW  (1, -1)
 

@@ -9,7 +9,7 @@ import scipy.ndimage
 import skimage.measure
 from cp_measure.utils import masks_to_ijv, _ensure_np_scalar
 
-__doc__ = """\
+__doc__ = r"""
 MeasureObjectSizeShape
 ======================
 
@@ -636,7 +636,12 @@ def get_sizeshape(
             labels, pixels, properties=desired_properties
         )
 
-        formfactor = 4.0 * numpy.pi * props["area"] / props["perimeter"] ** 2
+        perim_sq = props["perimeter"] ** 2
+        formfactor = numpy.where(
+            perim_sq > 0,
+            4.0 * numpy.pi * props["area"] / numpy.where(perim_sq > 0, perim_sq, 1.0),
+            numpy.nan,
+        )
         denom = [max(x, 1) for x in 4.0 * numpy.pi * props["area"]]
         compactness = props["perimeter"] ** 2 / denom
 

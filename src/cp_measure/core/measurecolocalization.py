@@ -1,4 +1,4 @@
-"""
+r"""
 MeasureColocalization
 =====================
 
@@ -230,12 +230,13 @@ def get_correlation_manders_fold_ind(
     M1 = 0.0
     M2 = 0.0
     if combined_thresh.any():
-        M1 = numpy.array(
-            scipy.ndimage.sum(fi_thresh, labels[combined_thresh], lrange)
-        ) / numpy.array(tot_fi_thr)
-        M2 = numpy.array(
-            scipy.ndimage.sum(si_thresh, labels[combined_thresh], lrange)
-        ) / numpy.array(tot_si_thr)
+        with numpy.errstate(invalid="ignore"):
+            M1 = numpy.array(
+                scipy.ndimage.sum(fi_thresh, labels[combined_thresh], lrange)
+            ) / numpy.array(tot_fi_thr)
+            M2 = numpy.array(
+                scipy.ndimage.sum(si_thresh, labels[combined_thresh], lrange)
+            ) / numpy.array(tot_si_thr)
 
         # TODO remove this to support multiple labels
         M1 = M1[0]
@@ -290,16 +291,17 @@ def get_correlation_rwc_ind(
     RWC1: float | numpy.ndarray = 0.0
     RWC2: float | numpy.ndarray = 0.0
     if combined_thresh.any():  # TODO adjust this to support multiple labels
-        RWC1 = numpy.array(
-            scipy.ndimage.sum(
-                fi_thresh * weight_thresh, labels[combined_thresh], lrange
-            )
-        ) / numpy.array(tot_fi_thr)
-        RWC2 = numpy.array(
-            scipy.ndimage.sum(
-                si_thresh * weight_thresh, labels[combined_thresh], lrange
-            )
-        ) / numpy.array(tot_si_thr)
+        with numpy.errstate(invalid="ignore"):
+            RWC1 = numpy.array(
+                scipy.ndimage.sum(
+                    fi_thresh * weight_thresh, labels[combined_thresh], lrange
+                )
+            ) / numpy.array(tot_fi_thr)
+            RWC2 = numpy.array(
+                scipy.ndimage.sum(
+                    si_thresh * weight_thresh, labels[combined_thresh], lrange
+                )
+            ) / numpy.array(tot_si_thr)
         RWC1 = RWC1[0]  # type: ignore[index]
         RWC2 = RWC2[0]  # type: ignore[index]
 
@@ -503,12 +505,17 @@ def bisection_costes(
         thr_fi_c = mid / scale_max
         thr_si_c = (a * thr_fi_c) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
-        if numpy.count_nonzero(combt) <= 2:
-            # Can't run pearson with only 2 values.
+        subset_fi, subset_si = fi[combt], si[combt]
+        if (
+            numpy.count_nonzero(combt) <= 2
+            or subset_fi.std() == 0
+            or subset_si.std() == 0
+        ):
+            # Can't run pearson with only 2 values or constant arrays.
             left = mid - 1
         else:
             try:
-                costReg, _ = scipy.stats.pearsonr(fi[combt], si[combt])
+                costReg, _ = scipy.stats.pearsonr(subset_fi, subset_si)
                 if costReg < 0:
                     left = mid - 1
                 elif costReg >= 0:
