@@ -16,6 +16,17 @@ dependencies = [
     "mahotas<2.0.0,>=1.4.13",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.4.2",
+    "pytest-cov",
+    "pytest-markdown-docs",
+]
+benchmark = [
+    "pyarrow>=14.0",
+    "tifffile>=2025.5.10",
+]
+
 [project.urls]
 Homepage = "https://github.com/afermg/cp_measure"
 
@@ -43,10 +54,5 @@ dev = [
     "mypy>=1.0,<1.20",
     "pathspec>=0.10",
     "nox>=2026.4.10",
-]
-test = [
-    "pytest",
-    "pytest-cov",
-    "pytest-markdown-docs",
 ]
 
