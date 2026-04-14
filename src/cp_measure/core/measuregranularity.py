@@ -173,7 +173,11 @@ def get_granularity(
                 / image_sample_size
             )
             back_pixels = scipy.ndimage.map_coordinates(pixels, (i, j), order=1)
-            back_mask = scipy.ndimage.map_coordinates(mask.astype(float), (i, j)) > 0.9
+            # Use all pixels for background estimation (matches CellProfiler which
+            # uses a binary image-validity mask, True everywhere for full-frame images).
+            # Using object labels here would restrict background to within-object
+            # regions only, causing incomplete background subtraction.
+            back_mask = numpy.ones(back_pixels.shape, dtype=bool)
         else:
             k, i, j = (
                 numpy.mgrid[
@@ -182,12 +186,10 @@ def get_granularity(
                 / subsample_size
             )
             back_pixels = scipy.ndimage.map_coordinates(pixels, (k, i, j), order=1)
-            back_mask = (
-                scipy.ndimage.map_coordinates(mask.astype(float), (k, i, j)) > 0.9
-            )
+            back_mask = numpy.ones(back_pixels.shape, dtype=bool)
     else:
         back_pixels = pixels
-        back_mask = mask
+        back_mask = numpy.ones(back_pixels.shape, dtype=bool)
         back_shape = new_shape
     radius = element_size
     if pixels.ndim == 2:
