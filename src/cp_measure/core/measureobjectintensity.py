@@ -163,6 +163,13 @@ def get_intensity(
     ):  # Assumes all labels from 1 to nobjects are present
         label_matrices[i][masks == label] = label
 
+    if edge_measurements:
+        integrated_intensity_edge = numpy.zeros((nobjects,))
+        mean_intensity_edge = numpy.zeros((nobjects,))
+        std_intensity_edge = numpy.zeros((nobjects,))
+        min_intensity_edge = numpy.zeros((nobjects,))
+        max_intensity_edge = numpy.zeros((nobjects,))
+
     result = {}
     # for labels, lindexes in ((mask, numpy.array([1])),):
     for labels, lindexes in zip(label_matrices, unique_labels):
@@ -302,12 +309,6 @@ def get_intensity(
             # END OF ITERATIONS
 
         if edge_measurements:
-            integrated_intensity_edge = numpy.zeros((nobjects,))
-            mean_intensity_edge = numpy.zeros((nobjects,))
-            std_intensity_edge = numpy.zeros((nobjects,))
-            min_intensity_edge = numpy.zeros((nobjects,))
-            max_intensity_edge = numpy.zeros((nobjects,))
-
             outlines = skimage.segmentation.find_boundaries(labels, mode="inner")
             masked_outlines = outlines
             emask = masked_outlines > 0
