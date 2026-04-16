@@ -166,7 +166,12 @@ def run_featurize(
 
     # Parse columns and compute median per object in long format
     result: dict[str, list] = {
-        "gene": [], "site": [], "object": [], "cpm_id": [], "channel": [], "cp_measure": [],
+        "gene": [],
+        "site": [],
+        "object": [],
+        "cpm_id": [],
+        "channel": [],
+        "cp_measure": [],
     }
     for col_idx, col in enumerate(columns):
         parsed = parse_column(col)
@@ -259,13 +264,16 @@ def main(limit: int | None, output_dir: Path, features: set[str]) -> None:
     # Unique (gene, site) pairs from CP data
     pairs_table = (
         cp_data.select(["gene", "site"])
-        .group_by(["gene", "site"]).aggregate([])
+        .group_by(["gene", "site"])
+        .aggregate([])
         .sort_by([("gene", "ascending"), ("site", "ascending")])
     )
-    pairs = list(zip(
-        pairs_table.column("gene").to_pylist(),
-        pairs_table.column("site").to_pylist(),
-    ))
+    pairs = list(
+        zip(
+            pairs_table.column("gene").to_pylist(),
+            pairs_table.column("site").to_pylist(),
+        )
+    )
     if limit is not None:
         pairs = pairs[:limit]
     print(f"Processing {len(pairs)} (gene, site) pairs ...", flush=True)
