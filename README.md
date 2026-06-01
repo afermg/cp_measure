@@ -34,8 +34,9 @@ pip install cp-measure
 
 ## Usage
 
-<details>
 ### Featurizer (Recommended for small datasets)
+
+<details>
 
 The simplest way to extract all features from an image and its masks:
 
