@@ -34,7 +34,7 @@ pip install cp-measure
 
 ## Usage
 
-There are three entry points: We orchestrate masks x images, you orchestrate that but we give you all features, and you call only specific functions.
+We provide three entry points: (Featurizer) We orchestrate the images x combinations, (Bulk API) we give you all features and you orchestrate, and (Low-level) you directly import the functions.
 
 ### Featurizer (Recommended for small datasets)
 
@@ -112,9 +112,9 @@ Note: DataFrame libraries must be installed independently, to keep the dependenc
 
 ### Bulk API (Access all measurements at once)
 
-For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
-
 <details>
+
+For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
 cp_measure currently provides two types of measurements based on their inputs:
 
@@ -156,7 +156,7 @@ for name, func in measurements.items():
 
 </details>
 
-### Import a subset of measurements
+### Low-level access
 
 <details>
 
