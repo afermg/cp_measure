@@ -49,12 +49,12 @@ def masks_to_ijv(masks: numpy.ndarray) -> numpy.ndarray:
     return masks_ijv
 
 
-def labels_to_binmasks(masks: numpy.ndarray) -> list:
+def labels_to_binmasks(masks: numpy.ndarray) -> numpy.ndarray:
     """
     Convert a label matrix to a boolean masks.
 
     Returns a list of binary masks.
     """
     labels = numpy.unique(masks)
-    labels = sorted(labels[labels > 0])
-    return [(masks == i) for i in labels]
+    labels = labels[labels > 0]
+    return masks == labels.reshape((-1,) + (1,) * masks.ndim)
