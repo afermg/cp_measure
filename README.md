@@ -154,6 +154,8 @@ for name, func in measurements.items():
 """
 ```
 
+</details>
+
 ### Import a subset of measurements
 
 <details>
