@@ -185,6 +185,8 @@ measurecolocalization.get_correlation_costes
 measurecolocalization.get_correlation_overlap
 ```
 
+</details>
+
 ### Important notes
 
 - **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
@@ -200,8 +202,6 @@ measurecolocalization.get_correlation_overlap
 - [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
 - [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
-
-</details>
 
 <details>
 <summary>Current work</summary>
