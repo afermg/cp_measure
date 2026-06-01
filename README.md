@@ -34,6 +34,8 @@ pip install cp-measure
 
 ## Usage
 
+There are three entry points: We orchestrate masks x images, you orchestrate that but we give you all features, and you call only specific functions.
+
 ### Featurizer (Recommended for small datasets)
 
 <details>
@@ -108,7 +110,7 @@ Note: DataFrame libraries must be installed independently, to keep the dependenc
 
 </details>
 
-## API Overview
+### Bulk API (Access all measurements at once)
 
 For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
@@ -152,13 +154,9 @@ for name, func in measurements.items():
 """
 ```
 
-### Important notes
-
-- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
-- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
-- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
-
 ### Import a subset of measurements
+
+<details>
 
 Individual measurement functions can be imported directly. Each returns a dictionary of arrays.
 
@@ -185,13 +183,13 @@ measurecolocalization.get_correlation_costes
 measurecolocalization.get_correlation_overlap
 ```
 
-For Type 3 functions:
+### Important notes
 
-```
-measureobjectoverlap.measureobjectoverlap
-```
+- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
+- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
+- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
 
-## Known limitations
+### Known limitations
 
 - Some features produce a minor (1e-16) discrepancy when using one vs multiple mask in some features. The issue lies upstream ([centrosome](https://github.com/afermg/cp_measure/issues/18#issuecomment-4593709963), [scipy](https://github.com/scipy/scipy/issues/25279)), and does not current use-cases.
 
