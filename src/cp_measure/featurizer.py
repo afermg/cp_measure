@@ -207,15 +207,20 @@ def featurize(
     channels, objects = _resolve_names(config, image.shape[0])
     _validate(image, masks, channels, objects)
 
-    from cp_measure.bulk import get_core_measurements, get_correlation_measurements
+    from cp_measure.bulk import (
+        get_core_measurements,
+        get_core_measurements_3d,
+        get_correlation_measurements,
+    )
 
     is_3d = image.ndim == 4
-    core_funcs = get_core_measurements()
+    core_funcs = get_core_measurements_3d() if is_3d else get_core_measurements()
     corr_funcs = get_correlation_measurements()
 
-    skipped_2d = _warn_and_filter_2d_only(config, is_3d)
-    channel_feats = _collect_channel_features(config, core_funcs, skipped=skipped_2d)
-    shape_feats = _collect_shape_features(config, core_funcs, skipped=skipped_2d)
+    if is_3d:
+        _warn_2d_only_in_3d(config)
+    channel_feats = _collect_channel_features(config, core_funcs)
+    shape_feats = _collect_shape_features(config, core_funcs)
     corr_feats = _collect_correlation_features(config, corr_funcs, len(channels))
 
     # Shape features are purely geometric and ignore pixel values.
@@ -348,10 +353,12 @@ def _validate(
         raise TypeError(f"masks must be integer dtype, got {masks.dtype}")
 
 
-def _collect_channel_features(
-    config: dict, core_funcs: dict, *, skipped: set[str]
-) -> list[tuple]:
-    """Collect enabled per-channel feature functions and their params."""
+def _collect_channel_features(config: dict, core_funcs: dict) -> list[tuple]:
+    """Collect enabled per-channel feature functions and their params.
+
+    Features missing from ``core_funcs`` (e.g. 2D-only features when the
+    registry is the 3D one) are silently skipped.
+    """
     feats: list[tuple] = []
     for name in (
         "intensity",
@@ -360,29 +367,35 @@ def _collect_channel_features(
         "radial_distribution",
         "radial_zernikes",
     ):
-        if config[name] and name not in skipped:
+        if config[name] and name in core_funcs:
             feats.append((core_funcs[name], config[f"{name}_params"]))
     return feats
 
 
-def _collect_shape_features(
-    config: dict, core_funcs: dict, *, skipped: set[str]
-) -> list[tuple]:
-    """Collect enabled shape feature functions and their params."""
+def _collect_shape_features(config: dict, core_funcs: dict) -> list[tuple]:
+    """Collect enabled shape feature functions and their params.
+
+    Features missing from ``core_funcs`` (e.g. 2D-only features when the
+    registry is the 3D one) are silently skipped.
+    """
     feats: list[tuple] = []
     for name in ("sizeshape", "zernike"):
-        if config[name] and name not in skipped:
+        if config[name] and name in core_funcs:
             feats.append((core_funcs[name], config[f"{name}_params"]))
-    if config["feret"] and "feret" not in skipped:
+    if config["feret"] and "feret" in core_funcs:
         feats.append((core_funcs["feret"], {}))
     return feats
 
 
-def _warn_and_filter_2d_only(config: dict, is_3d: bool) -> set[str]:
-    """Return the set of 2D-only feature names to skip, warning if any."""
-    if not is_3d:
-        return set()
-    return {name for name in _2D_ONLY if config.get(name, False)}
+def _warn_2d_only_in_3d(config: dict) -> None:
+    """Warn if the config enables any 2D-only feature for 3D input."""
+    requested = sorted(name for name in _2D_ONLY if config.get(name, False))
+    if requested:
+        warnings.warn(
+            f"3D input — skipping 2D-only feature(s): {requested}",
+            UserWarning,
+            stacklevel=3,
+        )
 
 
 def _collect_correlation_features(
