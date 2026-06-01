@@ -34,7 +34,7 @@ _CORRELATION: dict[str, Callable] = {
 }
 
 # Default (None accelerator) registries. Optional backends (cp_measure.jax,
-# cp_measure.numba, "faster") will be wired into _dispatch when their sibling
+# cp_measure.numba, "fastest") will be wired into _dispatch when their sibling
 # packages exist; until then, selecting them raises NotImplementedError.
 _REGISTRIES: dict[str, dict[str, Callable]] = {
     "core": _CORE,
@@ -58,11 +58,11 @@ def _dispatch(name: str) -> dict[str, Callable]:
         raise NotImplementedError(
             f"'numba' accelerator not yet wired for {name} measurements"
         )
-    if _ACCELERATOR == "faster":
-        raise NotImplementedError("'faster' logic not yet implemented")
+    if _ACCELERATOR == "fastest":
+        raise NotImplementedError("'fastest' logic not yet implemented")
     raise ValueError(
         f"invalid accelerator {_ACCELERATOR!r}; "
-        "set via cp_measure.set_accelerator(None | 'jax' | 'numba' | 'faster')"
+        "set via cp_measure.set_accelerator(None | 'jax' | 'numba' | 'fastest')"
     )
 
 

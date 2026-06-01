@@ -1,4 +1,4 @@
-_VALID_ACCELERATORS = (None, "jax", "numba", "faster")
+_VALID_ACCELERATORS = (None, "jax", "numba", "fastest")
 _ACCELERATOR: str | None = None
 
 
