@@ -34,7 +34,11 @@ pip install cp-measure
 
 ## Usage
 
+We provide three entry points: (Featurizer) We orchestrate the images x combinations, (Bulk API) we give you all features and you orchestrate, and (Low-level) you directly import the functions.
+
 ### Featurizer (Recommended for small datasets)
+
+<details>
 
 The simplest way to extract all features from an image and its masks:
 
@@ -104,17 +108,13 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
 
-### Important notes
+</details>
 
-- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
-- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
-- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
-
-## API Overview
-
-For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
+### Bulk API (Access all measurements at once)
 
 <details>
+
+For more control over individual measurements, or to call specific functions directly, use the bulk API. It operates on single images and masks following the scikit-image convention.
 
 cp_measure currently provides two types of measurements based on their inputs:
 
@@ -154,7 +154,11 @@ for name, func in measurements.items():
 """
 ```
 
-### Import a subset of measurements
+</details>
+
+### Low-level access
+
+<details>
 
 Individual measurement functions can be imported directly. Each returns a dictionary of arrays.
 
@@ -181,14 +185,15 @@ measurecolocalization.get_correlation_costes
 measurecolocalization.get_correlation_overlap
 ```
 
-For Type 3 functions:
+</details>
 
-```
-measureobjectoverlap.measureobjectoverlap
-measureobjectneghbors.measureobjectneighboors
-```
+### Important notes
 
-## Known limitations
+- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
+- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
+- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
+
+### Known limitations
 
 - Some features produce a minor (1e-16) discrepancy when using one vs multiple mask in some features. The issue lies upstream ([centrosome](https://github.com/afermg/cp_measure/issues/18#issuecomment-4593709963), [scipy](https://github.com/scipy/scipy/issues/25279)), and does not current use-cases.
 
@@ -197,8 +202,6 @@ measureobjectneghbors.measureobjectneighboors
 - [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
 - [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
-
-</details>
 
 <details>
 <summary>Current work</summary>
