@@ -188,6 +188,10 @@ measureobjectoverlap.measureobjectoverlap
 measureobjectneghbors.measureobjectneighboors
 ```
 
+## Known limitations
+
+- Some features produce a minor (1e-16) discrepancy when using one vs multiple mask in some features. The issue lies upstream ([centrosome](https://github.com/afermg/cp_measure/issues/18#issuecomment-4593709963), [scipy](https://github.com/scipy/scipy/issues/25279)), and does not current use-cases.
+
 ## Similar projects
 
 - [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
