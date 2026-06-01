@@ -34,6 +34,7 @@ pip install cp-measure
 
 ## Usage
 
+<details>
 ### Featurizer (Recommended for small datasets)
 
 The simplest way to extract all features from an image and its masks:
@@ -104,11 +105,7 @@ df = pd.DataFrame(data, index=row_names, columns=columns)
 
 Note: DataFrame libraries must be installed independently, to keep the dependency tree low.
 
-### Important notes
-
-- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
-- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
-- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
+</details>
 
 ## API Overview
 
@@ -154,6 +151,12 @@ for name, func in measurements.items():
 """
 ```
 
+### Important notes
+
+- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
+- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
+- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
+
 ### Import a subset of measurements
 
 Individual measurement functions can be imported directly. Each returns a dictionary of arrays.
@@ -185,7 +188,6 @@ For Type 3 functions:
 
 ```
 measureobjectoverlap.measureobjectoverlap
-measureobjectneghbors.measureobjectneighboors
 ```
 
 ## Known limitations
