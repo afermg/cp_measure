@@ -60,6 +60,10 @@ def _dispatch(name: str) -> dict[str, Callable]:
         )
     if _ACCELERATOR == "faster":
         raise NotImplementedError("'faster' logic not yet implemented")
+    raise ValueError(
+        f"invalid accelerator {_ACCELERATOR!r}; "
+        "set via cp_measure.set_accelerator(None | 'jax' | 'numba' | 'faster')"
+    )
 
 
 def get_core_measurements() -> dict[str, Callable]:
