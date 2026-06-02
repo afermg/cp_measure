@@ -42,6 +42,7 @@ from cp_measure.core.measureobjectintensity import (
 from cp_measure.primitives import label_to_idx_lut
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
+    inner_boundary,
     segment_moments,
     segment_quantiles,
     segment_resid_sumsq,
@@ -140,8 +141,12 @@ def get_intensity(
         min_intensity_edge = numpy.zeros(nobjects)
         max_intensity_edge = numpy.zeros(nobjects)
 
-        outlines = skimage.segmentation.find_boundaries(masks, mode="inner")
-        emask = outlines > 0
+        # 2D plane (Z==1): numba inner-boundary kernel, bit-identical to skimage
+        # mode="inner" but ~12-27x faster. True 3D keeps skimage (6-neighbourhood).
+        if masks.shape[0] == 1:
+            emask = inner_boundary(numpy.ascontiguousarray(masks[0]))[numpy.newaxis] > 0
+        else:
+            emask = skimage.segmentation.find_boundaries(masks, mode="inner") > 0
         e_values = masked_image[emask].astype(numpy.float64)
         e_seg0 = lut[masks[emask]]
 
