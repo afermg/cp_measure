@@ -17,14 +17,22 @@ from numba import njit
 def segment_moments(values, seg0, xc, yc, zc, n):
     """One pass over the flat pixels accumulating, per segment:
 
-    count, sum, min, max, and the six centroid cross-sums
-    (Sx, Sy, Sz, Sx*I, Sy*I, Sz*I). max position is intentionally NOT computed
-    here (it is done on the host via scipy for exact parity).
+    count, sum, min, max, the max-pixel coordinates, and the six centroid
+    cross-sums (Sx, Sy, Sz, Sx*I, Sy*I, Sz*I).
+
+    The max position uses ``>=`` so the LAST pixel (in the flat raster order the
+    host builds the arrays in) attaining the maximum wins. On real, continuous
+    data the max is unique, so this is bit-identical to the numpy backend's
+    ``scipy.ndimage.maximum_position``; on exact-value ties it is a deterministic
+    rule rather than scipy's quicksort-dependent (version-unstable) pick.
     """
     count = np.zeros(n, np.int64)
     sumI = np.zeros(n, np.float64)
     minI = np.full(n, np.inf)
     maxI = np.full(n, -np.inf)
+    mx = np.zeros(n, np.float64)
+    my = np.zeros(n, np.float64)
+    mz = np.zeros(n, np.float64)
     sx = np.zeros(n, np.float64)
     sy = np.zeros(n, np.float64)
     sz = np.zeros(n, np.float64)
@@ -35,22 +43,25 @@ def segment_moments(values, seg0, xc, yc, zc, n):
     for i in range(M):
         k = seg0[i]
         v = values[i]
+        x = xc[i]
+        y = yc[i]
+        z = zc[i]
         count[k] += 1
         sumI[k] += v
         if v < minI[k]:
             minI[k] = v
-        if v > maxI[k]:
+        if v >= maxI[k]:  # >= -> keep LAST max in raster order
             maxI[k] = v
-        x = xc[i]
-        y = yc[i]
-        z = zc[i]
+            mx[k] = x
+            my[k] = y
+            mz[k] = z
         sx[k] += x
         sy[k] += y
         sz[k] += z
         sxI[k] += x * v
         syI[k] += y * v
         szI[k] += z * v
-    return count, sumI, minI, maxI, sx, sy, sz, sxI, syI, szI
+    return count, sumI, minI, maxI, mx, my, mz, sx, sy, sz, sxI, syI, szI
 
 
 @njit(cache=True)

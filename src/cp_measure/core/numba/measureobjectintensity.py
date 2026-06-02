@@ -2,10 +2,12 @@
 
 Drop-in for :func:`cp_measure.core.measureobjectintensity.get_intensity`,
 producing the identical dict of features for 2D and 3D input. The per-label
-reductions run as fused single-pass numba kernels over a flat segment
-representation (:mod:`cp_measure.primitives`); ``Location_MaxIntensity_*`` is
-computed on the host via ``scipy.ndimage.maximum_position`` to reproduce the
-numpy backend's tie-break exactly.
+reductions — including ``Location_MaxIntensity_*`` — run entirely as fused
+single-pass numba kernels over a flat segment representation
+(:mod:`cp_measure.primitives`). The max position uses a deterministic
+``>=``-last rule that is bit-identical to ``scipy.ndimage.maximum_position`` on
+real (tie-free) data; only exact-value ties can differ (scipy's tie pick is
+quicksort-dependent and not stable across numpy versions).
 """
 
 import numpy
@@ -40,7 +42,6 @@ from cp_measure.core.measureobjectintensity import (
 from cp_measure.primitives import (
     flatten_labeled,
     label_to_idx_lut,
-    max_position_per_object,
 )
 from cp_measure.primitives._segment_numba import (
     segment_moments,
@@ -65,7 +66,7 @@ def get_intensity(
     elif pixels.ndim == 3 and masks.ndim == 2:  # 3D image, 2D mask
         masks = masks.reshape(1, *masks.shape)
 
-    lut, labels, nobjects = label_to_idx_lut(masks)
+    lut, _labels, nobjects = label_to_idx_lut(masks)
 
     integrated_intensity = numpy.zeros(nobjects)
     mean_intensity = numpy.zeros(nobjects)
@@ -88,9 +89,21 @@ def get_intensity(
     has_objects = values.size > 0
 
     if has_objects:
-        (count, sumI, minI, maxI, sx, sy, sz, sxI, syI, szI) = segment_moments(
-            values, seg0, xc, yc, zc, nobjects
-        )
+        (
+            count,
+            sumI,
+            minI,
+            maxI,
+            max_x,
+            max_y,
+            max_z,
+            sx,
+            sy,
+            sz,
+            sxI,
+            syI,
+            szI,
+        ) = segment_moments(values, seg0, xc, yc, zc, nobjects)
         cnt = count.astype(numpy.float64)
         with numpy.errstate(invalid="ignore", divide="ignore"):
             integrated_intensity = sumI
@@ -116,10 +129,6 @@ def get_intensity(
             upper_quartile_intensity,
             mad_intensity,
         ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim)
-
-        max_x, max_y, max_z = max_position_per_object(
-            values, seg0, xc, yc, zc, labels
-        )
 
     if edge_measurements:
         integrated_intensity_edge = numpy.zeros(nobjects)

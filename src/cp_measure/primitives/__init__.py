@@ -12,11 +12,9 @@ index, so a single set of segment kernels covers every case without a rewrite.
 from cp_measure.primitives.segment import (
     flatten_labeled,
     label_to_idx_lut,
-    max_position_per_object,
 )
 
 __all__ = [
     "flatten_labeled",
     "label_to_idx_lut",
-    "max_position_per_object",
 ]
