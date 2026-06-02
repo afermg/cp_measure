@@ -214,7 +214,7 @@ def get_intensity(
         diff = cmi - cm
         mass_displacement[out_i] = numpy.sqrt((diff * diff).sum())
 
-    result = {
+    result: dict[str, NDArray[numpy.floating]] = {
         f"{INTENSITY}_{INTEGRATED_INTENSITY}": integrated_intensity,
         f"{INTENSITY}_{MEAN_INTENSITY}": mean_intensity,
         f"{INTENSITY}_{STD_INTENSITY}": std_intensity,
