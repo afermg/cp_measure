@@ -65,6 +65,30 @@ def segment_moments(values, seg0, xc, yc, zc, n):
 
 
 @njit(cache=True)
+def segment_stats(values, seg0, n):
+    """One pass accumulating per-segment count, sum, min, max only.
+
+    The lightweight reduce for callers (e.g. edge measurements) that need
+    neither the max position nor the centroid cross-sums.
+    """
+    count = np.zeros(n, np.int64)
+    sumI = np.zeros(n, np.float64)
+    minI = np.full(n, np.inf)
+    maxI = np.full(n, -np.inf)
+    M = values.shape[0]
+    for i in range(M):
+        k = seg0[i]
+        v = values[i]
+        count[k] += 1
+        sumI[k] += v
+        if v < minI[k]:
+            minI[k] = v
+        if v > maxI[k]:
+            maxI[k] = v
+    return count, sumI, minI, maxI
+
+
+@njit(cache=True)
 def segment_resid_sumsq(values, seg0, n, mean):
     """Second pass: per-segment sum of squared residuals (for population std)."""
     ss = np.zeros(n, np.float64)

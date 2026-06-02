@@ -47,6 +47,7 @@ from cp_measure.primitives._segment_numba import (
     segment_moments,
     segment_quantiles,
     segment_resid_sumsq,
+    segment_stats,
 )
 
 
@@ -66,7 +67,7 @@ def get_intensity(
     elif pixels.ndim == 3 and masks.ndim == 2:  # 3D image, 2D mask
         masks = masks.reshape(1, *masks.shape)
 
-    lut, _labels, nobjects = label_to_idx_lut(masks)
+    lut, nobjects = label_to_idx_lut(masks)
 
     integrated_intensity = numpy.zeros(nobjects)
     mean_intensity = numpy.zeros(nobjects)
@@ -143,10 +144,7 @@ def get_intensity(
         e_seg0 = lut[masks[emask]]
 
         if e_values.size > 0:
-            zeros = numpy.zeros(e_values.size)
-            (ecount, esum, emin, emax, *_rest) = segment_moments(
-                e_values, e_seg0, zeros, zeros, zeros, nobjects
-            )
+            ecount, esum, emin, emax = segment_stats(e_values, e_seg0, nobjects)
             edge_obj = ecount > 0
             ecnt = ecount.astype(numpy.float64)
             with numpy.errstate(invalid="ignore", divide="ignore"):

@@ -18,14 +18,13 @@ from numpy.typing import NDArray
 
 def label_to_idx_lut(
     masks: NDArray[numpy.integer],
-) -> tuple[NDArray[numpy.int64], NDArray[numpy.integer], int]:
+) -> tuple[NDArray[numpy.int64], int]:
     """Build a ``label -> 0..n-1`` lookup over the sorted positive labels.
 
-    Returns ``(lut, labels_sorted, n)`` where ``lut[label]`` is the segment
-    index (and ``-1`` for absent labels / background), ``labels_sorted`` are the
-    ascending positive labels, and ``n`` is the object count. Output arrays are
-    indexed by this segment rank, which equals ``label - 1`` when labels are the
-    contiguous ``1..n`` that cp_measure expects.
+    Returns ``(lut, n)`` where ``lut[label]`` is the segment index (and ``-1``
+    for absent labels / background) and ``n`` is the object count. Output arrays
+    are indexed by this segment rank, which equals ``label - 1`` when labels are
+    the contiguous ``1..n`` that cp_measure expects.
     """
     unique = numpy.unique(masks)
     labels = unique[unique > 0]
@@ -33,7 +32,7 @@ def label_to_idx_lut(
     max_label = int(labels[-1]) if n else 0
     lut = numpy.full(max_label + 1, -1, dtype=numpy.int64)
     lut[labels] = numpy.arange(n, dtype=numpy.int64)
-    return lut, labels, n
+    return lut, n
 
 
 def flatten_labeled(
@@ -50,16 +49,12 @@ def flatten_labeled(
     """Flatten a labeled (Z, Y, X) image to ``(values, seg0, xc, yc, zc)``.
 
     Non-finite pixels and background are dropped, matching the numpy reference's
-    ``(masks > 0) & isfinite(pixels)`` mask. Coordinates use ``numpy.mgrid`` over
-    the full volume exactly as the reference does, so positions line up.
+    ``(masks > 0) & isfinite(pixels)`` mask. ``numpy.nonzero`` yields the (z, y, x)
+    coordinates of the kept pixels directly, in the same C order as ``pixels[lmask]``
+    — no full-volume coordinate grids are materialised.
     """
     lmask = (masks > 0) & numpy.isfinite(pixels)
     values = pixels[lmask].astype(numpy.float64)
     seg0 = lut[masks[lmask]]
-    mesh_z, mesh_y, mesh_x = numpy.mgrid[
-        0 : masks.shape[0], 0 : masks.shape[1], 0 : masks.shape[2]
-    ]
-    xc = mesh_x[lmask].astype(numpy.float64)
-    yc = mesh_y[lmask].astype(numpy.float64)
-    zc = mesh_z[lmask].astype(numpy.float64)
+    zc, yc, xc = (c.astype(numpy.float64) for c in numpy.nonzero(lmask))
     return values, seg0, xc, yc, zc
