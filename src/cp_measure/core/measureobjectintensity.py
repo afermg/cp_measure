@@ -144,9 +144,13 @@ def get_intensity(
     if not numpy.issubdtype(masks.dtype, numpy.integer):
         masks = masks.astype(numpy.intp, copy=False)
 
-    unique_labels = numpy.unique(masks)
-    unique_labels = unique_labels[unique_labels > 0]
-    nobjects = int(unique_labels.size)
+    # find_objects returns one slice per label in 1..max(masks), with None
+    # for missing labels. We use it both for bbox crops below and to derive
+    # the present-label list — np.unique on a multi-MB mask is much slower
+    # (e.g. ~200 ms on a 32x240x240 volume).
+    bboxes = scipy.ndimage.find_objects(masks)
+    present = [(i + 1, sl) for i, sl in enumerate(bboxes) if sl is not None]
+    nobjects = len(present)
 
     integrated_intensity = numpy.zeros(nobjects)
     mean_intensity = numpy.zeros(nobjects)
@@ -166,18 +170,7 @@ def get_intensity(
     max_x = numpy.zeros(nobjects)
     mass_displacement = numpy.zeros(nobjects)
 
-    # find_objects returns one slice per label in 1..max(masks), in label order.
-    bboxes = scipy.ndimage.find_objects(masks)
-    label_to_idx = {int(lab): i for i, lab in enumerate(unique_labels)}
-
-    for label_value_minus_1, sl in enumerate(bboxes):
-        if sl is None:
-            continue
-        label_value = label_value_minus_1 + 1
-        out_i = label_to_idx.get(label_value)
-        if out_i is None:
-            continue
-
+    for out_i, (label_value, sl) in enumerate(present):
         mask_crop = masks[sl] == label_value
         pixels_crop = pixels[sl]
         finite = mask_crop & numpy.isfinite(pixels_crop)
@@ -251,13 +244,7 @@ def get_intensity(
         # index into the bbox crop per label.
         boundaries = skimage.segmentation.find_boundaries(masks, mode="inner")
 
-        for label_value_minus_1, sl in enumerate(bboxes):
-            if sl is None:
-                continue
-            label_value = label_value_minus_1 + 1
-            out_i = label_to_idx.get(label_value)
-            if out_i is None:
-                continue
+        for out_i, (label_value, sl) in enumerate(present):
             mask_crop = masks[sl] == label_value
             pixels_crop = pixels[sl]
             edge = mask_crop & boundaries[sl] & numpy.isfinite(pixels_crop)
