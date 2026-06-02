@@ -45,6 +45,23 @@ _REGISTRIES: dict[str, dict[str, Callable]] = {
 _3D_FEATURES = ("intensity", "sizeshape", "texture", "granularity")
 
 
+def _numba_registries() -> dict[str, dict[str, Callable]]:
+    """Registries for the 'numba' accelerator.
+
+    Composes the numba implementations (currently ``intensity`` only) with the
+    numpy implementations of every other feature — a single global "numba"
+    selection still yields a full, working feature set, accelerated where a
+    numba backend exists. This is explicit per-function composition, NOT an
+    error-driven fallback.
+    """
+    from cp_measure.core.numba import get_intensity as _numba_intensity
+
+    return {
+        "core": {**_CORE, "intensity": _numba_intensity},
+        "correlation": _CORRELATION,
+    }
+
+
 def _dispatch(name: str) -> dict[str, Callable]:
     from cp_measure import _ACCELERATOR
 
@@ -55,9 +72,14 @@ def _dispatch(name: str) -> dict[str, Callable]:
             f"'jax' accelerator not yet wired for {name} measurements"
         )
     if _ACCELERATOR == "numba":
-        raise NotImplementedError(
-            f"'numba' accelerator not yet wired for {name} measurements"
-        )
+        from cp_measure._detect import HAS_NUMBA
+
+        if not HAS_NUMBA:
+            raise RuntimeError(
+                "accelerator 'numba' selected but numba is not installed; "
+                "install it via `pip install cp_measure[numba]`"
+            )
+        return _numba_registries()[name]
     if _ACCELERATOR == "fastest":
         raise NotImplementedError("'fastest' logic not yet implemented")
     raise ValueError(
