@@ -39,11 +39,9 @@ from cp_measure.core.measureobjectintensity import (
     STD_INTENSITY_EDGE,
     UPPER_QUARTILE_INTENSITY,
 )
-from cp_measure.primitives import (
-    flatten_labeled,
-    label_to_idx_lut,
-)
+from cp_measure.primitives import label_to_idx_lut
 from cp_measure.primitives._segment_numba import (
+    flatten_numba,
     segment_moments,
     segment_quantiles,
     segment_resid_sumsq,
@@ -86,7 +84,11 @@ def get_intensity(
     max_y = numpy.zeros(nobjects)
     max_z = numpy.zeros(nobjects)
 
-    values, seg0, xc, yc, zc = flatten_labeled(masks, masked_image, lut)
+    values, seg0, xc, yc, zc = flatten_numba(
+        numpy.ascontiguousarray(masks),
+        numpy.ascontiguousarray(masked_image, dtype=numpy.float64),
+        lut,
+    )
     has_objects = values.size > 0
 
     if has_objects:

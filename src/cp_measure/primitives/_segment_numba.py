@@ -14,6 +14,46 @@ from numba import njit
 
 
 @njit(cache=True)
+def flatten_numba(masks, pixels, lut):
+    """Flatten a labeled (Z, Y, X) image to ``(values, seg0, xc, yc, zc)``.
+
+    Two grid scans (count, then fill) replace the numpy ``(masks>0)&isfinite``
+    mask + ``numpy.nonzero`` + fancy-index gathers; coordinates are the loop
+    indices. Background and non-finite pixels are dropped, in C (raster) order.
+    ``masks`` and ``pixels`` must be C-contiguous and ``pixels`` float64.
+    """
+    Z, Y, X = masks.shape
+    M = 0
+    for z in range(Z):
+        for y in range(Y):
+            for x in range(X):
+                if masks[z, y, x] > 0 and np.isfinite(pixels[z, y, x]):
+                    M += 1
+    values = np.empty(M, np.float64)
+    seg0 = np.empty(M, np.int64)
+    xc = np.empty(M, np.float64)
+    yc = np.empty(M, np.float64)
+    zc = np.empty(M, np.float64)
+    i = 0
+    for z in range(Z):
+        for y in range(Y):
+            for x in range(X):
+                L = masks[z, y, x]
+                if L <= 0:
+                    continue
+                v = pixels[z, y, x]
+                if not np.isfinite(v):
+                    continue
+                values[i] = v
+                seg0[i] = lut[L]
+                xc[i] = x
+                yc[i] = y
+                zc[i] = z
+                i += 1
+    return values, seg0, xc, yc, zc
+
+
+@njit(cache=True)
 def segment_moments(values, seg0, xc, yc, zc, n):
     """One pass over the flat pixels accumulating, per segment:
 
