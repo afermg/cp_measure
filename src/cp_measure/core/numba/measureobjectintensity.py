@@ -86,7 +86,7 @@ def get_intensity(
 
     values, seg0, xc, yc, zc = flatten_numba(
         numpy.ascontiguousarray(masks),
-        numpy.ascontiguousarray(masked_image, dtype=numpy.float64),
+        numpy.ascontiguousarray(masked_image),
         lut,
     )
     has_objects = values.size > 0

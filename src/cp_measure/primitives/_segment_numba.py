@@ -20,7 +20,8 @@ def flatten_numba(masks, pixels, lut):
     Two grid scans (count, then fill) replace the numpy ``(masks>0)&isfinite``
     mask + ``numpy.nonzero`` + fancy-index gathers; coordinates are the loop
     indices. Background and non-finite pixels are dropped, in C (raster) order.
-    ``masks`` and ``pixels`` must be C-contiguous and ``pixels`` float64.
+    ``masks`` and ``pixels`` must be C-contiguous; ``pixels`` may be any float
+    dtype (kept values are upcast into the float64 ``values`` output).
     """
     Z, Y, X = masks.shape
     M = 0
