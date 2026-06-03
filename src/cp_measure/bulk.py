@@ -77,7 +77,7 @@ def _dispatch(name: str) -> dict[str, Callable]:
         if not HAS_NUMBA:
             raise RuntimeError(
                 "accelerator 'numba' selected but numba is not installed; "
-                "install it via `pip install cp_measure[numba]`"
+                "you can install it via `pip install cp_measure[numba]`"
             )
         return _numba_registries()[name]
     if _ACCELERATOR == "fastest":

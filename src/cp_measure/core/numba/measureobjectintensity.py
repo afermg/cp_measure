@@ -39,7 +39,7 @@ from cp_measure.core.measureobjectintensity import (
     STD_INTENSITY_EDGE,
     UPPER_QUARTILE_INTENSITY,
 )
-from cp_measure.primitives import label_to_idx_lut
+from cp_measure.primitives.segment import label_to_idx_lut
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
     inner_boundary,
