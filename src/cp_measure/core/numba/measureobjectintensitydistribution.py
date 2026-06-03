@@ -19,7 +19,6 @@ Both are batch-shaped via the canonical ``(B, Z, Y, X)`` form (single image =
 ``B == 1``); 2D-only (a ``Z > 1`` volume returns ``{}``, matching ``ndim == 3``).
 """
 
-import centrosome.cpmorphology
 import centrosome.zernike
 import numpy
 import scipy.ndimage
@@ -34,11 +33,7 @@ from cp_measure.core.measureobjectintensitydistribution import (
     OF_MEAN_FRAC,
     OF_RADIAL_CV,
 )
-from cp_measure.core.numba._radial import (
-    UNREACHED,
-    geodesic_chamfer_fifo,
-    radial_reduce,
-)
+from cp_measure.core.numba._radial import radial_object
 from cp_measure.core.numba._zernike import zernike_coeffs, zernike_moments_per_object
 from cp_measure.primitives.shapes import to_bzyx
 
@@ -142,53 +137,29 @@ def _radial_distribution_2d(
         return {k: numpy.zeros(0) for k in _radial_keys(scaled, bin_count)}
 
     slices = scipy.ndimage.find_objects(labels)
-    vals, segs, bins, wedges = [], [], [], []
+    nb = bin_count + 1
+    frac_at_d = numpy.zeros((n, nb))
+    mean_frac = numpy.zeros((n, nb))
+    radial_cv = numpy.zeros((n, nb))
     for label in range(1, n + 1):
         sl = slices[label - 1]
         if sl is None:
             continue
         # Crop to the object's bbox + a 1px background border, so the imported
-        # scipy EDT and the chamfer geodesic on the crop are bit-identical to the
-        # object computed in isolation (the Issue #22 semantics).
-        m = numpy.pad(labels[sl] == label, 1)
-        pix = numpy.pad(pixels[sl].astype(numpy.float64), 1)
+        # scipy EDT (exact Euclidean, kept host-side) and the in-kernel chamfer
+        # geodesic are bit-identical to the object computed in isolation (the
+        # Issue #22 semantics). The fused radial_object kernel then does the centre,
+        # geodesic, histograms and wedge-CV with no per-object host numpy.
+        m = numpy.ascontiguousarray(numpy.pad(labels[sl] == label, 1))
+        pix = numpy.ascontiguousarray(numpy.pad(pixels[sl].astype(numpy.float64), 1))
         d_to_edge = scipy.ndimage.distance_transform_edt(m)
-        ci_a, cj_a = centrosome.cpmorphology.maximum_position_of_labels(
-            d_to_edge, m.astype(numpy.int32), indices=numpy.array([1])
+        fad, mfr, cv = radial_object(
+            m, pix, d_to_edge, scaled, bin_count, maximum_radius
         )
-        ci, cj = int(ci_a[0]), int(cj_a[0])
-        d_from = geodesic_chamfer_fifo(numpy.ascontiguousarray(m), ci, cj)
-        good = m & (d_from < UNREACHED)
+        frac_at_d[label - 1] = fad
+        mean_frac[label - 1] = mfr
+        radial_cv[label - 1] = cv
 
-        nd = numpy.zeros(m.shape)
-        if scaled:
-            nd[good] = d_from[good] / (d_from[good] + d_to_edge[good] + 0.001)
-        else:
-            nd[good] = d_from[good] / maximum_radius
-        bin_idx = (nd * bin_count).astype(int)
-        bin_idx[bin_idx > bin_count] = bin_count
-
-        ii, jj = numpy.mgrid[0 : m.shape[0], 0 : m.shape[1]]
-        wedge = (
-            (ii > ci).astype(int)
-            + (jj > cj).astype(int) * 2
-            + (numpy.abs(ii - ci) > numpy.abs(jj - cj)).astype(int) * 4
-        )
-        gy, gx = numpy.where(good)
-        vals.append(pix[gy, gx])
-        segs.append(numpy.full(gy.size, label - 1, numpy.int64))
-        bins.append(bin_idx[gy, gx].astype(numpy.int64))
-        wedges.append(wedge[gy, gx].astype(numpy.int64))
-
-    values = numpy.ascontiguousarray(numpy.concatenate(vals), numpy.float64)
-    frac_at_d, mean_frac, radial_cv = radial_reduce(
-        values,
-        numpy.concatenate(segs),
-        numpy.concatenate(bins),
-        numpy.concatenate(wedges),
-        n,
-        bin_count,
-    )
     cols = {
         MF_FRAC_AT_D: frac_at_d,
         MF_MEAN_FRAC: mean_frac,

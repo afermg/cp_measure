@@ -75,61 +75,91 @@ def geodesic_chamfer_fifo(mask, si, sj):
 
 
 @njit(cache=True, error_model="numpy")
-def radial_reduce(values, seg0, bin_idx, wedge_idx, n, bin_count):
-    """Per-object radial features over flat per-pixel ``(value, seg, bin, wedge)``.
+def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
+    """All per-object radial work for one cropped object, in one numba pass.
 
-    Scatter-adds per-(object, bin) intensity ``hist`` and count ``num`` and
-    per-(object, bin, wedge) ``wsum``/``wcnt``; then per object/bin computes
-    ``FracAtD``, ``MeanFrac`` and ``RadialCV``. Returns three ``(n, bin_count + 1)``
-    arrays (the last column is the overflow bin). ``error_model="numpy"`` so
-    empty-object ``0/0`` yields ``nan`` like the reference's ``/sum`` and masked CV.
+    Folds the centre (argmax of ``d_to_edge`` within ``m``), the chamfer geodesic,
+    the per-bin intensity/count histograms and the per-(bin, 8-wedge) ``RadialCV``
+    into a single kernel — so the host loop does no per-object ``mgrid``/
+    ``np.where``/``maximum_position``/concatenate. Returns ``(frac_at_d, mean_frac,
+    radial_cv)``, each length ``bin_count + 1`` (last entry = overflow bin).
+
+    Centre tie-break: first pixel of maximal ``d_to_edge`` in C-order (deterministic
+    and field-independent). On a unique maximum this equals the reference's
+    ``scipy.ndimage.maximum_position``; only a symmetric centre plateau can differ
+    (an equally-valid centre — see the backend module note).
+    ``error_model="numpy"`` so empty-bin ``0/0`` yields ``nan`` like the reference.
     """
+    H, W = m.shape
+    # Centre = first (C-order) pixel with the maximal distance-to-edge.
+    best = -1.0
+    ci = 0
+    cj = 0
+    for r in range(H):
+        for c in range(W):
+            if m[r, c] and d_to_edge[r, c] > best:
+                best = d_to_edge[r, c]
+                ci = r
+                cj = c
+
+    d_from = geodesic_chamfer_fifo(m, ci, cj)
+
     nb = bin_count + 1
-    hist = np.zeros((n, nb))
-    num = np.zeros((n, nb))
-    wsum = np.zeros((n, nb, 8))
-    wcnt = np.zeros((n, nb, 8), np.int64)
-    for p in range(values.shape[0]):
-        o = seg0[p]
-        b = bin_idx[p]
-        w = wedge_idx[p]
-        v = values[p]
-        hist[o, b] += v
-        num[o, b] += 1.0
-        wsum[o, b, w] += v
-        wcnt[o, b, w] += 1
+    hist = np.zeros(nb)
+    num = np.zeros(nb)
+    wsum = np.zeros((nb, 8))
+    wcnt = np.zeros((nb, 8), np.int64)
+    for r in range(H):
+        for c in range(W):
+            if not (m[r, c] and d_from[r, c] < UNREACHED):
+                continue
+            df = d_from[r, c]
+            if scaled:
+                nd = df / (df + d_to_edge[r, c] + 0.001)
+            else:
+                nd = df / maximum_radius
+            b = int(nd * bin_count)
+            if b > bin_count:
+                b = bin_count
+            w = 0
+            if r > ci:
+                w += 1
+            if c > cj:
+                w += 2
+            if abs(r - ci) > abs(c - cj):
+                w += 4
+            v = pix[r, c]
+            hist[b] += v
+            num[b] += 1.0
+            wsum[b, w] += v
+            wcnt[b, w] += 1
 
     eps = np.finfo(np.float64).eps
-    frac_at_d = np.zeros((n, nb))
-    mean_frac = np.zeros((n, nb))
-    radial_cv = np.zeros((n, nb))
-    for o in range(n):
-        tot_h = 0.0
-        tot_n = 0.0
-        for b in range(nb):
-            tot_h += hist[o, b]
-            tot_n += num[o, b]
-        for b in range(nb):
-            fad = hist[o, b] / tot_h
-            fab = num[o, b] / tot_n
-            frac_at_d[o, b] = fad
-            mean_frac[o, b] = fad / (fab + eps)
-            # RadialCV: std/mean of the per-wedge mean intensities, over the
-            # populated wedges only (matches numpy.ma masked std/mean, ddof=0).
-            npop = 0
-            s = 0.0
+    frac_at_d = np.zeros(nb)
+    mean_frac = np.zeros(nb)
+    radial_cv = np.zeros(nb)
+    tot_h = hist.sum()
+    tot_n = num.sum()
+    for b in range(nb):
+        fad = hist[b] / tot_h
+        frac_at_d[b] = fad
+        mean_frac[b] = fad / (num[b] / tot_n + eps)
+        # RadialCV: std/mean of per-wedge mean intensities, populated wedges only
+        # (matches numpy.ma masked std/mean, ddof=0; 0 when no wedge populated).
+        npop = 0
+        s = 0.0
+        for w in range(8):
+            if wcnt[b, w] > 0:
+                npop += 1
+                s += wsum[b, w] / wcnt[b, w]
+        if npop == 0:
+            radial_cv[b] = 0.0
+        else:
+            meanw = s / npop
+            ss = 0.0
             for w in range(8):
-                if wcnt[o, b, w] > 0:
-                    npop += 1
-                    s += wsum[o, b, w] / wcnt[o, b, w]
-            if npop == 0:
-                radial_cv[o, b] = 0.0
-            else:
-                meanw = s / npop
-                ss = 0.0
-                for w in range(8):
-                    if wcnt[o, b, w] > 0:
-                        mw = wsum[o, b, w] / wcnt[o, b, w]
-                        ss += (mw - meanw) * (mw - meanw)
-                radial_cv[o, b] = np.sqrt(ss / npop) / meanw
+                if wcnt[b, w] > 0:
+                    mw = wsum[b, w] / wcnt[b, w]
+                    ss += (mw - meanw) * (mw - meanw)
+            radial_cv[b] = np.sqrt(ss / npop) / meanw
     return frac_at_d, mean_frac, radial_cv

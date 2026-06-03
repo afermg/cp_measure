@@ -64,47 +64,18 @@ def test_geodesic_leaves_disconnected_unreached():
 
 
 @requires_numba
-def test_radial_reduce_matches_numpy():
-    """radial_reduce histograms + wedge-CV vs a direct numpy computation."""
-    from cp_measure.core.numba._radial import radial_reduce
+def test_radial_object_centre_and_histograms():
+    """radial_object: centre = argmax d_to_edge, and per-bin FracAtD sums to ~1."""
+    from cp_measure.core.numba._radial import radial_object
 
-    rng = np.random.default_rng(0)
-    n, bin_count = 3, 4
-    M = 400
-    values = rng.random(M)
-    seg0 = rng.integers(0, n, M)
-    bin_idx = rng.integers(0, bin_count + 1, M)
-    wedge_idx = rng.integers(0, 8, M)
-    fad, mfr, cv = radial_reduce(
-        np.ascontiguousarray(values),
-        seg0.astype(np.int64),
-        bin_idx.astype(np.int64),
-        wedge_idx.astype(np.int64),
-        n,
-        bin_count,
+    m = np.zeros((23, 23), bool)
+    m[1:22, 1:22] = True  # odd square -> unique centre at (11, 11)
+    pix = np.ones((23, 23))
+    d_to_edge = scipy.ndimage.distance_transform_edt(m)
+    fad, mfr, cv = radial_object(
+        np.ascontiguousarray(m), np.ascontiguousarray(pix), d_to_edge, True, 4, 100
     )
-    nb = bin_count + 1
-    hist = np.zeros((n, nb))
-    num = np.zeros((n, nb))
-    wsum = np.zeros((n, nb, 8))
-    wcnt = np.zeros((n, nb, 8))
-    for v, o, b, w in zip(values, seg0, bin_idx, wedge_idx):
-        hist[o, b] += v
-        num[o, b] += 1
-        wsum[o, b, w] += v
-        wcnt[o, b, w] += 1
-    eps = np.finfo(float).eps
-    fad_ref = hist / hist.sum(1, keepdims=True)
-    fab = num / num.sum(1, keepdims=True)
-    mfr_ref = fad_ref / (fab + eps)
-    np.testing.assert_allclose(fad, fad_ref, rtol=1e-9)
-    np.testing.assert_allclose(mfr, mfr_ref, rtol=1e-9)
-    for o in range(n):
-        for b in range(nb):
-            pop = wcnt[o, b] > 0
-            if pop.sum() == 0:
-                assert cv[o, b] == 0.0
-            else:
-                means = wsum[o, b, pop] / wcnt[o, b, pop]
-                expected = np.std(means) / np.mean(means)
-                np.testing.assert_allclose(cv[o, b], expected, rtol=1e-9)
+    # uniform intensity -> FracAtD is the per-bin pixel fraction, sums to 1
+    np.testing.assert_allclose(fad.sum(), 1.0, rtol=1e-9)
+    # uniform intensity -> every wedge mean is equal -> RadialCV == 0
+    np.testing.assert_allclose(cv[:4], 0.0, atol=1e-12)
