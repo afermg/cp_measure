@@ -30,7 +30,9 @@ def _assert_same(a, b):
         numpy.testing.assert_allclose(a[k], b[k], **TOL, err_msg=f"key {k}")
 
 
-@pytest.mark.parametrize("sub,img", [(1.0, 1.0), (0.25, 0.25), (0.5, 0.25), (0.25, 1.0)])
+@pytest.mark.parametrize(
+    "sub,img", [(1.0, 1.0), (0.25, 0.25), (0.5, 0.25), (0.25, 1.0)]
+)
 def test_2d_matches_baseline(sub, img):
     mask, pixels = _scene()
     _assert_same(

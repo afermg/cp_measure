@@ -45,7 +45,12 @@ def get_granularity(
     masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
     results = [
         _granularity_one(
-            m, p, subsample_size, image_sample_size, element_size, granular_spectrum_length
+            m,
+            p,
+            subsample_size,
+            image_sample_size,
+            element_size,
+            granular_spectrum_length,
         )
         for m, p in zip(masks_zyx, pixels_zyx)
     ]
@@ -58,7 +63,12 @@ def _granularity_one(
     """Dispatch one ``(Z, Y, X)`` element: numba 2D path, else numpy baseline (3D)."""
     if mask_zyx.shape[0] == 1:  # Z == 1 -> 2D image
         return _granularity_2d(
-            mask_zyx[0], pixels_zyx[0], subsample_size, image_sample_size, element_size, ng
+            mask_zyx[0],
+            pixels_zyx[0],
+            subsample_size,
+            image_sample_size,
+            element_size,
+            ng,
         )
     return _get_granularity_numpy(
         mask_zyx, pixels_zyx, subsample_size, image_sample_size, element_size, ng
@@ -81,7 +91,10 @@ def _granularity_2d(
     # so we skip that dead order-0 resample.
     if subsample_size < 1:
         new_shape = (orig_shape * subsample_size).astype(int)
-        i, j = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float) / subsample_size
+        i, j = (
+            numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
+            / subsample_size
+        )
         pixels = scipy.ndimage.map_coordinates(orig_pixels, (i, j), order=1)
     else:
         pixels = orig_pixels.astype(numpy.float64, copy=True)
@@ -89,7 +102,10 @@ def _granularity_2d(
     # 2. Background subtraction via greyscale opening (numba disk erosion+dilation)
     if image_sample_size < 1:
         back_shape = new_shape * image_sample_size
-        i, j = numpy.mgrid[0 : back_shape[0], 0 : back_shape[1]].astype(float) / image_sample_size
+        i, j = (
+            numpy.mgrid[0 : back_shape[0], 0 : back_shape[1]].astype(float)
+            / image_sample_size
+        )
         back_pixels = scipy.ndimage.map_coordinates(pixels, (i, j), order=1)
     else:
         back_pixels = pixels
@@ -119,7 +135,9 @@ def _granularity_2d(
 
     flat_pos = numpy.flatnonzero(in_obj)
     labels_in = flat_mask[flat_pos]
-    counts = numpy.bincount(labels_in, minlength=max_label + 1)[1:].astype(numpy.float64)
+    counts = numpy.bincount(labels_in, minlength=max_label + 1)[1:].astype(
+        numpy.float64
+    )
 
     needs_resize = not numpy.array_equal(new_shape, orig_shape)
     if needs_resize:
@@ -128,9 +146,13 @@ def _granularity_2d(
         sx = xx * (float(new_shape[1] - 1) / float(orig_shape[1] - 1))
 
     def _label_mean(values_at_in_obj):
-        sums = numpy.bincount(labels_in, weights=values_at_in_obj, minlength=max_label + 1)[1:]
+        sums = numpy.bincount(
+            labels_in, weights=values_at_in_obj, minlength=max_label + 1
+        )[1:]
         with numpy.errstate(invalid="ignore", divide="ignore"):
-            return sums / counts  # 0/0 -> nan for absent labels, matching scipy.ndimage.mean
+            return (
+                sums / counts
+            )  # 0/0 -> nan for absent labels, matching scipy.ndimage.mean
 
     orig_valid = orig_pixels.ravel()[flat_pos].astype(numpy.float64)
     current_mean = _label_mean(orig_valid)
@@ -152,7 +174,9 @@ def _granularity_2d(
             rec_valid = rec.ravel()[flat_pos]
 
         new_mean = _label_mean(rec_valid)
-        results[f"Granularity_{granularity_id}"] = (current_mean - new_mean) * 100 / start_mean
+        results[f"Granularity_{granularity_id}"] = (
+            (current_mean - new_mean) * 100 / start_mean
+        )
         current_mean = new_mean
 
     return results

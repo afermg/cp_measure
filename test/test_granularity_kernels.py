@@ -40,7 +40,9 @@ def _spike(H, W):
 
 
 @pytest.mark.parametrize("radius", [1, 2, 3, 5, 7, 10])
-@pytest.mark.parametrize("name", ["random", "int_ties", "gradient", "border_hot", "single_spike"])
+@pytest.mark.parametrize(
+    "name", ["random", "int_ties", "gradient", "border_hot", "single_spike"]
+)
 def test_disk_erosion_bit_exact(radius, name):
     img = _images(radius)[name]
     expected = M.erosion(img, M.disk(radius))
@@ -48,20 +50,26 @@ def test_disk_erosion_bit_exact(radius, name):
 
 
 @pytest.mark.parametrize("radius", [1, 2, 3, 5, 7, 10])
-@pytest.mark.parametrize("name", ["random", "int_ties", "gradient", "border_hot", "single_spike"])
+@pytest.mark.parametrize(
+    "name", ["random", "int_ties", "gradient", "border_hot", "single_spike"]
+)
 def test_disk_dilation_bit_exact(radius, name):
     img = _images(radius)[name]
     expected = M.dilation(img, M.disk(radius))
     numpy.testing.assert_array_equal(disk_dilation_2d(img, radius), expected)
 
 
-@pytest.mark.parametrize("name", ["random", "int_ties", "gradient", "border_hot", "single_spike"])
+@pytest.mark.parametrize(
+    "name", ["random", "int_ties", "gradient", "border_hot", "single_spike"]
+)
 def test_4conn_erosion_bit_exact(name):
     img = _images(0)[name]
     numpy.testing.assert_array_equal(erosion_4conn_2d(img), M.erosion(img, M.disk(1)))
 
 
-@pytest.mark.parametrize("name", ["random", "int_ties", "gradient", "border_hot", "single_spike"])
+@pytest.mark.parametrize(
+    "name", ["random", "int_ties", "gradient", "border_hot", "single_spike"]
+)
 def test_4conn_dilation_bit_exact(name):
     img = _images(0)[name]
     numpy.testing.assert_array_equal(dilation_4conn_2d(img), M.dilation(img, M.disk(1)))
@@ -84,7 +92,9 @@ def test_reconstruction_bit_exact(name):
     mask = img
     seed = M.erosion(mask, M.disk(1))
     expected = M.reconstruction(seed, mask, footprint=M.disk(1))
-    got = reconstruction_by_dilation_2d(seed.astype(numpy.float64), mask.astype(numpy.float64))
+    got = reconstruction_by_dilation_2d(
+        seed.astype(numpy.float64), mask.astype(numpy.float64)
+    )
     numpy.testing.assert_array_equal(got, expected)
 
 

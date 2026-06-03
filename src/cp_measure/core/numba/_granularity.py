@@ -11,7 +11,7 @@ operations the numpy baseline uses:
   min/max, matching ``skimage`` with a ``disk(1)`` footprint (the per-iteration
   erosion + the dilation used inside reconstruction).
 - :func:`reconstruction_by_dilation_2d` — morphological reconstruction by dilation
-  (4-connectivity) via raster-until-convergence, matching
+  (4-connectivity) via the Vincent (1993) FIFO-hybrid, matching
   ``skimage.morphology.reconstruction(seed, mask, footprint=disk(1))``.
 
 Borders match skimage's footprint ops via ``edge`` (clamp) padding applied on the
@@ -51,7 +51,9 @@ def _disk_reduce(P, radius, hx, H, W, is_max):
     for dy in range(-radius, radius + 1):
         w = hx[dy] if dy >= 0 else hx[-dy]
         k = 2 * w + 1
-        h_block_start = (L - 1) % k  # x % k of the last element (one modulo per row-band)
+        h_block_start = (
+            L - 1
+        ) % k  # x % k of the last element (one modulo per row-band)
         for i in range(H):
             pr = i + radius + dy
             # forward prefix-min/max within blocks of size k (counter tracks x % k)
@@ -106,7 +108,9 @@ def disk_erosion_2d(img: NDArray, radius: int) -> NDArray[np.float64]:
     if radius <= 0:
         return a.copy()
     P = np.pad(a, radius, mode="edge")
-    return _disk_reduce(P, radius, _disk_halfwidths(radius), a.shape[0], a.shape[1], False)
+    return _disk_reduce(
+        P, radius, _disk_halfwidths(radius), a.shape[0], a.shape[1], False
+    )
 
 
 def disk_dilation_2d(img: NDArray, radius: int) -> NDArray[np.float64]:
@@ -115,7 +119,9 @@ def disk_dilation_2d(img: NDArray, radius: int) -> NDArray[np.float64]:
     if radius <= 0:
         return a.copy()
     P = np.pad(a, radius, mode="edge")
-    return _disk_reduce(P, radius, _disk_halfwidths(radius), a.shape[0], a.shape[1], True)
+    return _disk_reduce(
+        P, radius, _disk_halfwidths(radius), a.shape[0], a.shape[1], True
+    )
 
 
 @njit(cache=True)
@@ -221,9 +227,9 @@ def reconstruction_by_dilation_2d(seed, mask):
             if v > m:
                 v = m
             out[i, j] = v
-            seed_p = (i < H - 1 and out[i + 1, j] < v and out[i + 1, j] < mask[i + 1, j]) or (
-                j < W - 1 and out[i, j + 1] < v and out[i, j + 1] < mask[i, j + 1]
-            )
+            seed_p = (
+                i < H - 1 and out[i + 1, j] < v and out[i + 1, j] < mask[i + 1, j]
+            ) or (j < W - 1 and out[i, j + 1] < v and out[i, j + 1] < mask[i, j + 1])
             if seed_p:
                 queue[tail] = i * W + j
                 inq[i, j] = 1
