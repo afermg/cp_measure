@@ -210,8 +210,6 @@ def costes_per_object(g1, g2, offsets, n, scale, mode):
         else:
             thr_fi_c, thr_si_c = _linear(g1, g2, lo, hi, a, b, scale, mode == 2)
 
-        any_fi = False
-        any_si = False
         sum_ge_fi = 0.0
         sum_ge_si = 0.0
         sum_fi_c = 0.0
@@ -220,10 +218,6 @@ def costes_per_object(g1, g2, offsets, n, scale, mode):
         for i in range(lo, hi):
             v1 = g1[i]
             v2 = g2[i]
-            if v1 > thr_fi_c:
-                any_fi = True
-            if v2 > thr_si_c:
-                any_si = True
             if v1 >= thr_fi_c:
                 sum_ge_fi += v1
             if v2 >= thr_si_c:
@@ -232,9 +226,10 @@ def costes_per_object(g1, g2, offsets, n, scale, mode):
                 n_comb += 1
                 sum_fi_c += v1
                 sum_si_c += v2
+        # tot_* (denominators) are read only when n_comb > 0, which guarantees a
+        # pixel strictly above each threshold, hence sum_ge_* covers it — so the
+        # reference's `if any(x > thr)` guard on the totals is always true here.
         if n_comb > 0:
-            tot_fi = sum_ge_fi if any_fi else 0.0
-            tot_si = sum_ge_si if any_si else 0.0
-            C1[k] = sum_fi_c / tot_fi
-            C2[k] = sum_si_c / tot_si
+            C1[k] = sum_fi_c / sum_ge_fi
+            C2[k] = sum_si_c / sum_ge_si
     return C1, C2

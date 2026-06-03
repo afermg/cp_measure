@@ -52,18 +52,20 @@ from cp_measure.primitives.shapes import to_bzyx
 _COSTES_MODE = {M_FASTER: 0, M_FAST: 1, M_ACCURATE: 2}
 
 
-def _run(masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc):
-    """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
+def _flatten_image(masks_zyx, pixels_1_zyx, pixels_2_zyx):
+    """Normalise one ``(Z, Y, X)`` triple to grouped per-object value blocks.
 
-    Returns the nine per-object arrays from ``coloc_per_object``, or ``None`` when
-    the image holds no objects (the callers then emit empty feature arrays).
+    Returns ``(g1, g2, offsets, n)``; an empty image (no objects) yields
+    ``(None, None, offsets, 0)``. Shared by every colocalization feature so the
+    mask-contiguity, ``labels_to_offsets`` and ``flatten_pairs_grouped`` chain
+    lives in one place.
     """
     masks = numpy.ascontiguousarray(masks_zyx)
     if not numpy.issubdtype(masks.dtype, numpy.integer):
         masks = masks.astype(numpy.intp)
     lut, n, offsets = labels_to_offsets(masks)
     if n == 0:
-        return None
+        return None, None, offsets, 0
     g1, g2 = flatten_pairs_grouped(
         masks,
         numpy.ascontiguousarray(pixels_1_zyx, dtype=numpy.float64),
@@ -71,6 +73,18 @@ def _run(masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc):
         lut,
         offsets,
     )
+    return g1, g2, offsets, n
+
+
+def _run(masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc):
+    """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
+
+    Returns the nine per-object arrays from ``coloc_per_object``, or ``None`` when
+    the image holds no objects (the callers then emit empty feature arrays).
+    """
+    g1, g2, offsets, n = _flatten_image(masks_zyx, pixels_1_zyx, pixels_2_zyx)
+    if n == 0:
+        return None
     return coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc)
 
 
@@ -179,15 +193,9 @@ def get_correlation_costes(
     _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
 
     def run(masks_zyx, p1_zyx, p2_zyx):
-        m = numpy.ascontiguousarray(masks_zyx)
-        if not numpy.issubdtype(m.dtype, numpy.integer):
-            m = m.astype(numpy.intp)
-        lut, n, offsets = labels_to_offsets(m)
+        g1, g2, offsets, n = _flatten_image(masks_zyx, p1_zyx, p2_zyx)
         if n == 0:
             return {f"{F_COSTES_FORMAT}_1": _EMPTY, f"{F_COSTES_FORMAT}_2": _EMPTY}
-        p1 = numpy.ascontiguousarray(p1_zyx, dtype=numpy.float64)
-        p2 = numpy.ascontiguousarray(p2_zyx, dtype=numpy.float64)
-        g1, g2 = flatten_pairs_grouped(m, p1, p2, lut, offsets)
         scale = float(infer_scale(numpy.asarray(p1_zyx)))
         c1, c2 = costes_per_object(g1, g2, offsets, n, scale, mode)
         return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
