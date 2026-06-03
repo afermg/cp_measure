@@ -40,6 +40,7 @@ from cp_measure.core.measureobjectintensity import (
     UPPER_QUARTILE_INTENSITY,
 )
 from cp_measure.primitives.segment import label_to_idx_lut
+from cp_measure.primitives.shapes import to_bzyx
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
     inner_boundary,
@@ -51,20 +52,39 @@ from cp_measure.primitives._segment_numba import (
 
 
 def get_intensity(
+    masks,
+    pixels,
+    edge_measurements: bool = True,
+):
+    """Per-object intensity features; accepts a single image/volume or a batch.
+
+    Returns a single feature dict for a lone 2D image or 3D volume, or a list of
+    such dicts for a batch (4D ``(B, Z, Y, X)`` array or a list of images). See
+    :func:`cp_measure.primitives.shapes.to_bzyx` for the accepted shapes; a single
+    image is the ``B == 1`` case of one batched code path.
+    """
+    masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
+    results = [
+        _intensity_volume(m, p, edge_measurements)
+        for m, p in zip(masks_zyx, pixels_zyx)
+    ]
+    return unwrap(results)
+
+
+def _intensity_volume(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """masks is a labeled array where 0 are background."""
-    orig_ndim = pixels.ndim
+    """Intensity features for one ``(Z, Y, X)`` volume (a 2D image is ``Z == 1``).
 
-    masked_image = pixels
-    if pixels.ndim == 2:
-        masked_image = pixels.reshape(1, *pixels.shape)
-        if masks.ndim == 2:
-            masks = masks.reshape(1, *masks.shape)
-    elif pixels.ndim == 3 and masks.ndim == 2:  # 3D image, 2D mask
-        masks = masks.reshape(1, *masks.shape)
+    ``masks`` is a labeled array where 0 is background. A ``(1, Y, X)`` mask paired
+    with a ``(Z, Y, X)`` image is the 2D-mask-on-stack broadcast (preserved from the
+    original backend). The MAD fraction follows the input dimensionality — 1/2 for a
+    2D image (``Z == 1``), 1/3 for a true volume — matching the numpy baseline's
+    ``1 / pixels.ndim``.
+    """
+    orig_ndim = 2 if pixels.shape[0] == 1 else 3
 
     lut, nobjects = label_to_idx_lut(masks)
 
@@ -87,7 +107,7 @@ def get_intensity(
 
     values, seg0, xc, yc, zc = flatten_numba(
         numpy.ascontiguousarray(masks),
-        numpy.ascontiguousarray(masked_image),
+        numpy.ascontiguousarray(pixels),
         lut,
     )
     has_objects = values.size > 0
@@ -147,7 +167,7 @@ def get_intensity(
             emask = inner_boundary(numpy.ascontiguousarray(masks[0]))[numpy.newaxis] > 0
         else:
             emask = skimage.segmentation.find_boundaries(masks, mode="inner") > 0
-        e_values = masked_image[emask].astype(numpy.float64)
+        e_values = pixels[emask].astype(numpy.float64)
         e_seg0 = lut[masks[emask]]
 
         if e_values.size > 0:
