@@ -9,20 +9,26 @@ from cp_measure._detect import HAS_NUMBA
 requires_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
 
+def _offsets(masks):
+    """CSR block bounds for contiguous labels 1..N — the cumulative pixel counts."""
+    n = int(masks.max())
+    offsets = np.zeros(n + 1, np.int64)
+    offsets[1:] = np.cumsum(np.bincount(masks.ravel(), minlength=n + 1)[1:])
+    return offsets
+
+
 @requires_numba
 def test_flatten_pairs_grouped_blocks():
     from cp_measure.primitives._segment_numba import flatten_pairs_grouped
-    from cp_measure.primitives.segment import label_to_idx_lut
 
     masks = np.array([[0, 1, 1], [2, 2, 0], [2, 0, 1]], np.int64)
     p1 = np.arange(9, dtype=np.float64).reshape(3, 3)
     p2 = (np.arange(9, dtype=np.float64) * 10).reshape(3, 3)
-    lut, n = label_to_idx_lut(masks[np.newaxis])
-    g1, g2, offsets = flatten_pairs_grouped(
-        masks[np.newaxis], p1[np.newaxis], p2[np.newaxis], lut, n
+    offsets = _offsets(masks[np.newaxis])
+    g1, g2 = flatten_pairs_grouped(
+        masks[np.newaxis], p1[np.newaxis], p2[np.newaxis], offsets
     )
 
-    assert n == 2
     assert list(offsets) == [0, 3, 6]  # label 1 has 3 px, label 2 has 3 px
     # Each object's block is exactly the (channel-aligned) masked pixels.
     assert sorted(g1[0:3]) == sorted(p1[masks == 1])
@@ -35,14 +41,13 @@ def test_flatten_pairs_grouped_blocks():
 def test_flatten_pairs_grouped_keeps_nonfinite():
     """Reference extracts pixels[mask] with no finiteness filter — match it."""
     from cp_measure.primitives._segment_numba import flatten_pairs_grouped
-    from cp_measure.primitives.segment import label_to_idx_lut
 
     masks = np.array([[1, 1, 1]], np.int64)
     p1 = np.array([[1.0, np.nan, 3.0]])
     p2 = np.array([[1.0, 2.0, np.inf]])
-    lut, n = label_to_idx_lut(masks[np.newaxis])
-    g1, g2, offsets = flatten_pairs_grouped(
-        masks[np.newaxis], p1[np.newaxis], p2[np.newaxis], lut, n
+    offsets = _offsets(masks[np.newaxis])
+    g1, g2 = flatten_pairs_grouped(
+        masks[np.newaxis], p1[np.newaxis], p2[np.newaxis], offsets
     )
     assert offsets[-1] == 3  # all three pixels kept
     assert np.isnan(g1).sum() == 1 and np.isinf(g2).sum() == 1
