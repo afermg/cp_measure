@@ -9,9 +9,9 @@
 sub-image — which **fixes Issue #22** (per-object results no longer depend on other
 labels in the field) and lets the dominant geometry run on small arrays — and
 replaces centrosome's ``propagate`` (the 80% cost) with a bit-exact numba chamfer
-geodesic (:func:`cp_measure.core.numba._radial.geodesic_chamfer_fifo`) plus numba
-histogram/wedge-CV reductions. Exact-Euclidean ``distance_transform_edt`` and the
-centre (``maximum_position_of_labels``) stay host-side (scipy/centrosome).
+geodesic plus the centre and histogram/wedge-CV reductions, all fused into one
+per-crop kernel (:func:`cp_measure.core.numba._radial.radial_object`). Only the
+exact-Euclidean ``distance_transform_edt`` stays host-side (scipy).
 NOTE: because of the #22 fix, this diverges from the current (buggy) numpy baseline
 on multi-object fields; it equals the baseline run on each object in ISOLATION.
 
@@ -108,17 +108,21 @@ def get_radial_distribution(
     return unwrap(results)
 
 
-def _radial_keys(scaled, bin_count):
-    """The ordered output feature names for the given (scaled, bin_count)."""
-    names = []
+# (per-bin name template, overflow-bin name) per feature, in result order. The
+# triple index (0,1,2) selects the (frac_at_d, mean_frac, radial_cv) array.
+_RADIAL_FEATURES = (
+    (MF_FRAC_AT_D, OF_FRAC_AT_D),
+    (MF_MEAN_FRAC, OF_MEAN_FRAC),
+    (MF_RADIAL_CV, OF_RADIAL_CV),
+)
+
+
+def _radial_features(scaled, bin_count):
+    """Yield ``(col, name, bin)`` for each output feature, in order — ``col`` picks
+    the ``(frac_at_d, mean_frac, radial_cv)`` array, ``bin`` its column."""
     for b in range(bin_count + (0 if scaled else 1)):
-        for mf, of in (
-            (MF_FRAC_AT_D, OF_FRAC_AT_D),
-            (MF_MEAN_FRAC, OF_MEAN_FRAC),
-            (MF_RADIAL_CV, OF_RADIAL_CV),
-        ):
-            names.append(of if b == bin_count else mf % (b + 1, bin_count))
-    return names
+        for col, (mf, of) in enumerate(_RADIAL_FEATURES):
+            yield col, (of if b == bin_count else mf % (b + 1, bin_count)), b
 
 
 def _radial_distribution_2d(
@@ -132,9 +136,14 @@ def _radial_distribution_2d(
         return {}
     labels = labels_zyx[0]
     pixels = pixels_zyx[0]
+    # cp_measure labels are the contiguous 1..n of relabel_sequential, so the object
+    # count is max() and the segment index is label-1 (matching the numpy baseline,
+    # which indexes its (nobjects, ...) arrays by label-1).
     n = int(labels.max()) if labels.size else 0
     if n == 0:  # no objects (fringe) -> empty array per key
-        return {k: numpy.zeros(0) for k in _radial_keys(scaled, bin_count)}
+        return {
+            name: numpy.zeros(0) for _, name, _ in _radial_features(scaled, bin_count)
+        }
 
     slices = scipy.ndimage.find_objects(labels)
     nb = bin_count + 1
@@ -150,8 +159,9 @@ def _radial_distribution_2d(
         # geodesic are bit-identical to the object computed in isolation (the
         # Issue #22 semantics). The fused radial_object kernel then does the centre,
         # geodesic, histograms and wedge-CV with no per-object host numpy.
-        m = numpy.ascontiguousarray(numpy.pad(labels[sl] == label, 1))
-        pix = numpy.ascontiguousarray(numpy.pad(pixels[sl].astype(numpy.float64), 1))
+        # numpy.pad returns C-contiguous arrays, so the kernel needs no further copy.
+        m = numpy.pad(labels[sl] == label, 1)
+        pix = numpy.pad(pixels[sl].astype(numpy.float64), 1)
         d_to_edge = scipy.ndimage.distance_transform_edt(m)
         fad, mfr, cv = radial_object(
             m, pix, d_to_edge, scaled, bin_count, maximum_radius
@@ -160,21 +170,7 @@ def _radial_distribution_2d(
         mean_frac[label - 1] = mfr
         radial_cv[label - 1] = cv
 
-    cols = {
-        MF_FRAC_AT_D: frac_at_d,
-        MF_MEAN_FRAC: mean_frac,
-        MF_RADIAL_CV: radial_cv,
-        OF_FRAC_AT_D: frac_at_d,
-        OF_MEAN_FRAC: mean_frac,
-        OF_RADIAL_CV: radial_cv,
+    arrays = (frac_at_d, mean_frac, radial_cv)
+    return {
+        name: arrays[col][:, b] for col, name, b in _radial_features(scaled, bin_count)
     }
-    results = {}
-    for b in range(bin_count + (0 if scaled else 1)):
-        for mf, of in (
-            (MF_FRAC_AT_D, OF_FRAC_AT_D),
-            (MF_MEAN_FRAC, OF_MEAN_FRAC),
-            (MF_RADIAL_CV, OF_RADIAL_CV),
-        ):
-            name = of if b == bin_count else mf % (b + 1, bin_count)
-            results[name] = cols[of][:, b]
-    return results
