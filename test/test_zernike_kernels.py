@@ -4,11 +4,29 @@ import centrosome.zernike
 import numpy
 import pytest
 
-from cp_measure.core.numba._zernike import (
-    _zernike_basis_numpy,
-    zernike_coeffs,
-    zernike_moments,
-)
+from cp_measure.core.numba._zernike import zernike_coeffs, zernike_moments
+
+
+def _zernike_basis_numpy(xm, ym, lut, nterms, m_arr):
+    """Numpy reference for the per-pixel basis ``V_nm`` (mirrors centrosome).
+
+    The independent re-derivation used to lock the conventions and validate the
+    fused kernel. ``xm``/``ym`` are flat ``(M,)`` normalised column/row offsets;
+    returns ``(M, K)`` complex.
+    """
+    M = xm.shape[0]
+    K = lut.shape[0]
+    r2 = xm * xm + ym * ym
+    z = ym + 1j * xm
+    out = numpy.zeros((M, K), dtype=complex)
+    for k in range(K):
+        s = numpy.zeros(M)
+        for t in range(int(nterms[k])):
+            s = s * r2 + lut[k, t]
+        s[r2 > 1] = 0
+        m = int(m_arr[k])
+        out[:, k] = s if m == 0 else s * (z**m)
+    return out
 
 
 @pytest.mark.parametrize("degree", [3, 6, 9])

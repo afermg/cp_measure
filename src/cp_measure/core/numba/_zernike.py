@@ -19,10 +19,13 @@ degree-only, cheap) via :func:`zernike_coeffs`; the per-pixel evaluation replica
 ``minimum_enclosing_circle`` (center/radius) and label enumeration stay on the host.
 """
 
+import centrosome.cpmorphology
 import centrosome.zernike
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
+
+from cp_measure.primitives.segment import label_to_idx_lut
 
 
 def zernike_coeffs(
@@ -90,22 +93,48 @@ def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n):
     return vr, vi
 
 
-def _zernike_basis_numpy(xm, ym, lut, nterms, m_arr):
-    """Numpy reference for the per-pixel basis ``V_nm`` (mirrors centrosome).
+def zernike_moments_per_object(labels, pixels, coeffs):
+    """Per-object weighted-complex Zernike sum shared by both 2D backends.
 
-    Used to lock the conventions and validate the fused numba kernel. ``xm``/``ym``
-    are flat ``(M,)`` normalised column/row offsets. Returns ``(M, K)`` complex.
+    Does the part identical to shape and radial Zernikes: enumerate objects,
+    find the per-object minimum enclosing circle, normalise each labeled pixel's
+    coordinates into the unit disk (``ym`` from rows, ``xm`` from cols), and run the
+    fused kernel. ``pixels`` is the intensity image for the weighted (radial) case
+    or ``None`` for the unweighted (shape) case. ``coeffs`` is :func:`zernike_coeffs`.
+
+    Returns ``(vr, vi, radii, seg0)``: ``vr``/``vi`` are ``(n, K)`` Re/Im sums,
+    ``radii`` ``(n,)`` the enclosing-circle radii (shape's ``π·r²`` denominator),
+    ``seg0`` ``(M,)`` the 0-based object index per pixel (radial's pixel-count
+    denominator via ``bincount``). ``n == vr.shape[0]`` is 0 when there are no objects.
     """
-    M = xm.shape[0]
+    lut, nterms, m_arr = coeffs
     K = lut.shape[0]
-    r2 = xm * xm + ym * ym
-    z = ym + 1j * xm
-    out = np.zeros((M, K), dtype=complex)
-    for k in range(K):
-        s = np.zeros(M)
-        for t in range(int(nterms[k])):
-            s = s * r2 + lut[k, t]
-        s[r2 > 1] = 0
-        m = int(m_arr[k])
-        out[:, k] = s if m == 0 else s * (z**m)
-    return out
+    label_lut, n = label_to_idx_lut(labels)
+    if n == 0:
+        z = np.zeros((0, K))
+        return z, z, np.zeros(0), np.zeros(0, np.int64)
+
+    unique_labels = np.flatnonzero(label_lut >= 0)  # present labels, ascending
+    centers, radii = centrosome.cpmorphology.minimum_enclosing_circle(
+        labels, unique_labels
+    )
+    rows, cols = np.nonzero(labels)
+    seg0 = label_lut[labels[rows, cols]]  # int64 (label_lut is int64), 0-based rank
+    ym = (rows - centers[seg0, 0]) / radii[seg0]  # normalised row offset
+    xm = (cols - centers[seg0, 1]) / radii[seg0]  # normalised column offset
+    weights = (
+        np.ones(seg0.shape[0])
+        if pixels is None
+        else pixels[rows, cols].astype(np.float64)
+    )
+    vr, vi = zernike_moments(
+        weights,
+        np.ascontiguousarray(xm),
+        np.ascontiguousarray(ym),
+        seg0,
+        lut,
+        nterms,
+        m_arr,
+        n,
+    )
+    return vr, vi, radii, seg0
