@@ -62,6 +62,34 @@ def test_numba_intensity_matches_numpy(dim, edge):
 
 
 @requires_numba
+def test_numba_intensity_single_returns_dict():
+    from cp_measure.core.numba import get_intensity as intensity_numba
+
+    mask, pixels = _mask_pixels_2d()
+    assert isinstance(intensity_numba(mask, pixels), dict)
+
+
+@requires_numba
+@pytest.mark.parametrize("kind", ["stacked4d", "list"])
+def test_numba_intensity_batch_matches_per_image(kind):
+    """Batch (4D or list) == looping the single-image path; single = batch-of-1."""
+    from cp_measure.core.numba import get_intensity as intensity_numba
+
+    scenes = [_mask_pixels_2d() for _ in range(3)]
+    if kind == "stacked4d":
+        masks = np.stack([m[np.newaxis] for m, _ in scenes])  # (B, 1, H, W)
+        pixels = np.stack([p[np.newaxis] for _, p in scenes])
+    else:
+        masks = [m for m, _ in scenes]
+        pixels = [p for _, p in scenes]
+
+    out = intensity_numba(masks, pixels)
+    assert isinstance(out, list) and len(out) == 3
+    for (m, p), got in zip(scenes, out):
+        _assert_dicts_match(intensity_numba(m, p), got)
+
+
+@requires_numba
 def test_set_accelerator_numba_composes_with_numpy():
     cp_measure.set_accelerator("numba")
     try:
