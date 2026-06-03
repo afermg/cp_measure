@@ -62,12 +62,32 @@ def test_numba_intensity_matches_numpy(dim, edge):
 
 
 @requires_numba
+@pytest.mark.parametrize("sub", [1.0, 0.25], ids=["fullres", "subsampled"])
+def test_numba_granularity_matches_numpy(sub):
+    from cp_measure.core.measuregranularity import get_granularity as gran_numpy
+    from cp_measure.core.numba import get_granularity as gran_numba
+
+    mask, pixels = _mask_pixels_2d()
+    ref = gran_numpy(mask, pixels, subsample_size=sub, image_sample_size=sub)
+    got = gran_numba(mask, pixels, subsample_size=sub, image_sample_size=sub)
+    # bit-exact morphology; per-object mean is a float reduction -> small tol, nan-aware
+    assert set(got) == set(ref)
+    for key in ref:
+        np.testing.assert_allclose(
+            got[key], ref[key], rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
+        )
+
+
+@requires_numba
 def test_set_accelerator_numba_composes_with_numpy():
     cp_measure.set_accelerator("numba")
     try:
         core = cp_measure.bulk.get_core_measurements()
         assert core["intensity"].__module__ == (
             "cp_measure.core.numba.measureobjectintensity"
+        )
+        assert core["granularity"].__module__ == (
+            "cp_measure.core.numba.measuregranularity"
         )
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
@@ -77,6 +97,7 @@ def test_set_accelerator_numba_composes_with_numpy():
 
     restored = cp_measure.bulk.get_core_measurements()
     assert restored["intensity"].__module__ == "cp_measure.core.measureobjectintensity"
+    assert restored["granularity"].__module__ == "cp_measure.core.measuregranularity"
 
 
 def test_set_accelerator_numba_absent_raises(monkeypatch):
