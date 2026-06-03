@@ -39,7 +39,7 @@ from cp_measure.core.measurecolocalization import (
 )
 from cp_measure.core.numba._colocalization import coloc_per_object
 from cp_measure.primitives._segment_numba import flatten_pairs_grouped
-from cp_measure.primitives.segment import label_to_idx_lut
+from cp_measure.primitives.segment import labels_to_offsets
 from cp_measure.primitives.shapes import to_bzyx
 
 
@@ -52,15 +52,15 @@ def _run(masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc):
     masks = numpy.ascontiguousarray(masks_zyx)
     if not numpy.issubdtype(masks.dtype, numpy.integer):
         masks = masks.astype(numpy.intp)
-    lut, n = label_to_idx_lut(masks)
+    lut, n, offsets = labels_to_offsets(masks)
     if n == 0:
         return None
-    g1, g2, offsets = flatten_pairs_grouped(
+    g1, g2 = flatten_pairs_grouped(
         masks,
         numpy.ascontiguousarray(pixels_1_zyx, dtype=numpy.float64),
         numpy.ascontiguousarray(pixels_2_zyx, dtype=numpy.float64),
         lut,
-        n,
+        offsets,
     )
     return coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc)
 

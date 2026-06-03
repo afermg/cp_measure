@@ -12,14 +12,14 @@ requires_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 @requires_numba
 def test_flatten_pairs_grouped_blocks():
     from cp_measure.primitives._segment_numba import flatten_pairs_grouped
-    from cp_measure.primitives.segment import label_to_idx_lut
+    from cp_measure.primitives.segment import labels_to_offsets
 
     masks = np.array([[0, 1, 1], [2, 2, 0], [2, 0, 1]], np.int64)
     p1 = np.arange(9, dtype=np.float64).reshape(3, 3)
     p2 = (np.arange(9, dtype=np.float64) * 10).reshape(3, 3)
-    lut, n = label_to_idx_lut(masks[np.newaxis])
-    g1, g2, offsets = flatten_pairs_grouped(
-        masks[np.newaxis], p1[np.newaxis], p2[np.newaxis], lut, n
+    lut, n, offsets = labels_to_offsets(masks[np.newaxis])
+    g1, g2 = flatten_pairs_grouped(
+        masks[np.newaxis], p1[np.newaxis], p2[np.newaxis], lut, offsets
     )
 
     assert n == 2
@@ -35,17 +35,31 @@ def test_flatten_pairs_grouped_blocks():
 def test_flatten_pairs_grouped_keeps_nonfinite():
     """Reference extracts pixels[mask] with no finiteness filter — match it."""
     from cp_measure.primitives._segment_numba import flatten_pairs_grouped
-    from cp_measure.primitives.segment import label_to_idx_lut
+    from cp_measure.primitives.segment import labels_to_offsets
 
     masks = np.array([[1, 1, 1]], np.int64)
     p1 = np.array([[1.0, np.nan, 3.0]])
     p2 = np.array([[1.0, 2.0, np.inf]])
-    lut, n = label_to_idx_lut(masks[np.newaxis])
-    g1, g2, offsets = flatten_pairs_grouped(
-        masks[np.newaxis], p1[np.newaxis], p2[np.newaxis], lut, n
+    lut, n, offsets = labels_to_offsets(masks[np.newaxis])
+    g1, g2 = flatten_pairs_grouped(
+        masks[np.newaxis], p1[np.newaxis], p2[np.newaxis], lut, offsets
     )
     assert offsets[-1] == 3  # all three pixels kept
     assert np.isnan(g1).sum() == 1 and np.isinf(g2).sum() == 1
+
+
+@pytest.mark.parametrize("labels", [[0, 1, 2, 3], [0, 2, 5, 5, 2], [0, 0, 0]])
+def test_labels_to_offsets_agrees_with_lut(labels):
+    """bincount-based (lut, n) == find_objects-based; offsets are the CSR counts."""
+    from cp_measure.primitives.segment import label_to_idx_lut, labels_to_offsets
+
+    masks = np.array(labels, np.int64).reshape(1, 1, -1)
+    lut_ref, n_ref = label_to_idx_lut(masks)
+    lut, n, offsets = labels_to_offsets(masks)
+    assert n == n_ref
+    np.testing.assert_array_equal(lut, lut_ref)
+    assert offsets[0] == 0 and offsets[-1] == int((masks > 0).sum())
+    np.testing.assert_array_equal(np.diff(offsets), np.bincount(lut[masks[masks > 0]]))
 
 
 @requires_numba
