@@ -9,13 +9,14 @@ Two kernels backing :func:`cp_measure.core.numba.measureobjectintensitydistribut
   heap-Dijkstra C extension and this serial sweep reach the identical minimum),
   verified across convex/concave/ring/spiral shapes, and ~35x faster on small
   per-object crops. It replaces the dominant geometry cost.
-- :func:`radial_reduce` — the per-(object, bin) intensity/count histograms and the
-  per-(object, bin, 8-wedge) anisotropy CV, replacing the reference's repeated
+- :func:`radial_object` — one fused per-crop pass: the centre (argmax of
+  ``d_to_edge``), the chamfer geodesic, the per-bin intensity/count histograms and
+  the per-(bin, 8-wedge) anisotropy CV — replacing the reference's repeated
   ``scipy.sparse.coo_matrix(...).toarray()`` builds and ``numpy.ma`` masked CV.
 
-The exact-Euclidean ``distance_to_edge`` (scipy EDT) and the centre
-(``maximum_position_of_labels``) stay host-side — only the chamfer geodesic and the
-reductions are reimplemented. Serial; no ``prange``/``nogil``.
+Only the exact-Euclidean ``distance_to_edge`` (scipy EDT) stays host-side; the
+centre, chamfer geodesic and reductions are all in the numba kernel. Serial; no
+``prange``/``nogil``.
 """
 
 import numpy as np
