@@ -23,7 +23,8 @@ uint8 (Overlap/K can exceed 1) and the Pearson slope's ``lstsq`` runs in float32
 — but means the two backends can differ on genuine integer images. Real (float)
 intensity images are unaffected.
 
-``costes`` lives in a stacked follow-up; it is not part of this module.
+``costes`` is also here (it runs a per-object iterative threshold search rather
+than the fused reduction, so it has its own kernel and runner).
 """
 
 import numpy
@@ -31,16 +32,24 @@ from numpy.typing import NDArray
 
 from cp_measure.core.measurecolocalization import (
     F_CORRELATION_FORMAT,
+    F_COSTES_FORMAT,
     F_K_FORMAT,
     F_MANDERS_FORMAT,
     F_OVERLAP_FORMAT,
     F_RWC_FORMAT,
     F_SLOPE_FORMAT,
+    M_ACCURATE,
+    M_FAST,
+    M_FASTER,
+    infer_scale,
 )
 from cp_measure.core.numba._colocalization import coloc_per_object
+from cp_measure.core.numba._costes import costes_per_object
 from cp_measure.primitives._segment_numba import flatten_pairs_grouped
 from cp_measure.primitives.segment import labels_to_offsets
 from cp_measure.primitives.shapes import to_bzyx
+
+_COSTES_MODE = {M_FASTER: 0, M_FAST: 1, M_ACCURATE: 2}
 
 
 def _run(masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc):
@@ -150,3 +159,40 @@ def get_correlation_overlap(
         }
 
     return _featurize(pixels_1, pixels_2, masks, thr, False, build)
+
+
+def get_correlation_costes(
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
+    fast_costes: str = M_FASTER,
+    thr: int = 15,
+) -> dict[str, NDArray[numpy.floating]]:
+    """Costes automated-threshold Manders coefficients C1/C2.
+
+    ``thr`` is accepted for signature parity but has no effect (in the reference it
+    only fed the dead ``calculate_threshold`` call). ``scale`` is dtype-derived via
+    ``infer_scale`` on ``pixels_1``, so float input gives ``scale == 1``.
+    """
+    mode = _COSTES_MODE[fast_costes]
+    masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
+    _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
+
+    def run(masks_zyx, p1_zyx, p2_zyx):
+        m = numpy.ascontiguousarray(masks_zyx)
+        if not numpy.issubdtype(m.dtype, numpy.integer):
+            m = m.astype(numpy.intp)
+        lut, n, offsets = labels_to_offsets(m)
+        if n == 0:
+            return {f"{F_COSTES_FORMAT}_1": _EMPTY, f"{F_COSTES_FORMAT}_2": _EMPTY}
+        p1 = numpy.ascontiguousarray(p1_zyx, dtype=numpy.float64)
+        p2 = numpy.ascontiguousarray(p2_zyx, dtype=numpy.float64)
+        g1, g2 = flatten_pairs_grouped(m, p1, p2, lut, offsets)
+        scale = float(infer_scale(numpy.asarray(p1_zyx)))
+        c1, c2 = costes_per_object(g1, g2, offsets, n, scale, mode)
+        return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
+
+    results = [
+        run(m, p1, p2) for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list)
+    ]
+    return unwrap(results)

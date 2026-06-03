@@ -30,7 +30,7 @@ from cp_measure._detect import HAS_NUMBA
 
 requires_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
-FUNCS = ["pearson", "manders_fold", "rwc", "overlap"]
+FUNCS = ["pearson", "manders_fold", "rwc", "overlap", "costes"]
 
 
 def _numba_fn(name):
@@ -116,3 +116,13 @@ def test_4d_batch_matches_per_image(name):
     assert isinstance(got, list) and len(got) == 2
     for per_image, (m, a, b) in zip(got, [(m0, a0, b0), (m1, a1, b1)]):
         _assert_match(per_image, getattr(ref, f"get_correlation_{name}")(a, b, m))
+
+
+@requires_numba
+@pytest.mark.parametrize("mode", ["Faster", "Fast", "Accurate"])
+@pytest.mark.parametrize("dim", ["2d", "3d"])
+def test_costes_modes_match_numpy(mode, dim):
+    masks, p1, p2 = _data_2d("cont") if dim == "2d" else _data_3d("cont")
+    expected = ref.get_correlation_costes(p1, p2, masks, fast_costes=mode)
+    got = _numba_fn("costes")(p1, p2, masks, fast_costes=mode)
+    _assert_match(got, expected)

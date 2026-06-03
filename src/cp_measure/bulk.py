@@ -49,8 +49,8 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     """Registries for the 'numba' accelerator.
 
     Composes the numba implementations (``intensity`` and the ``pearson`` /
-    ``manders_fold`` / ``rwc`` / ``overlap`` colocalization features) with the
-    numpy implementations of every other feature — a single global "numba"
+    ``manders_fold`` / ``rwc`` / ``costes`` / ``overlap`` colocalization features)
+    with the numpy implementations of every other feature — a single global "numba"
     selection still yields a full, working feature set, accelerated where a
     numba backend exists. This is explicit per-function composition, NOT an
     error-driven fallback.
@@ -61,6 +61,7 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     ``overlap`` to the numpy ``_CORRELATION`` for symmetry is a separate call.
     """
     from cp_measure.core.numba import (
+        get_correlation_costes as _numba_costes,
         get_correlation_manders_fold as _numba_manders_fold,
         get_correlation_overlap as _numba_overlap,
         get_correlation_pearson as _numba_pearson,
@@ -75,6 +76,7 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
             "pearson": _numba_pearson,
             "manders_fold": _numba_manders_fold,
             "rwc": _numba_rwc,
+            "costes": _numba_costes,
             "overlap": _numba_overlap,
         },
     }
