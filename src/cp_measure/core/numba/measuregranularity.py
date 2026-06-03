@@ -141,11 +141,10 @@ def _granularity_2d(
     recon_mask = pixels
     for granularity_id in range(1, ng + 1):
         ero = erosion_4conn_2d(ero)
-        if ero.max() == 0:
-            rec = ero
-        else:
-            rec = reconstruction_by_dilation_2d(ero, recon_mask)
-            recon_mask = rec  # cascade: rec_g <= rec_{g-1} <= pixels (exact)
+        # reconstruction of an all-zero seed returns zeros cheaply (no FIFO seeds),
+        # so no all-zero early-out is needed (it would only add a full ero.max() scan)
+        rec = reconstruction_by_dilation_2d(ero, recon_mask)
+        recon_mask = rec  # cascade: rec_g <= rec_{g-1} <= pixels (exact)
 
         if needs_resize:
             rec_valid = scipy.ndimage.map_coordinates(rec, (sy, sx), order=1)

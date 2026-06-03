@@ -20,6 +20,11 @@ A 3D ndarray is therefore ALWAYS one volume, never a batch — this preserves th
 existing single-volume semantics. To pass a batch of 2D images as an array, use
 ``(B, 1, H, W)``; for ragged sizes, pass a list. ``unwrap`` then re-shapes the
 per-image results back to a single dict (single input) or the list (batch).
+
+This is a pure batch normaliser: ``masks`` and ``pixels`` must share the same
+batch/ndim structure. It does NOT broadcast a lower-dimensional mask over a
+volume (e.g. a 2D mask applied to a 3D stack) — per-element ndim handling is the
+caller's job (each backend dispatches its own 2D vs 3D path).
 """
 
 import numpy
