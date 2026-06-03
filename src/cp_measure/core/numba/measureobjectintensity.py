@@ -85,7 +85,6 @@ def _intensity_volume(
     ``1 / pixels.ndim``.
     """
     orig_ndim = 2 if pixels.shape[0] == 1 else 3
-    masked_image = pixels
 
     lut, nobjects = label_to_idx_lut(masks)
 
@@ -108,7 +107,7 @@ def _intensity_volume(
 
     values, seg0, xc, yc, zc = flatten_numba(
         numpy.ascontiguousarray(masks),
-        numpy.ascontiguousarray(masked_image),
+        numpy.ascontiguousarray(pixels),
         lut,
     )
     has_objects = values.size > 0
@@ -168,7 +167,7 @@ def _intensity_volume(
             emask = inner_boundary(numpy.ascontiguousarray(masks[0]))[numpy.newaxis] > 0
         else:
             emask = skimage.segmentation.find_boundaries(masks, mode="inner") > 0
-        e_values = masked_image[emask].astype(numpy.float64)
+        e_values = pixels[emask].astype(numpy.float64)
         e_seg0 = lut[masks[emask]]
 
         if e_values.size > 0:
