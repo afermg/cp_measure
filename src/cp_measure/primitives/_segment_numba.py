@@ -226,3 +226,44 @@ def segment_quantiles(values, seg0, counts, n, mad_frac):
         ad.sort()
         mad[k] = _interp(ad, cnt, mad_frac)
     return lq, med, uq, mad
+
+
+@njit(cache=True)
+def flatten_pairs_grouped(masks, pix1, pix2, lut, n):
+    """Flatten two co-registered ``(Z, Y, X)`` channels to per-object blocks.
+
+    Returns ``(g1, g2, offsets)`` where object ``k`` owns the contiguous slices
+    ``g1[offsets[k] : offsets[k + 1]]`` and ``g2[...]``. Both channels are
+    gathered at every ``masks > 0`` pixel in one raster scan, so ``g1`` and
+    ``g2`` stay aligned. Unlike :func:`flatten_numba`, non-finite pixels are
+    KEPT — this mirrors the colocalization reference's ``pixels[mask]``
+    extraction, which applies no finiteness filter. Two scans (count, then
+    scatter) give an O(M) counting-sort grouping; ``masks`` must be C-contiguous
+    integer, ``lut`` the ``label -> 0..n-1`` map from ``label_to_idx_lut``.
+    """
+    Z, Y, X = masks.shape
+    counts = np.zeros(n, np.int64)
+    for z in range(Z):
+        for y in range(Y):
+            for x in range(X):
+                L = masks[z, y, x]
+                if L > 0:
+                    counts[lut[L]] += 1
+    offsets = np.zeros(n + 1, np.int64)
+    for k in range(n):
+        offsets[k + 1] = offsets[k] + counts[k]
+    M = offsets[n]
+    g1 = np.empty(M, np.float64)
+    g2 = np.empty(M, np.float64)
+    fill = offsets[:n].copy()
+    for z in range(Z):
+        for y in range(Y):
+            for x in range(X):
+                L = masks[z, y, x]
+                if L > 0:
+                    k = lut[L]
+                    p = fill[k]
+                    g1[p] = pix1[z, y, x]
+                    g2[p] = pix2[z, y, x]
+                    fill[k] = p + 1
+    return g1, g2, offsets
