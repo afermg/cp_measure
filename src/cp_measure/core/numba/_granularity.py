@@ -44,22 +44,20 @@ def _disk_reduce(P, radius, hx, H, W, is_max):
     rows. ``is_max`` selects dilation (max) vs erosion (min).
     """
     L = W + 2 * radius
-    out = np.empty((H, W), np.float64)
-    fill = -np.inf if is_max else np.inf
-    for i in range(H):
-        for j in range(W):
-            out[i, j] = fill
+    out = np.full((H, W), -np.inf if is_max else np.inf)
 
     g = np.empty(L, np.float64)
     h = np.empty(L, np.float64)
     for dy in range(-radius, radius + 1):
         w = hx[dy] if dy >= 0 else hx[-dy]
         k = 2 * w + 1
+        h_block_start = (L - 1) % k  # x % k of the last element (one modulo per row-band)
         for i in range(H):
             pr = i + radius + dy
-            # forward prefix-min/max within blocks of size k
+            # forward prefix-min/max within blocks of size k (counter tracks x % k)
+            c = 0
             for x in range(L):
-                if x % k == 0:
+                if c == 0:
                     g[x] = P[pr, x]
                 else:
                     a = g[x - 1]
@@ -68,9 +66,13 @@ def _disk_reduce(P, radius, hx, H, W, is_max):
                         g[x] = a if a > b else b
                     else:
                         g[x] = a if a < b else b
-            # backward suffix-min/max within blocks of size k
+                c += 1
+                if c == k:
+                    c = 0
+            # backward suffix-min/max within blocks of size k (counter tracks x % k)
+            c = h_block_start
             for x in range(L - 1, -1, -1):
-                if x == L - 1 or x % k == k - 1:
+                if x == L - 1 or c == k - 1:
                     h[x] = P[pr, x]
                 else:
                     a = h[x + 1]
@@ -79,6 +81,9 @@ def _disk_reduce(P, radius, hx, H, W, is_max):
                         h[x] = a if a > b else b
                     else:
                         h[x] = a if a < b else b
+                c -= 1
+                if c < 0:
+                    c = k - 1
             # combine windowed result into the output (center c = radius + j)
             for j in range(W):
                 c = radius + j
