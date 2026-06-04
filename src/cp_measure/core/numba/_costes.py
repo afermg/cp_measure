@@ -115,6 +115,50 @@ def _pearson_combt(g1, g2, lo, hi, thr_fi, thr_si):
 
 
 @njit(cache=True, error_model="numpy")
+def _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si):
+    """``(cnt, r)`` in one shot: the subset count AND its Pearson r.
+
+    The standalone ``_count_combt`` recomputes exactly the count that
+    ``_pearson_combt``'s first pass already produces, so the bisection paid two
+    count passes per visited threshold. This fuses them: pass 1 yields ``cnt``
+    (+ sums); ``r`` is computed (passes 2-3, identical to ``_pearson_combt``) only
+    when ``cnt > 2`` (else returned as ``nan`` and unused). Bit-identical to the
+    separate calls (same predicate, same accumulation order).
+    """
+    cnt = 0
+    s1 = 0.0
+    s2 = 0.0
+    for i in range(lo, hi):
+        if g1[i] < thr_fi or g2[i] < thr_si:
+            cnt += 1
+            s1 += g1[i]
+            s2 += g2[i]
+    if cnt <= 2:
+        return cnt, np.nan
+    m1 = s1 / cnt
+    m2 = s2 / cnt
+    nx = 0.0
+    ny = 0.0
+    for i in range(lo, hi):
+        if g1[i] < thr_fi or g2[i] < thr_si:
+            d1 = g1[i] - m1
+            d2 = g2[i] - m2
+            nx += d1 * d1
+            ny += d2 * d2
+    normx = np.sqrt(nx)
+    normy = np.sqrt(ny)
+    r = 0.0
+    for i in range(lo, hi):
+        if g1[i] < thr_fi or g2[i] < thr_si:
+            r += ((g1[i] - m1) / normx) * ((g2[i] - m2) / normy)
+    if r > 1.0:
+        r = 1.0
+    elif r < -1.0:
+        r = -1.0
+    return cnt, r
+
+
+@njit(cache=True, error_model="numpy")
 def _bisection(g1, g2, lo, hi, a, b, scale):
     """``bisection_costes`` (M_FASTER): narrowing-window search for the threshold."""
     left = 1.0
@@ -125,11 +169,10 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
     while lastmid != mid:
         thr_fi = mid / scale
         thr_si = a * thr_fi + b
-        cnt = _count_combt(g1, g2, lo, hi, thr_fi, thr_si)
+        cnt, r = _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)
         if cnt <= 2:
             left = mid - 1
         else:
-            r = _pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)
             if r < 0:
                 left = mid - 1
             elif r >= 0:
