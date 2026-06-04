@@ -48,17 +48,35 @@ _3D_FEATURES = ("intensity", "sizeshape", "texture", "granularity")
 def _numba_registries() -> dict[str, dict[str, Callable]]:
     """Registries for the 'numba' accelerator.
 
-    Composes the numba implementations (currently ``intensity`` only) with the
+    Composes the numba implementations (``intensity`` and the ``pearson`` /
+    ``manders_fold`` / ``rwc`` / ``overlap`` colocalization features) with the
     numpy implementations of every other feature — a single global "numba"
     selection still yields a full, working feature set, accelerated where a
     numba backend exists. This is explicit per-function composition, NOT an
     error-driven fallback.
+
+    Note: ``overlap`` is not in the numpy ``_CORRELATION`` registry, so the numba
+    correlation registry intentionally exposes one feature the numpy one does not
+    (the numba ``overlap`` backend exists and is cheap to surface). Adding
+    ``overlap`` to the numpy ``_CORRELATION`` for symmetry is a separate call.
     """
-    from cp_measure.core.numba import get_intensity as _numba_intensity
+    from cp_measure.core.numba import (
+        get_correlation_manders_fold as _numba_manders_fold,
+        get_correlation_overlap as _numba_overlap,
+        get_correlation_pearson as _numba_pearson,
+        get_correlation_rwc as _numba_rwc,
+        get_intensity as _numba_intensity,
+    )
 
     return {
         "core": {**_CORE, "intensity": _numba_intensity},
-        "correlation": _CORRELATION,
+        "correlation": {
+            **_CORRELATION,
+            "pearson": _numba_pearson,
+            "manders_fold": _numba_manders_fold,
+            "rwc": _numba_rwc,
+            "overlap": _numba_overlap,
+        },
     }
 
 
