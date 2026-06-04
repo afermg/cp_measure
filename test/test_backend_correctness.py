@@ -69,9 +69,9 @@ def test_set_accelerator_numba_composes_with_numpy():
         assert core["intensity"].__module__ == (
             "cp_measure.core.numba.measureobjectintensity"
         )
+        assert core["texture"].__module__ == "cp_measure.core.numba.measuretexture"
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
-        assert core["texture"].__module__ == "cp_measure.core.measuretexture"
     finally:
         cp_measure.set_accelerator(None)
 
