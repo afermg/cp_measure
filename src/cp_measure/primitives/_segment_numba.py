@@ -169,12 +169,12 @@ def segment_resid_sumsq(values, seg0, n, mean):
 
 @njit(cache=True)
 def _interp(sorted_seg, n, frac):
-    """Linear interpolation at position ``n * frac`` within a sorted segment.
+    """Linear interpolation at position ``(n - 1) * frac`` within a sorted segment.
 
-    Matches the reference's ``cumsum(areas)``-offset interpolation: the local
-    position is ``count * frac``; clamp the upper neighbour at the last element.
+    Matches ``numpy.percentile`` default (method ``"linear"``): index
+    ``(n - 1) * frac`` linearly interpolated between bracketing samples.
     """
-    pos = n * frac
+    pos = (n - 1) * frac
     lo = int(pos)
     if lo > n - 1:
         lo = n - 1
