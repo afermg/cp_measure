@@ -2,16 +2,35 @@
 
 import numpy
 import pytest
+import scipy.ndimage
 import skimage.morphology as M
 
 from cp_measure.core.numba._granularity import (
     _disk_halfwidths,
+    bilinear_gather,
     disk_dilation_2d,
     disk_erosion_2d,
     dilation_4conn_2d,
     erosion_4conn_2d,
     reconstruction_by_dilation_2d,
 )
+
+
+@pytest.mark.parametrize("seed", [0, 1, 7])
+def test_bilinear_gather_matches_map_coordinates(seed):
+    """The gather must match scipy order-1 map_coordinates (mode=constant) to ~eps,
+    including points on the array boundary (where a corner is out of range)."""
+    rng = numpy.random.default_rng(seed)
+    img = rng.random((37, 41))
+    H, W = img.shape
+    npts = 500
+    sy = numpy.concatenate([rng.uniform(0, H - 1, npts), [0.0, H - 1, H - 1]])
+    sx = numpy.concatenate([rng.uniform(0, W - 1, npts), [0.0, W - 1, 0.0]])
+    ref = scipy.ndimage.map_coordinates(img, (sy, sx), order=1)
+    y0 = numpy.floor(sy).astype(numpy.int64)
+    x0 = numpy.floor(sx).astype(numpy.int64)
+    got = bilinear_gather(img, y0, x0, sy - y0, sx - x0, H, W)
+    numpy.testing.assert_allclose(got, ref, rtol=0, atol=1e-12)
 
 
 def _images(seed):

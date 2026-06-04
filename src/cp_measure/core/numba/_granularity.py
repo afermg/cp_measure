@@ -24,6 +24,35 @@ from numba import njit
 from numpy.typing import NDArray
 
 
+@njit(cache=True)
+def bilinear_gather(img, y0, x0, fy, fx, H, W):
+    """Bilinear sample of ``img`` at points with precomputed floor/frac indices.
+
+    Reproduces ``scipy.ndimage.map_coordinates(img, (y, x), order=1)`` with the
+    default ``mode="constant"`` (out-of-range corners contribute ``cval=0``):
+    ``y0=floor(y)``, ``fy=y-y0`` (likewise x). Matches map_coordinates to ~3e-16
+    (FP add-order only; ``tasks/poc_granularity_gather.py``) — far inside this
+    backend's ``rtol=1e-6`` contract — but ~9x faster per call. The floor/frac are
+    computed once on the host and reused across the 16 granularity steps (same
+    sample points, different ``img``), replacing 16 ``map_coordinates`` calls that
+    re-derive them every time (~67% of the default-config runtime).
+    """
+    out = np.empty(y0.shape[0])
+    for t in range(y0.shape[0]):
+        iy = y0[t]
+        ix = x0[t]
+        gy = fy[t]
+        gx = fx[t]
+        v00 = img[iy, ix] if (0 <= iy < H and 0 <= ix < W) else 0.0
+        v01 = img[iy, ix + 1] if (0 <= iy < H and 0 <= ix + 1 < W) else 0.0
+        v10 = img[iy + 1, ix] if (0 <= iy + 1 < H and 0 <= ix < W) else 0.0
+        v11 = img[iy + 1, ix + 1] if (0 <= iy + 1 < H and 0 <= ix + 1 < W) else 0.0
+        out[t] = (v00 * (1.0 - gx) + v01 * gx) * (1.0 - gy) + (
+            v10 * (1.0 - gx) + v11 * gx
+        ) * gy
+    return out
+
+
 def _disk_halfwidths(radius: int) -> NDArray[np.int64]:
     """Per-row half-widths of ``skimage.morphology.disk(radius)``.
 

@@ -5,8 +5,12 @@ skimage morphology (background opening, per-iteration disk(1) erosion, geodesic
 reconstruction) for the bit-exact numba kernels in :mod:`._granularity`, and the
 16 ``scipy.ndimage.mean`` calls for a precomputed ``bincount`` per-object mean
 sampled by a sparse point-query of the reconstructed image (no full-resolution
-upsample). Resampling stays on ``scipy.ndimage.map_coordinates``, as in every
-backend.
+upsample). The 16 per-step resamples of the reconstructed image back to the object
+sample points — the default-config hot spot (~67% of runtime) — use the numba
+:func:`._granularity.bilinear_gather` (floor/frac precomputed once and reused
+across steps) instead of ``scipy.ndimage.map_coordinates``; it matches order-1
+``map_coordinates`` to ~3e-16 (≪ this backend's ``rtol=1e-6`` contract). The three
+one-off grid resamples (subsample / background) stay on ``map_coordinates``.
 
 Batch-shaped via the canonical ``(B, Z, Y, X)`` form (see
 :func:`cp_measure.primitives.shapes.to_bzyx`): a single image is ``B == 1``. Each
@@ -20,6 +24,7 @@ from numpy.typing import NDArray
 
 from cp_measure.core.measuregranularity import get_granularity as _get_granularity_numpy
 from cp_measure.core.numba._granularity import (
+    bilinear_gather,
     disk_dilation_2d,
     disk_erosion_2d,
     erosion_4conn_2d,
@@ -144,6 +149,13 @@ def _granularity_2d(
         yy, xx = numpy.unravel_index(flat_pos, tuple(orig_shape))
         sy = yy * (float(new_shape[0] - 1) / float(orig_shape[0] - 1))
         sx = xx * (float(new_shape[1] - 1) / float(orig_shape[1] - 1))
+        # The sample points are fixed across the 16 spectrum steps (only `rec`
+        # changes), so the bilinear floor/frac are computed ONCE and reused, instead
+        # of 16 map_coordinates calls re-deriving them (the default-config hot spot).
+        gy0 = numpy.floor(sy).astype(numpy.int64)
+        gx0 = numpy.floor(sx).astype(numpy.int64)
+        gfy = sy - gy0
+        gfx = sx - gx0
 
     def _label_mean(values_at_in_obj):
         sums = numpy.bincount(
@@ -169,7 +181,9 @@ def _granularity_2d(
         recon_mask = rec  # cascade: rec_g <= rec_{g-1} <= pixels (exact)
 
         if needs_resize:
-            rec_valid = scipy.ndimage.map_coordinates(rec, (sy, sx), order=1)
+            rec_valid = bilinear_gather(
+                rec, gy0, gx0, gfy, gfx, rec.shape[0], rec.shape[1]
+            )
         else:
             rec_valid = rec.ravel()[flat_pos]
 
