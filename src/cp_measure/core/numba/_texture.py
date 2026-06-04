@@ -79,6 +79,7 @@ def haralick_object(crop, offsets):
     for d in range(n_dir):
         dz, dy, dx = offsets[d, 0], offsets[d, 1], offsets[d, 2]
         cmat[:] = 0
+        total = 0
         for z in range(Z):
             for y in range(Y):
                 for x in range(X):
@@ -90,15 +91,13 @@ def haralick_object(crop, offsets):
                         b = crop[z2, y2, x2]
                         cmat[a, b] += 1
                         cmat[b, a] += 1  # symmetric=True
-        # ignore_zeros: drop all pairs touching background (grey level 0)
-        for i in range(fm1):
-            cmat[0, i] = 0
-            cmat[i, 0] = 0
-
-        T = 0
-        for i in range(fm1):
-            for j in range(fm1):
-                T += cmat[i, j]
+                        total += 2
+        # ignore_zeros: T excludes pairs touching background (grey level 0), i.e.
+        # row 0 + col 0 (symmetric, so 2*row0 - cmat[0,0]) -> O(fm1), no fm1^2 sum.
+        row0 = 0
+        for j in range(fm1):
+            row0 += cmat[0, j]
+        T = total - 2 * row0 + cmat[0, 0]
         if T == 0:  # mahotas raises -> cp_measure -> whole object NaN
             for dd in range(n_dir):
                 for f in range(13):
@@ -120,8 +119,9 @@ def _haralick_13(cmat, fm1, T, out, d):
     entropy = 0.0
     ij_sum = 0.0  # sum_{i,j} i*j*p
     idm = 0.0
-    for i in range(fm1):
-        for j in range(fm1):
+    # rows/cols 0 are the ignore_zeros background -> skip (start at 1)
+    for i in range(1, fm1):
+        for j in range(1, fm1):
             c = cmat[i, j]
             if c == 0:
                 continue
@@ -164,17 +164,13 @@ def _haralick_13(cmat, fm1, T, out, d):
         diff_var += (px_minus_y[dd] - dm) * (px_minus_y[dd] - dm)
     diff_var /= fm1
 
-    # info measures of correlation
+    # Info measures of correlation. For a SYMMETRIC GLCM both cross-entropies
+    # collapse to the marginals: HXY1 = HXY2 = 2*HX (verified vs mahotas to ~1e-15),
+    # so the two O(fm1^2) double-loops become O(fm1) here. (HXY1 = -sum p*log2(px*py)
+    # = -sum_i py[i]log2 px[i] - sum_j px[j]log2 py[j] = 2*HX when px==py; likewise HXY2.)
     hx = _entropy(px)
-    hxy1 = 0.0
-    hxy2 = 0.0
-    for i in range(fm1):
-        for j in range(fm1):
-            q = px[i] * px[j]
-            if cmat[i, j] != 0:
-                hxy1 -= (cmat[i, j] * invT) * np.log2(q if q > 0.0 else 1.0)
-            if q > 0.0:
-                hxy2 -= q * np.log2(q)
+    hxy1 = 2.0 * hx
+    hxy2 = 2.0 * hx
 
     out[d, 0] = asm
     out[d, 1] = contrast
