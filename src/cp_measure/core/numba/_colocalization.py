@@ -91,19 +91,6 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
         mean1 = s1 / cnt
         mean2 = s2 / cnt
 
-        # Pass 2: centred second moments → Pearson r + regression slope.
-        c11 = 0.0
-        c22 = 0.0
-        c12 = 0.0
-        for i in range(lo, hi):
-            d1 = g1[i] - mean1
-            d2 = g2[i] - mean2
-            c11 += d1 * d1
-            c22 += d2 * d2
-            c12 += d1 * d2
-        corr[k] = c12 / np.sqrt(c11 * c22)
-        slope[k] = c12 / c11
-
         tff = thr_frac * mx1
         tss = thr_frac * mx2
 
@@ -114,7 +101,13 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
             rmax = r1max if r1max > r2max else r2max
             R = rmax + 1
 
-        # Pass 3: threshold-gated accumulations.
+        # Pass 2: the centred second moments (Pearson r + slope) and the
+        # threshold-gated accumulations are INDEPENDENT given pass 1's means and
+        # maxima, so they share one sweep over the block (each accumulator's
+        # add-order is unchanged -> bit-identical to two separate passes).
+        c11 = 0.0
+        c22 = 0.0
+        c12 = 0.0
         tot_fi = 0.0
         tot_si = 0.0
         sum_fi_c = 0.0
@@ -128,6 +121,11 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
         for i in range(lo, hi):
             v1 = g1[i]
             v2 = g2[i]
+            d1 = v1 - mean1
+            d2 = v2 - mean2
+            c11 += d1 * d1
+            c22 += d2 * d2
+            c12 += d1 * d2
             above1 = v1 >= tff
             above2 = v2 >= tss
             if above1:
@@ -149,6 +147,8 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
                     w = (R - diff) / R
                     sum_fiw_c += v1 * w
                     sum_siw_c += v2 * w
+        corr[k] = c12 / np.sqrt(c11 * c22)
+        slope[k] = c12 / c11
 
         if n_comb > 0:
             m1[k] = sum_fi_c / tot_fi
