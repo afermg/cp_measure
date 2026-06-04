@@ -129,6 +129,7 @@ def test_set_accelerator_numba_composes_with_numpy():
                 "cp_measure.core.numba.measurecolocalization"
             ), feature
         assert core["texture"].__module__ == "cp_measure.core.numba.measuretexture"
+        assert core["feret"].__module__ == "cp_measure.core.numba._feret"
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
     finally:
@@ -139,6 +140,7 @@ def test_set_accelerator_numba_composes_with_numpy():
     assert restored["granularity"].__module__ == "cp_measure.core.measuregranularity"
     # overlap is numba-only; the default registry does not expose it.
     assert "overlap" not in cp_measure.bulk.get_correlation_measurements()
+    assert restored["feret"].__module__ == "cp_measure.core.measureobjectsizeshape"
 
 
 def test_set_accelerator_numba_absent_raises(monkeypatch):

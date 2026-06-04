@@ -94,6 +94,14 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
         get_correlation_overlap as _numba_overlap,
         get_correlation_pearson as _numba_pearson,
         get_correlation_rwc as _numba_rwc,
+    Composes the numba implementations (``intensity``, ``feret``) with the numpy
+    implementations of every other feature — a single global "numba" selection
+    still yields a full, working feature set, accelerated where a numba backend
+    exists. This is explicit per-function composition, NOT an error-driven
+    fallback.
+    """
+    from cp_measure.core.numba import (
+        get_feret as _numba_feret,
         get_intensity as _numba_intensity,
     )
 
@@ -113,6 +121,7 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
 
     return {
         "core": {**_CORE, "intensity": _numba_intensity, "texture": _numba_texture},
+        "core": {**_CORE, "intensity": _numba_intensity, "feret": _numba_feret},
         "correlation": _CORRELATION,
     }
 

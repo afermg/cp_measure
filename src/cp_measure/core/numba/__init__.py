@@ -23,6 +23,12 @@ from cp_measure.core.numba.measurecolocalization import (
     get_correlation_pearson,
     get_correlation_rwc,
 )
+This backend currently accelerates ``intensity`` and ``feret``; the global
+"numba" accelerator composes them with the numpy implementations of every other
+feature (see ``cp_measure.bulk``).
+"""
+
+from cp_measure.core.numba._feret import get_feret
 from cp_measure.core.numba.measureobjectintensity import get_intensity
 from cp_measure.core.numba.measureobjectintensitydistribution import (
     get_radial_distribution,
@@ -47,3 +53,4 @@ __all__ = [
 from cp_measure.core.numba.measuretexture import get_texture
 
 __all__ = ["get_intensity", "get_texture"]
+__all__ = ["get_feret", "get_intensity"]
