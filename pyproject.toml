@@ -17,6 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+numba = [
+    "numba>=0.59",
+]
 test = [
     "pytest>=8.4.2",
     "pytest-cov",
