@@ -122,6 +122,7 @@ def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
+    legacy_mad: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object intensity features.
 
@@ -131,7 +132,20 @@ def get_intensity(
     centers of mass). 2D inputs are promoted to ``(1, Y, X)`` so the same
     code path handles 2D and 3D; for 3D inputs Z-axis locations are filled
     in `CenterMassIntensity_Z` / `MaxIntensity_Z`.
+
+    Parameters
+    ----------
+    legacy_mad
+        When False (default) MAD is the textbook ``median(|x - median(x)|)``.
+        When True, reproduce the original cp_measure / CellProfiler behavior,
+        which used the ``(100 / pixels.ndim) %`` quantile of ``|x - median(x)|``
+        in place of the median — equivalent in 2D but returns the 33rd
+        percentile in 3D rather than the median.
     """
+    # Captured before the reshape below so legacy MAD matches the original
+    # code, which read pixels.ndim from the un-normalized input.
+    source_ndim = pixels.ndim
+
     # Normalize to (Z, Y, X). Broadcast 2D masks across a 3D pixel stack
     # to match the original behavior.
     if pixels.ndim == 3 and masks.ndim == 2:
@@ -189,7 +203,12 @@ def get_intensity(
         median_intensity[out_i] = q[2]
         upper_quartile_intensity[out_i] = q[3]
         max_intensity[out_i] = q[4]
-        mad_intensity[out_i] = numpy.median(numpy.abs(vals - q[2]))
+        if legacy_mad:
+            mad_intensity[out_i] = numpy.percentile(
+                numpy.abs(vals - q[2]), 100.0 / source_ndim
+            )
+        else:
+            mad_intensity[out_i] = numpy.median(numpy.abs(vals - q[2]))
 
         # Positions / centroids on the bbox crop, then shift by the bbox
         # offset. This avoids any full-image scipy.ndimage scans.
