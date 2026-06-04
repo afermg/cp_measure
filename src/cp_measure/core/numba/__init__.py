@@ -1,21 +1,14 @@
-"""Numba-accelerated backend.
+"""Numba-accelerated backend (integration branch — all lanes merged).
 
-Selected explicitly by import (``from cp_measure.core.numba import get_intensity``)
-or globally via ``cp_measure.set_accelerator("numba")``. Requires the optional
-``numba`` extra; availability is gated by ``cp_measure._detect.HAS_NUMBA``.
-
-This backend accelerates ``intensity`` and ``granularity``; the global "numba"
-This backend accelerates ``intensity`` and the colocalization features
-``pearson``/``manders_fold``/``rwc``/``overlap``/``costes``; the global "numba"
-This backend accelerates ``intensity`` and ``texture``; the global "numba"
-accelerator composes them with the numpy implementations of every other feature
-(see ``cp_measure.bulk``).
-This backend accelerates ``intensity``, ``zernike``, ``radial_zernikes`` and
-``radial_distribution``; the global "numba" accelerator composes them with the
-numpy implementations of every other feature (see ``cp_measure.bulk``).
+Selected explicitly by import or globally via ``cp_measure.set_accelerator("numba")``.
+Requires the optional ``numba`` extra; availability is gated by
+``cp_measure._detect.HAS_NUMBA``. This integration branch composes every numba lane
+(intensity, granularity, zernike, radial_zernikes, radial_distribution, the four
+colocalization features + costes, texture, feret) with the numpy implementations of
+the remaining features (see ``cp_measure.bulk``).
 """
 
-from cp_measure.core.numba.measuregranularity import get_granularity
+from cp_measure.core.numba._feret import get_feret
 from cp_measure.core.numba.measurecolocalization import (
     get_correlation_costes,
     get_correlation_manders_fold,
@@ -23,34 +16,26 @@ from cp_measure.core.numba.measurecolocalization import (
     get_correlation_pearson,
     get_correlation_rwc,
 )
-This backend currently accelerates ``intensity`` and ``feret``; the global
-"numba" accelerator composes them with the numpy implementations of every other
-feature (see ``cp_measure.bulk``).
-"""
-
-from cp_measure.core.numba._feret import get_feret
+from cp_measure.core.numba.measuregranularity import get_granularity
 from cp_measure.core.numba.measureobjectintensity import get_intensity
 from cp_measure.core.numba.measureobjectintensitydistribution import (
     get_radial_distribution,
     get_radial_zernikes,
 )
 from cp_measure.core.numba.measureobjectsizeshape import get_zernike
+from cp_measure.core.numba.measuretexture import get_texture
 
-__all__ = ["get_granularity", "get_intensity"]
-__all__ = [
-    "get_intensity",
-    "get_radial_distribution",
-    "get_radial_zernikes",
-    "get_zernike",
 __all__ = [
     "get_correlation_costes",
     "get_correlation_manders_fold",
     "get_correlation_overlap",
     "get_correlation_pearson",
     "get_correlation_rwc",
+    "get_feret",
+    "get_granularity",
     "get_intensity",
+    "get_radial_distribution",
+    "get_radial_zernikes",
+    "get_texture",
+    "get_zernike",
 ]
-from cp_measure.core.numba.measuretexture import get_texture
-
-__all__ = ["get_intensity", "get_texture"]
-__all__ = ["get_feret", "get_intensity"]
