@@ -57,6 +57,17 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     from cp_measure.core.numba import (
         get_granularity as _numba_granularity,
         get_intensity as _numba_intensity,
+    Composes the numba implementations (``intensity``, ``zernike``,
+    ``radial_zernikes``, ``radial_distribution``) with the numpy implementations of
+    every other feature — a single global "numba" selection still yields a full,
+    working feature set, accelerated where a numba backend exists. This is explicit
+    per-function composition, NOT an error-driven fallback.
+    """
+    from cp_measure.core.numba import (
+        get_intensity as _numba_intensity,
+        get_radial_distribution as _numba_radial_distribution,
+        get_radial_zernikes as _numba_radial_zernikes,
+        get_zernike as _numba_zernike,
     )
 
     return {
@@ -64,6 +75,9 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
             **_CORE,
             "intensity": _numba_intensity,
             "granularity": _numba_granularity,
+            "zernike": _numba_zernike,
+            "radial_zernikes": _numba_radial_zernikes,
+            "radial_distribution": _numba_radial_distribution,
         },
         "correlation": _CORRELATION,
     }
