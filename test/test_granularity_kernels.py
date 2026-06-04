@@ -129,3 +129,23 @@ def test_reconstruction_cascaded_mask_chain():
         expected = M.reconstruction(ero, recon_mask, footprint=M.disk(1))
         numpy.testing.assert_array_equal(rec, expected)
         recon_mask = rec
+
+
+def test_reconstruction_long_geodesic():
+    """A serpentine channel forces propagation along a long geodesic path — the
+    case the multi-raster/FIFO split is built for. The result is independent of how
+    many raster passes precede the FIFO, so it must stay bit-exact vs skimage."""
+    H, W = 41, 41
+    mask = numpy.zeros((H, W))
+    # carve a snake of open (high) corridors one row apart, connected at alternating ends
+    mask[1:-1, 1:-1] = 9.0
+    for i in range(2, H - 2, 2):
+        if (i // 2) % 2 == 0:
+            mask[i, 1:-2] = 0.0  # wall from the left, gap on the right
+        else:
+            mask[i, 2:-1] = 0.0  # wall from the right, gap on the left
+    seed = numpy.zeros((H, W))
+    seed[1, 1] = 9.0  # single high seed at one end of the snake
+    got = reconstruction_by_dilation_2d(seed, mask)
+    expected = M.reconstruction(seed, mask, footprint=M.disk(1))
+    numpy.testing.assert_array_equal(got, expected)
