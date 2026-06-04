@@ -37,3 +37,30 @@ def label_to_idx_lut(
     lut = numpy.full(max_label + 1, -1, dtype=numpy.int64)
     lut[labels] = numpy.arange(n, dtype=numpy.int64)
     return lut, n
+
+
+def labels_to_offsets(
+    masks: NDArray[numpy.integer],
+) -> tuple[NDArray[numpy.int64], int, NDArray[numpy.int64]]:
+    """Build ``(lut, n, offsets)`` from a single ``np.bincount`` pass.
+
+    Like :func:`label_to_idx_lut` but also returns the CSR ``offsets`` (length
+    ``n + 1``) giving each object's pixel block in the grouped flat order, so the
+    grouped flatten can scatter in a SINGLE scan instead of count-then-scatter.
+
+    One ``bincount`` over the raster (~2x faster here than ``find_objects`` plus a
+    separate count scan) gives per-label pixel counts directly; ``cumsum`` of the
+    present-label counts is ``offsets``. ``lut`` and segment ordering (ascending
+    present labels) are identical to :func:`label_to_idx_lut`.
+    """
+    if not numpy.issubdtype(masks.dtype, numpy.integer):
+        masks = masks.astype(numpy.intp, copy=False)
+    counts = numpy.bincount(masks.ravel())
+    present = numpy.nonzero(counts[1:])[0] + 1  # positive labels actually present
+    n = int(present.size)
+    max_label = int(present[-1]) if n else 0
+    lut = numpy.full(max_label + 1, -1, dtype=numpy.int64)
+    lut[present] = numpy.arange(n, dtype=numpy.int64)
+    offsets = numpy.zeros(n + 1, dtype=numpy.int64)
+    offsets[1:] = numpy.cumsum(counts[present])
+    return lut, n, offsets

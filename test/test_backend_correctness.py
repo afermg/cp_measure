@@ -122,6 +122,12 @@ def test_set_accelerator_numba_composes_with_numpy():
         assert core["radial_distribution"].__module__ == (
             "cp_measure.core.numba.measureobjectintensitydistribution"
         )
+        # The colocalization features route to the numba backend too.
+        corr = cp_measure.bulk.get_correlation_measurements()
+        for feature in ("pearson", "manders_fold", "rwc", "costes", "overlap"):
+            assert corr[feature].__module__ == (
+                "cp_measure.core.numba.measurecolocalization"
+            ), feature
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
         assert core["texture"].__module__ == "cp_measure.core.measuretexture"
@@ -131,6 +137,8 @@ def test_set_accelerator_numba_composes_with_numpy():
     restored = cp_measure.bulk.get_core_measurements()
     assert restored["intensity"].__module__ == "cp_measure.core.measureobjectintensity"
     assert restored["granularity"].__module__ == "cp_measure.core.measuregranularity"
+    # overlap is numba-only; the default registry does not expose it.
+    assert "overlap" not in cp_measure.bulk.get_correlation_measurements()
 
 
 def test_set_accelerator_numba_absent_raises(monkeypatch):
