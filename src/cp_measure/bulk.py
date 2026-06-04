@@ -49,6 +49,7 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     """Registries for the 'numba' accelerator.
 
     Composes the numba implementations (``intensity``, ``granularity``) with the
+    Composes the numba implementations (``intensity``, ``texture``) with the
     numpy implementations of every other feature — a single global "numba"
     Composes the numba implementations (``intensity`` and the ``pearson`` /
     ``manders_fold`` / ``rwc`` / ``costes`` / ``overlap`` colocalization features)
@@ -106,6 +107,13 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
             "costes": _numba_costes,
             "overlap": _numba_overlap,
         },
+        get_intensity as _numba_intensity,
+        get_texture as _numba_texture,
+    )
+
+    return {
+        "core": {**_CORE, "intensity": _numba_intensity, "texture": _numba_texture},
+        "correlation": _CORRELATION,
     }
 
 

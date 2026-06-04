@@ -7,6 +7,7 @@ or globally via ``cp_measure.set_accelerator("numba")``. Requires the optional
 This backend accelerates ``intensity`` and ``granularity``; the global "numba"
 This backend accelerates ``intensity`` and the colocalization features
 ``pearson``/``manders_fold``/``rwc``/``overlap``/``costes``; the global "numba"
+This backend accelerates ``intensity`` and ``texture``; the global "numba"
 accelerator composes them with the numpy implementations of every other feature
 (see ``cp_measure.bulk``).
 This backend accelerates ``intensity``, ``zernike``, ``radial_zernikes`` and
@@ -43,3 +44,6 @@ __all__ = [
     "get_correlation_rwc",
     "get_intensity",
 ]
+from cp_measure.core.numba.measuretexture import get_texture
+
+__all__ = ["get_intensity", "get_texture"]
