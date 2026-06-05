@@ -7,7 +7,7 @@ import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
-from cp_measure.utils import masks_to_ijv, _ensure_np_scalar
+from cp_measure.utils import masks_to_ijv
 
 __doc__ = """\
 MeasureObjectSizeShape
@@ -644,21 +644,14 @@ def get_sizeshape(
         median_radius = numpy.zeros(nobjects)
         mean_radius = numpy.zeros(nobjects)
         for index, mini_image in enumerate(props["image"]):
-            # Pad image to assist distance tranform
+            # Pad image to assist distance transform
             mini_image = numpy.pad(mini_image, 1)
             distances = scipy.ndimage.distance_transform_edt(mini_image)
 
-            max_radius[index] = _ensure_np_scalar(
-                scipy.ndimage.maximum(distances, mini_image)
-            )
-            mean_radius[index] = _ensure_np_scalar(
-                scipy.ndimage.mean(distances, mini_image)
-            )
-            median_radius[index] = _ensure_np_scalar(
-                centrosome.cpmorphology.median_of_labels(
-                    distances, mini_image.astype("int"), [1]
-                )
-            )
+            inside = distances[mini_image]
+            max_radius[index] = inside.max()
+            mean_radius[index] = inside.mean()
+            median_radius[index] = numpy.median(inside)
 
         results |= {
             F_AREA: props["area"],
