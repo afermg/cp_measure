@@ -50,15 +50,32 @@ def _assert_dicts_match(ref, got):
 
 
 @requires_numba
+@pytest.mark.parametrize("legacy", [False, True], ids=["new", "legacy"])
 @pytest.mark.parametrize("edge", [True, False], ids=["edge", "noedge"])
 @pytest.mark.parametrize("dim", ["2d", "3d"])
-def test_numba_intensity_matches_numpy(dim, edge):
+def test_numba_intensity_matches_numpy(dim, edge, legacy):
     from cp_measure.core.numba import get_intensity as intensity_numba
 
     mask, pixels = _mask_pixels_2d() if dim == "2d" else _mask_pixels_3d()
-    ref = intensity_numpy(mask, pixels, edge_measurements=edge)
-    got = intensity_numba(mask, pixels, edge_measurements=edge)
+    ref = intensity_numpy(mask, pixels, edge_measurements=edge, legacy=legacy)
+    got = intensity_numba(mask, pixels, edge_measurements=edge, legacy=legacy)
     _assert_dicts_match(ref, got)
+
+
+def test_legacy_flag_anchor():
+    """Pin both backends to known numerical conventions on a tiny anchor case."""
+    mask = np.array([[1, 1, 1, 1]], dtype=np.int32)
+    pixels = np.array([[0.0, 1.0, 2.0, 3.0]])
+    new = intensity_numpy(mask, pixels, edge_measurements=False, legacy=False)
+    legacy = intensity_numpy(mask, pixels, edge_measurements=False, legacy=True)
+    # np.percentile defaults
+    np.testing.assert_allclose(new["Intensity_LowerQuartileIntensity"], [0.75])
+    np.testing.assert_allclose(new["Intensity_MedianIntensity"], [1.5])
+    np.testing.assert_allclose(new["Intensity_UpperQuartileIntensity"], [2.25])
+    # legacy: pos = n * q on a sorted segment
+    np.testing.assert_allclose(legacy["Intensity_LowerQuartileIntensity"], [1.0])
+    np.testing.assert_allclose(legacy["Intensity_MedianIntensity"], [2.0])
+    np.testing.assert_allclose(legacy["Intensity_UpperQuartileIntensity"], [3.0])
 
 
 @requires_numba

@@ -168,13 +168,14 @@ def segment_resid_sumsq(values, seg0, n, mean):
 
 
 @njit(cache=True)
-def _interp(sorted_seg, n, frac):
-    """Linear interpolation at position ``n * frac`` within a sorted segment.
+def _interp(sorted_seg, n, frac, legacy):
+    """Linear interpolation within a sorted segment at the chosen convention.
 
-    Matches the reference's ``cumsum(areas)``-offset interpolation: the local
-    position is ``count * frac``; clamp the upper neighbour at the last element.
+    ``legacy=True`` uses ``pos = n * frac`` (the CellProfiler / cumsum-offset
+    convention); ``legacy=False`` uses ``pos = (n - 1) * frac``
+    (``numpy.percentile`` 'linear'). Upper neighbour clamped at the last element.
     """
-    pos = n * frac
+    pos = n * frac if legacy else (n - 1) * frac
     lo = int(pos)
     if lo > n - 1:
         lo = n - 1
@@ -186,12 +187,14 @@ def _interp(sorted_seg, n, frac):
 
 
 @njit(cache=True)
-def segment_quantiles(values, seg0, counts, n, mad_frac):
+def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
     """Per-segment quartiles/median + MAD via scatter-into-segments + sort.
 
     Builds CSR offsets from ``counts``, scatters values into one flat buffer,
-    sorts each segment slice in place, and interpolates. MAD reuses the sorted
-    absolute deviations from the median at ``mad_frac`` (= 1 / original ndim).
+    sorts each segment slice in place, and interpolates with the convention
+    selected by ``legacy`` (see :func:`_interp`). MAD reuses the sorted absolute
+    deviations from the median: in legacy mode at ``mad_frac`` (= 1 / original
+    ndim), otherwise the textbook median.
     """
     starts = np.zeros(n, np.int64)
     acc = 0
@@ -219,10 +222,10 @@ def segment_quantiles(values, seg0, counts, n, mad_frac):
         s = starts[k]
         seg = buf[s : s + cnt]
         seg.sort()
-        lq[k] = _interp(seg, cnt, 0.25)
-        med[k] = _interp(seg, cnt, 0.5)
-        uq[k] = _interp(seg, cnt, 0.75)
+        lq[k] = _interp(seg, cnt, 0.25, legacy)
+        med[k] = _interp(seg, cnt, 0.5, legacy)
+        uq[k] = _interp(seg, cnt, 0.75, legacy)
         ad = np.abs(seg - med[k])
         ad.sort()
-        mad[k] = _interp(ad, cnt, mad_frac)
+        mad[k] = _interp(ad, cnt, mad_frac if legacy else 0.5, legacy)
     return lq, med, uq, mad
