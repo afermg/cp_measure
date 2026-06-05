@@ -137,8 +137,13 @@ def get_radial_distribution(
     legacy : bool
         When False (default) each object is measured on its own cropped mask, so its
         result is independent of every other label in the field (the Issue #22 fix).
-        When True, reproduce the original whole-image behaviour, where an object's
-        radial geometry can be perturbed by neighbouring labels.
+        This deliberately diverges from CellProfiler on multi-object images.
+
+        When True, reproduce the whole-image result of CellProfiler / centrosome,
+        where an object's radial geometry can be perturbed by neighbouring labels
+        (Issue #22, rooted upstream in scipy). Use this for CellProfiler-faithful
+        values; otherwise the default gives the corrected, per-object-independent
+        measurement.
     """
 
     if labels.ndim == 3:
