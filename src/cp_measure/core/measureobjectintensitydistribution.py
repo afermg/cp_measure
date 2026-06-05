@@ -95,6 +95,7 @@ def get_radial_distribution(
     scaled: bool = True,
     bin_count: int = 4,
     maximum_radius: int = 100,
+    legacy: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
     """
     Radial features (2D only)
@@ -132,6 +133,12 @@ def get_radial_distribution(
         creates the number of bins that you specify and creates equally spaced bin
         boundaries up to the maximum radius. Parts of the object that are beyond this
         radius will be counted in an overflow bin. The radius is measured in pixels.
+
+    legacy : bool
+        When False (default) each object is measured on its own cropped mask, so its
+        result is independent of every other label in the field (the Issue #22 fix).
+        When True, reproduce the original whole-image behaviour, where an object's
+        radial geometry can be perturbed by neighbouring labels.
     """
 
     if labels.ndim == 3:
@@ -140,6 +147,51 @@ def get_radial_distribution(
     if labels.dtype == bool:
         labels = labels.astype(numpy.integer)
 
+    if legacy:
+        return _radial_distribution_image(
+            labels, pixels, scaled, bin_count, maximum_radius
+        )
+
+    # Issue #22 fix: measure each object on its own cropped + 1px-padded mask, so the
+    # imported geometry (distance_to_edge / propagate) and the binning see ONLY this
+    # object — its result equals the baseline run on that object in isolation.
+    unique_labels = numpy.unique(labels)
+    unique_labels = unique_labels[unique_labels > 0]
+    if len(unique_labels) == 0:  # no objects -> empty arrays with the right keys
+        return _radial_distribution_image(
+            labels, pixels, scaled, bin_count, maximum_radius
+        )
+    slices = scipy.ndimage.find_objects(labels)
+    per_object = [
+        _radial_distribution_image(
+            numpy.pad(labels[sl] == label_value, 1).astype(int),
+            numpy.pad(pixels[sl], 1),
+            scaled,
+            bin_count,
+            maximum_radius,
+        )
+        for label_value in unique_labels
+        for sl in (slices[label_value - 1],)
+    ]
+    return {
+        key: numpy.array([obj[key][0] for obj in per_object]) for key in per_object[0]
+    }
+
+
+def _radial_distribution_image(
+    labels: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
+    scaled: bool = True,
+    bin_count: int = 4,
+    maximum_radius: int = 100,
+) -> dict[str, NDArray[numpy.floating]]:
+    """Whole-image radial distribution over every label (the original algorithm).
+
+    All objects are measured together, so an object's geometry can be influenced by
+    other labels in the field. :func:`get_radial_distribution` calls this once per
+    isolated object crop (the Issue #22 fix) or once on the whole image
+    (``legacy=True``).
+    """
     unique_labels = numpy.unique(labels)
     unique_labels = unique_labels[unique_labels > 0]
     nobjects = len(unique_labels)
