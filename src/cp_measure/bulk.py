@@ -118,8 +118,8 @@ def get_core_measurements(legacy: bool = False) -> dict[str, Callable]:
 
 def get_core_measurements_3d(legacy: bool = False) -> dict[str, Callable]:
     """Return only measurements that support 3D input (see ``legacy`` above)."""
-    core = {k: _dispatch("core")[k] for k in _3D_FEATURES}
-    return _apply_legacy(core, legacy)
+    core = _dispatch("core")
+    return _apply_legacy({k: core[k] for k in _3D_FEATURES}, legacy)
 
 
 def get_correlation_measurements() -> dict[str, Callable]:
