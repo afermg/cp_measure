@@ -54,8 +54,14 @@ def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
+    legacy: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """masks is a labeled array where 0 are background."""
+    """masks is a labeled array where 0 are background.
+
+    ``legacy`` mirrors the numpy backend: False (default) uses ``numpy.percentile``
+    'linear' quartiles + textbook median MAD; True reproduces the original
+    CellProfiler ``n*q`` quartiles + ``(1/ndim)``-quantile MAD.
+    """
     orig_ndim = pixels.ndim
 
     masked_image = pixels
@@ -132,7 +138,7 @@ def get_intensity(
             median_intensity,
             upper_quartile_intensity,
             mad_intensity,
-        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim)
+        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim, legacy)
 
     if edge_measurements:
         integrated_intensity_edge = numpy.zeros(nobjects)
