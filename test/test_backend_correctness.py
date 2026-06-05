@@ -50,15 +50,33 @@ def _assert_dicts_match(ref, got):
 
 
 @requires_numba
+@pytest.mark.parametrize("legacy", [False, True], ids=["new", "legacy"])
 @pytest.mark.parametrize("edge", [True, False], ids=["edge", "noedge"])
 @pytest.mark.parametrize("dim", ["2d", "3d"])
-def test_numba_intensity_matches_numpy(dim, edge):
+def test_numba_intensity_matches_numpy(dim, edge, legacy):
     from cp_measure.core.numba import get_intensity as intensity_numba
 
     mask, pixels = _mask_pixels_2d() if dim == "2d" else _mask_pixels_3d()
-    ref = intensity_numpy(mask, pixels, edge_measurements=edge)
-    got = intensity_numba(mask, pixels, edge_measurements=edge)
+    ref = intensity_numpy(mask, pixels, edge_measurements=edge, legacy=legacy)
+    got = intensity_numba(mask, pixels, edge_measurements=edge, legacy=legacy)
     _assert_dicts_match(ref, got)
+
+
+def test_intensity_quartile_conventions_anchor():
+    """Pin both conventions to hand-checked values on one object with pixels
+    [0, 1, 2, 3]: new == numpy.percentile ((n-1)*q); legacy == CellProfiler n*q."""
+    mask = np.ones((1, 4), dtype=np.int32)
+    pixels = np.array([[0.0, 1.0, 2.0, 3.0]])
+    new = intensity_numpy(mask, pixels, edge_measurements=False, legacy=False)
+    old = intensity_numpy(mask, pixels, edge_measurements=False, legacy=True)
+    # new: numpy.percentile([0,1,2,3], [25,50,75]) = 0.75 / 1.5 / 2.25
+    assert new["Intensity_LowerQuartileIntensity"][0] == pytest.approx(0.75)
+    assert new["Intensity_MedianIntensity"][0] == pytest.approx(1.5)
+    assert new["Intensity_UpperQuartileIntensity"][0] == pytest.approx(2.25)
+    # legacy n*q: positions 1.0 / 2.0 / 3.0 -> sorted[1] / sorted[2] / sorted[3]
+    assert old["Intensity_LowerQuartileIntensity"][0] == pytest.approx(1.0)
+    assert old["Intensity_MedianIntensity"][0] == pytest.approx(2.0)
+    assert old["Intensity_UpperQuartileIntensity"][0] == pytest.approx(3.0)
 
 
 @requires_numba
