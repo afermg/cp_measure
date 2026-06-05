@@ -118,10 +118,14 @@ ALL_LOCATION_MEASUREMENTS = [
 ]
 
 
-def _interp_n_frac(sorted_arr: numpy.ndarray, n: int, frac: float) -> float:
-    """Linear interpolation at ``n * frac`` within a sorted segment, clamped at
-    the last element. Matches the original cp_measure cumsum-offset quantile."""
-    pos = n * frac
+def _interp(sorted_arr: numpy.ndarray, n: int, frac: float, legacy: bool) -> float:
+    """Linear interpolation within a sorted segment at the chosen convention.
+
+    ``legacy=True`` uses ``pos = n * frac`` (CellProfiler / cumsum-offset);
+    ``legacy=False`` uses ``pos = (n - 1) * frac`` (``numpy.percentile`` 'linear').
+    The upper neighbour is clamped at the last element either way.
+    """
+    pos = n * frac if legacy else (n - 1) * frac
     lo = int(pos)
     if lo > n - 1:
         lo = n - 1
@@ -136,6 +140,7 @@ def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
+    legacy: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object intensity features.
 
@@ -144,6 +149,16 @@ def get_intensity(
     max position, and centroid run on the bbox crop only. 2D inputs are promoted
     to ``(1, Y, X)`` so the same code path handles 2D and 3D. ``find_boundaries``
     is called once on the whole label image for edge features.
+
+    Parameters
+    ----------
+    legacy
+        Selects the percentile convention for the four quantile features (Q1,
+        median, Q3, MAD). When False (default) quartiles use ``numpy.percentile``
+        'linear' ``(n-1)*q`` and MAD is the textbook ``median(|x - median(x)|)``.
+        When True, reproduce the original cp_measure / CellProfiler behavior:
+        quartiles at ``n*q`` and MAD as the ``(1/ndim)``-quantile of
+        ``|x - median(x)|``. All other features are unaffected.
     """
     # Captured before the (1, Y, X) reshape so the MAD quantile fraction matches
     # the original implementation (1/2 for 2D, 1/3 for 3D).
@@ -204,12 +219,15 @@ def get_intensity(
         sorted_vals = numpy.sort(vals)
         min_intensity[out_i] = sorted_vals[0]
         max_intensity[out_i] = sorted_vals[-1]
-        median = _interp_n_frac(sorted_vals, n, 0.5)
-        lower_quartile_intensity[out_i] = _interp_n_frac(sorted_vals, n, 0.25)
+        median = _interp(sorted_vals, n, 0.5, legacy)
+        lower_quartile_intensity[out_i] = _interp(sorted_vals, n, 0.25, legacy)
         median_intensity[out_i] = median
-        upper_quartile_intensity[out_i] = _interp_n_frac(sorted_vals, n, 0.75)
+        upper_quartile_intensity[out_i] = _interp(sorted_vals, n, 0.75, legacy)
         sorted_dev = numpy.sort(numpy.abs(vals - median))
-        mad_intensity[out_i] = _interp_n_frac(sorted_dev, n, 1.0 / source_ndim)
+        # MAD: legacy uses (1/ndim)-quantile of |x - median|; otherwise the
+        # textbook median.
+        mad_frac = (1.0 / source_ndim) if legacy else 0.5
+        mad_intensity[out_i] = _interp(sorted_dev, n, mad_frac, legacy)
 
         # Positions / centroids on the bbox crop, then shift by the bbox
         # offset. Per-bbox np.argmax picks the FIRST tied-max in C-order;

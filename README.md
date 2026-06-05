@@ -190,12 +190,10 @@ measurecolocalization.get_correlation_overlap
 ### Important notes
 
 - **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
-- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
+- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements. For the four intensity quantile features (`LowerQuartileIntensity`, `MedianIntensity`, `UpperQuartileIntensity`, `MADIntensity`) you additionally need `legacy=True` — see below.
 - **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
-
-### Known limitations
-
-- Some features produce a minor (1e-16) discrepancy when using one vs multiple mask in some features. The issue lies upstream ([centrosome](https://github.com/afermg/cp_measure/issues/18#issuecomment-4593709963), [scipy](https://github.com/scipy/scipy/issues/25279)), and does not significantly impact my use-cases.
+- **Legacy percentile convention**: `get_intensity` (numpy and numba backends), `get_core_measurements`, `get_core_measurements_3d`, and `make_featurizer_config` accept `legacy: bool = False`. The default uses `numpy.percentile` 'linear' (`(n-1)*q`) quartiles and the textbook `median(|x - median(x)|)` MAD. Pass `legacy=True` to reproduce the original cp_measure / CellProfiler behavior: `n*q` quartiles and the `(1/ndim)`-quantile MAD (which returns the 33rd percentile in 3D rather than the median). All other intensity features are identical either way.
+- **Minor floating-point discrepancy**: Some features produce a minor (1e-16) discrepancy when using one vs multiple mask in some features. The issue lies upstream ([centrosome](https://github.com/afermg/cp_measure/issues/18#issuecomment-4593709963), [scipy](https://github.com/scipy/scipy/issues/25279)), and does not significantly impact my use-cases.
 
 ## Similar projects
 

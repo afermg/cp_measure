@@ -28,6 +28,7 @@ def make_featurizer_config(
     channels: list[str] | None = None,
     *,
     objects: list[str] | None = None,
+    legacy: bool = False,
     intensity: bool = True,
     intensity_params: dict | None = None,
     texture: bool = True,
@@ -129,6 +130,7 @@ def make_featurizer_config(
     return {
         "channels": list(channels) if channels is not None else None,
         "objects": list(objects),
+        "legacy": legacy,
         "intensity": intensity,
         "intensity_params": intensity_params if intensity_params is not None else {},
         "texture": texture,
@@ -214,7 +216,12 @@ def featurize(
     )
 
     is_3d = image.ndim == 4
-    core_funcs = get_core_measurements_3d() if is_3d else get_core_measurements()
+    legacy = config.get("legacy", False)
+    core_funcs = (
+        get_core_measurements_3d(legacy=legacy)
+        if is_3d
+        else get_core_measurements(legacy=legacy)
+    )
     corr_funcs = get_correlation_measurements()
 
     if is_3d:
