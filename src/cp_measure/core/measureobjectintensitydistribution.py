@@ -155,26 +155,25 @@ def get_radial_distribution(
     # Issue #22 fix: measure each object on its own cropped + 1px-padded mask, so the
     # imported geometry (distance_to_edge / propagate) and the binning see ONLY this
     # object — its result equals the baseline run on that object in isolation.
-    unique_labels = numpy.unique(labels)
-    unique_labels = unique_labels[unique_labels > 0]
-    if len(unique_labels) == 0:  # no objects -> empty arrays with the right keys
+    slices = scipy.ndimage.find_objects(labels)
+    present = [(label, sl) for label, sl in enumerate(slices, 1) if sl is not None]
+    if not present:  # no objects -> empty arrays with the right keys
         return _radial_distribution_image(
             labels, pixels, scaled, bin_count, maximum_radius
         )
-    slices = scipy.ndimage.find_objects(labels)
     per_object = [
         _radial_distribution_image(
-            numpy.pad(labels[sl] == label_value, 1).astype(int),
+            numpy.pad(labels[sl] == label, 1).astype(int),
             numpy.pad(pixels[sl], 1),
             scaled,
             bin_count,
             maximum_radius,
         )
-        for label_value in unique_labels
-        for sl in (slices[label_value - 1],)
+        for label, sl in present
     ]
     return {
-        key: numpy.array([obj[key][0] for obj in per_object]) for key in per_object[0]
+        key: numpy.concatenate([obj[key] for obj in per_object])
+        for key in per_object[0]
     }
 
 
