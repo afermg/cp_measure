@@ -44,6 +44,18 @@ class TestSmoke:
         _, _, rows = featurize(image_2d_1ch, mask_2d, config, image_id="plate1_A01")
         assert all(r[0] == "plate1_A01" for r in rows)
 
+    def test_legacy_flag_changes_intensity_quartiles(self, image_2d_1ch, mask_2d):
+        base = {**ALL_OFF, "intensity": True}
+        d_new, cols, _ = featurize(
+            image_2d_1ch, mask_2d, make_featurizer_config(["DNA"], legacy=False, **base)
+        )
+        d_old, _, _ = featurize(
+            image_2d_1ch, mask_2d, make_featurizer_config(["DNA"], legacy=True, **base)
+        )
+        qcols = [i for i, c in enumerate(cols) if "LowerQuartileIntensity" in c]
+        assert qcols, "no quartile column produced"
+        assert not np.allclose(d_new[:, qcols], d_old[:, qcols])
+
     def test_values_finite_and_nontrivial(self, image_2d_2ch, mask_2d):
         with pytest.warns(UserWarning, match="No channel names"):
             data, columns, _ = featurize(image_2d_2ch, mask_2d)

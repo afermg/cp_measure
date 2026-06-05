@@ -3,6 +3,7 @@ Wrapper to fetch measurement functions in bulk. We are keeping the ugly filename
 match the original names. This may change in the future.
 """
 
+from functools import partial
 from typing import Callable
 
 from cp_measure.core import (
@@ -88,14 +89,37 @@ def _dispatch(name: str) -> dict[str, Callable]:
     )
 
 
-def get_core_measurements() -> dict[str, Callable]:
-    return _dispatch("core")
+# Features whose result honours the `legacy` percentile convention (see
+# cp_measure.core.measureobjectintensity.get_intensity). Extend as more lanes
+# gain a legacy/new split.
+_LEGACY_FEATURES = ("intensity",)
 
 
-def get_core_measurements_3d() -> dict[str, Callable]:
-    """Return only measurements that support 3D input."""
-    core = _dispatch("core")
-    return {k: core[k] for k in _3D_FEATURES}
+def _apply_legacy(core: dict[str, Callable], legacy: bool) -> dict[str, Callable]:
+    """Bind ``legacy=True`` into the features that honour it; no-op when False."""
+    if not legacy:
+        return core
+    return {
+        name: (partial(fn, legacy=True) if name in _LEGACY_FEATURES else fn)
+        for name, fn in core.items()
+    }
+
+
+def get_core_measurements(legacy: bool = False) -> dict[str, Callable]:
+    """Core per-object measurement functions.
+
+    ``legacy`` (default False) selects the original CellProfiler ``n*q`` percentile
+    convention for the intensity quartile/MAD features instead of the default
+    ``numpy.percentile`` one; see
+    :func:`cp_measure.core.measureobjectintensity.get_intensity`.
+    """
+    return _apply_legacy(_dispatch("core"), legacy)
+
+
+def get_core_measurements_3d(legacy: bool = False) -> dict[str, Callable]:
+    """Return only measurements that support 3D input (see ``legacy`` above)."""
+    core = {k: _dispatch("core")[k] for k in _3D_FEATURES}
+    return _apply_legacy(core, legacy)
 
 
 def get_correlation_measurements() -> dict[str, Callable]:

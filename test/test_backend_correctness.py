@@ -79,6 +79,18 @@ def test_intensity_quartile_conventions_anchor():
     assert old["Intensity_UpperQuartileIntensity"][0] == pytest.approx(3.0)
 
 
+def test_get_core_measurements_threads_legacy():
+    """bulk.get_core_measurements(legacy=...) binds the convention into intensity."""
+    from cp_measure.bulk import get_core_measurements
+
+    mask = np.ones((1, 4), dtype=np.int32)
+    pixels = np.array([[0.0, 1.0, 2.0, 3.0]])
+    new = get_core_measurements(legacy=False)["intensity"](mask, pixels)
+    old = get_core_measurements(legacy=True)["intensity"](mask, pixels)
+    assert new["Intensity_LowerQuartileIntensity"][0] == pytest.approx(0.75)
+    assert old["Intensity_LowerQuartileIntensity"][0] == pytest.approx(1.0)
+
+
 @requires_numba
 def test_set_accelerator_numba_composes_with_numpy():
     cp_measure.set_accelerator("numba")
