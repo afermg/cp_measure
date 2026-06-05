@@ -278,12 +278,13 @@ def get_intensity(
             # Interpolation position: n*q (legacy CellProfiler) vs (n-1)*q
             # (numpy.percentile 'linear'). The clamp boundary stays indices+areas-1.
             span = areas if legacy else (areas - 1)
+            float_indices = indices.astype(float)
             for dest, fraction in (
                 (lower_quartile_intensity, 1.0 / 4.0),
                 (median_intensity, 1.0 / 2.0),
                 (upper_quartile_intensity, 3.0 / 4.0),
             ):
-                qindex = indices.astype(float) + span * fraction
+                qindex = float_indices + span * fraction
                 qfraction = qindex - numpy.floor(qindex)
                 qindex = qindex.astype(int)
                 qmask = qindex < indices + areas - 1
@@ -307,7 +308,7 @@ def get_intensity(
             order = numpy.lexsort((madimg, llabels))
             # legacy: (1/ndim)-quantile at n*frac; new: textbook median at (n-1)*0.5
             mad_fraction = (1.0 / pixels.ndim) if legacy else 0.5
-            qindex = indices.astype(float) + span * mad_fraction
+            qindex = float_indices + span * mad_fraction
             qfraction = qindex - numpy.floor(qindex)
             qindex = qindex.astype(int)
             qmask = qindex < indices + areas - 1

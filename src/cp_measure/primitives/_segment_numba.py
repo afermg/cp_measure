@@ -229,8 +229,5 @@ def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
         ad = np.abs(seg - med[k])
         ad.sort()
         # legacy: (1/ndim)-quantile at the n*frac convention; else textbook median
-        if legacy:
-            mad[k] = _interp(ad, cnt, mad_frac, True)
-        else:
-            mad[k] = _interp(ad, cnt, 0.5, False)
+        mad[k] = _interp(ad, cnt, mad_frac if legacy else 0.5, legacy)
     return lq, med, uq, mad
