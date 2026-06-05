@@ -123,9 +123,17 @@ def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
+    legacy: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """
-    masks is a labeled array where 0 are background images.
+    """masks is a labeled array where 0 are background images.
+
+    ``legacy`` selects the percentile convention for the four quantile features
+    (LowerQuartile / Median / UpperQuartile / MAD). When False (default) quartiles
+    use the ``numpy.percentile`` 'linear' (``(n-1)*q``) position and MAD is the
+    textbook ``median(|x - median(x)|)``. When True, reproduce the original
+    cp_measure / CellProfiler behavior: quartiles at the ``n*q`` position and MAD as
+    the ``(1/ndim)``-quantile of ``|x - median(x)|``. All other features are
+    identical either way.
     """
     masked_image = pixels
 
@@ -267,12 +275,15 @@ def get_intensity(
             order = numpy.lexsort((limg, llabels))
             areas = lcount.astype(int)
             indices = numpy.cumsum(areas) - areas
+            # Interpolation position: n*q (legacy CellProfiler) vs (n-1)*q
+            # (numpy.percentile 'linear'). The clamp boundary stays indices+areas-1.
+            span = areas if legacy else (areas - 1)
             for dest, fraction in (
                 (lower_quartile_intensity, 1.0 / 4.0),
                 (median_intensity, 1.0 / 2.0),
                 (upper_quartile_intensity, 3.0 / 4.0),
             ):
-                qindex = indices.astype(float) + areas * fraction
+                qindex = indices.astype(float) + span * fraction
                 qfraction = qindex - numpy.floor(qindex)
                 qindex = qindex.astype(int)
                 qmask = qindex < indices + areas - 1
@@ -294,7 +305,9 @@ def get_intensity(
             #
             madimg = numpy.abs(limg - median_intensity[llabels - 1])
             order = numpy.lexsort((madimg, llabels))
-            qindex = indices.astype(float) + areas / pixels.ndim
+            # legacy: (1/ndim)-quantile at n*frac; new: textbook median at (n-1)*0.5
+            mad_fraction = (1.0 / pixels.ndim) if legacy else 0.5
+            qindex = indices.astype(float) + span * mad_fraction
             qfraction = qindex - numpy.floor(qindex)
             qindex = qindex.astype(int)
             qmask = qindex < indices + areas - 1
