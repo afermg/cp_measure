@@ -5,7 +5,7 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
-from cp_measure.utils import masks_to_ijv
+from cp_measure.utils import _zernike_scores
 from numpy.typing import NDArray
 
 """"
@@ -315,72 +315,28 @@ def get_radial_zernikes(
         return {}
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
-    unique_labels = numpy.unique(labels)  # Will be used later for scipy.ndimage.sum
-    unique_labels = unique_labels[unique_labels > 0]
-    # MODIFIED: Delegate index generation to the minimum_enclosing_circle
-    # MODIFIED: We assume non-overlapping labels for now
-    # TODO Support label overlap (i.e., format in ijv)
-    # MODIFIED: Delegate indexes to minimum_enclosing_circle
-    ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels, unique_labels)
+    # The intensity-weighted moment sums are exactly `_zernike_scores` with the pixel image
+    # as the per-pixel weight: vr[obj, k] = sum_pixels intensity * Re(basis_k), and likewise
+    # for the imaginary part. The shared helper keeps the basis on the foreground vectors (no
+    # full (H, W, K) scatter, no 2*K `scipy.ndimage.sum_labels` passes), maps each label to
+    # its own row (non-contiguous label sets work), and returns each object's pixel `counts`
+    # — radial Zernikes normalise by pixel count, not the enclosing-circle area. With no
+    # objects it returns empty (0, K) arrays, so the loop below yields empty features without
+    # a special case.
+    vr, vi, _radii, counts = _zernike_scores(labels, zernike_indexes, weight=pixels)
+
+    magnitude = numpy.sqrt(vr * vr + vi * vi) / counts[:, numpy.newaxis]
+    phase = numpy.arctan2(vr, vi)
 
     #
-    # Then compute x and y, the position of each labeled pixel
-    # within a unit circle around the object
+    # Results will be formatted in a dictionary with the following keys:
+    # Zernike{Magnitude|Phase}_{n}_{m}
+    # n - the radial moment of the Zernike
+    # m - the azimuthal moment of the Zernike
     #
-    ijv = masks_to_ijv(labels)
-
-    l_ = ijv[:, 2]  # (N,1) vector with labels
-
-    yx = (ijv[:, :2] - ij[l_ - 1, :]) / r[l_ - 1, numpy.newaxis]
-
-    z = centrosome.zernike.construct_zernike_polynomials(
-        yx[:, 1], yx[:, 0], zernike_indexes
-    )
-
-    # Filter ijv-formatted items to keep the ones inside the pixels boundary
-    ijv_mask = (ijv[:, 0] < pixels.shape[0]) & (ijv[:, 1] < pixels.shape[1])
-    # ijv_mask[ijv_mask] = pixels[ijv[ijv_mask,0], ijv[ijv_mask, 1]]
-
-    yx = yx[ijv_mask, :]
-    l_ = l_[ijv_mask]
-    z_ = z[ijv_mask, :]
-
     results: dict[str, NDArray[numpy.floating]] = {}
-    if len(l_) == 0:
-        # Cover fringe case in which all labels were filtered out
-        for mag_or_phase in ("Magnitude", "Phase"):
-            for n, m in zernike_indexes:
-                name = f"{M_CATEGORY}_Zernike{mag_or_phase}_{n}_{m}"
-                results[name] = numpy.zeros(0)
-    else:
-        # MODIFIED: Replaced sum with the updated sum_labels
-        areas = scipy.ndimage.sum_labels(
-            numpy.ones(l_.shape, int), labels=l_, index=unique_labels
-        )
-
-        #
-        # Results will be formatted in a dictionary with the following keys:
-        # Zernike{Magniture|Phase}_{n}_{m}
-        # n - the radial moment of the Zernike
-        # m - the azimuthal moment of the Zernike
-        #
-        for i, (n, m) in enumerate(zernike_indexes):
-            vr = scipy.ndimage.sum_labels(
-                pixels[ijv[:, 0], ijv[:, 1]] * z_[:, i].real,
-                labels=l_,
-                index=unique_labels,
-            )
-
-            vi = scipy.ndimage.sum_labels(
-                pixels[ijv[:, 0], ijv[:, 1]] * z[:, i].imag,
-                labels=l_,
-                index=unique_labels,
-            )
-
-            magnitude = numpy.sqrt(vr * vr + vi * vi) / areas
-            phase = numpy.arctan2(vr, vi)
-
-            results[f"{M_CATEGORY}_ZernikeMagnitude_{n}_{m}"] = magnitude
-            results[f"{M_CATEGORY}_ZernikePhase_{n}_{m}"] = phase
+    for i, (n, m) in enumerate(zernike_indexes):
+        results[f"{M_CATEGORY}_ZernikeMagnitude_{n}_{m}"] = magnitude[:, i]
+        results[f"{M_CATEGORY}_ZernikePhase_{n}_{m}"] = phase[:, i]
 
     return results
