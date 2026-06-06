@@ -55,10 +55,16 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     numba backend exists. This is explicit per-function composition, NOT an
     error-driven fallback.
 
+    The five correlation entries are kept per-group so the featurizer's per-group
+    selection (``_collect_correlation_features``) keeps working; each is now a thin,
+    gated wrapper over the shared ``get_correlation_all`` kernel. A caller wanting
+    several coloc features in ONE flatten+kernel pass (the efficient path) calls
+    ``cp_measure.core.numba.get_correlation_all(..., features=...)`` directly — it is
+    stateless, so fusion happens by requesting the set in one call, not by the
+    registry.
+
     Note: ``overlap`` is not in the numpy ``_CORRELATION`` registry, so the numba
-    correlation registry intentionally exposes one feature the numpy one does not
-    (the numba ``overlap`` backend exists and is cheap to surface). Adding
-    ``overlap`` to the numpy ``_CORRELATION`` for symmetry is a separate call.
+    correlation registry intentionally exposes one feature the numpy one does not.
     """
     from cp_measure.core.numba import (
         get_correlation_costes as _numba_costes,

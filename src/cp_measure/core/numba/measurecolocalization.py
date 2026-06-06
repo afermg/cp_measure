@@ -27,6 +27,8 @@ intensity images are unaffected.
 than the fused reduction, so it has its own kernel and runner).
 """
 
+from collections.abc import Iterable
+
 import numpy
 from numpy.typing import NDArray
 
@@ -76,36 +78,14 @@ def _flatten_image(masks_zyx, pixels_1_zyx, pixels_2_zyx):
     return g1, g2, offsets, n
 
 
-def _run(masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc):
-    """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
-
-    Returns the nine per-object arrays from ``coloc_per_object``, or ``None`` when
-    the image holds no objects (the callers then emit empty feature arrays).
-    """
-    g1, g2, offsets, n = _flatten_image(masks_zyx, pixels_1_zyx, pixels_2_zyx)
-    if n == 0:
-        return None
-    return coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc)
-
-
-def _featurize(pixels_1, pixels_2, masks, thr, compute_rwc, build):
-    """Normalise the triple via ``to_bzyx`` and map each image through ``build``.
-
-    ``build(result)`` turns the kernel tuple (or ``None`` for an empty image) into
-    one image's feature dict. ``unwrap`` then collapses a single image to that
-    dict, or returns the list for a batch — matching the numba intensity backend.
-    """
-    frac = thr / 100.0
-    masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
-    _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
-    results = [
-        build(_run(m, p1, p2, frac, compute_rwc))
-        for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list)
-    ]
-    return unwrap(results)
-
-
 _EMPTY = numpy.empty(0)
+
+
+# The five single-feature functions are thin, gated wrappers over ``get_correlation_all`` (single
+# source of truth for the kernel + feature-key assembly). Each computes only its tier: the cheap
+# functions skip RWC's rank sort and the Costes kernel; ``rwc`` adds the rank sort; ``costes`` runs
+# only the iterative kernel. Calling several separately still runs the kernel per call (the library
+# is stateless) — pass the set to ``get_correlation_all`` to collapse them into one pass.
 
 
 def get_correlation_pearson(
@@ -113,13 +93,7 @@ def get_correlation_pearson(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
 ) -> dict[str, NDArray[numpy.floating]]:
-    def build(res):
-        if res is None:
-            return {F_CORRELATION_FORMAT: _EMPTY, F_SLOPE_FORMAT: _EMPTY}
-        corr, slope = res[0], res[1]
-        return {F_CORRELATION_FORMAT: corr, F_SLOPE_FORMAT: slope}
-
-    return _featurize(pixels_1, pixels_2, masks, 15, False, build)
+    return get_correlation_all(pixels_1, pixels_2, masks, features=("pearson",))
 
 
 def get_correlation_manders_fold(
@@ -128,13 +102,9 @@ def get_correlation_manders_fold(
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, NDArray[numpy.floating]]:
-    def build(res):
-        if res is None:
-            return {f"{F_MANDERS_FORMAT}_1": _EMPTY, f"{F_MANDERS_FORMAT}_2": _EMPTY}
-        m1, m2 = res[2], res[3]
-        return {f"{F_MANDERS_FORMAT}_1": m1, f"{F_MANDERS_FORMAT}_2": m2}
-
-    return _featurize(pixels_1, pixels_2, masks, thr, False, build)
+    return get_correlation_all(
+        pixels_1, pixels_2, masks, features=("manders_fold",), thr=thr
+    )
 
 
 def get_correlation_rwc(
@@ -143,13 +113,7 @@ def get_correlation_rwc(
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, NDArray[numpy.floating]]:
-    def build(res):
-        if res is None:
-            return {f"{F_RWC_FORMAT}_1": _EMPTY, f"{F_RWC_FORMAT}_2": _EMPTY}
-        rwc1, rwc2 = res[7], res[8]
-        return {f"{F_RWC_FORMAT}_1": rwc1, f"{F_RWC_FORMAT}_2": rwc2}
-
-    return _featurize(pixels_1, pixels_2, masks, thr, True, build)
+    return get_correlation_all(pixels_1, pixels_2, masks, features=("rwc",), thr=thr)
 
 
 def get_correlation_overlap(
@@ -158,21 +122,9 @@ def get_correlation_overlap(
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, NDArray[numpy.floating]]:
-    def build(res):
-        if res is None:
-            return {
-                F_OVERLAP_FORMAT: _EMPTY,
-                f"{F_K_FORMAT}_1": _EMPTY,
-                f"{F_K_FORMAT}_2": _EMPTY,
-            }
-        overlap, k1, k2 = res[4], res[5], res[6]
-        return {
-            F_OVERLAP_FORMAT: overlap,
-            f"{F_K_FORMAT}_1": k1,
-            f"{F_K_FORMAT}_2": k2,
-        }
-
-    return _featurize(pixels_1, pixels_2, masks, thr, False, build)
+    return get_correlation_all(
+        pixels_1, pixels_2, masks, features=("overlap",), thr=thr
+    )
 
 
 def get_correlation_costes(
@@ -188,17 +140,82 @@ def get_correlation_costes(
     only fed the dead ``calculate_threshold`` call). ``scale`` is dtype-derived via
     ``infer_scale`` on ``pixels_1``, so float input gives ``scale == 1``.
     """
+    return get_correlation_all(
+        pixels_1,
+        pixels_2,
+        masks,
+        features=("costes",),
+        thr=thr,
+        fast_costes=fast_costes,
+    )
+
+
+_GROUPS = ("pearson", "manders_fold", "rwc", "overlap", "costes")
+_CHEAP_GROUPS = frozenset({"pearson", "manders_fold", "rwc", "overlap"})
+
+
+def get_correlation_all(
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
+    features: Iterable[str] | None = None,
+    thr: int = 15,
+    fast_costes: str = M_FASTER,
+) -> dict[str, NDArray[numpy.floating]]:
+    """Colocalization features from ONE flatten + ONE fused kernel pass per image.
+
+    ``features`` selects which groups to return — any of ``pearson`` / ``manders_fold`` / ``rwc`` /
+    ``overlap`` / ``costes`` — or ``None`` for all. The shared ``coloc_per_object`` kernel runs once
+    for the cheap block (Pearson + slope, Manders, Overlap, K); the two expensive paths are gated by
+    the request: RWC's rank sort runs only if ``rwc`` is asked for, the Costes iterative kernel only
+    if ``costes`` is. This is the efficient entry point for any caller wanting several coloc features
+    at once (the single-feature functions delegate here). Stateless: collapsing N features into one
+    pass means requesting them in one call.
+    """
+    want = set(_GROUPS) if features is None else set(features)
+    unknown = want - set(_GROUPS)
+    if unknown:
+        raise ValueError(f"unknown correlation feature group(s): {sorted(unknown)}")
+    need_cheap = bool(want & _CHEAP_GROUPS)
+    need_rwc = "rwc" in want
+    need_costes = "costes" in want
+    frac = thr / 100.0
     mode = _COSTES_MODE[fast_costes]
     masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
     _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
 
     def run(masks_zyx, p1_zyx, p2_zyx):
         g1, g2, offsets, n = _flatten_image(masks_zyx, p1_zyx, p2_zyx)
-        if n == 0:
-            return {f"{F_COSTES_FORMAT}_1": _EMPTY, f"{F_COSTES_FORMAT}_2": _EMPTY}
-        scale = float(infer_scale(numpy.asarray(p1_zyx)))
-        c1, c2 = costes_per_object(g1, g2, offsets, n, scale, mode)
-        return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
+        out: dict[str, NDArray[numpy.floating]] = {}
+        if need_cheap or need_rwc:
+            if n == 0:
+                corr = slope = m1 = m2 = overlap = k1 = k2 = rwc1 = rwc2 = _EMPTY
+            else:
+                corr, slope, m1, m2, overlap, k1, k2, rwc1, rwc2 = coloc_per_object(
+                    g1, g2, offsets, n, frac, need_rwc
+                )
+            if "pearson" in want:
+                out[F_CORRELATION_FORMAT] = corr
+                out[F_SLOPE_FORMAT] = slope
+            if "manders_fold" in want:
+                out[f"{F_MANDERS_FORMAT}_1"] = m1
+                out[f"{F_MANDERS_FORMAT}_2"] = m2
+            if "overlap" in want:
+                out[F_OVERLAP_FORMAT] = overlap
+                out[f"{F_K_FORMAT}_1"] = k1
+                out[f"{F_K_FORMAT}_2"] = k2
+            if need_rwc:
+                out[f"{F_RWC_FORMAT}_1"] = rwc1
+                out[f"{F_RWC_FORMAT}_2"] = rwc2
+        if need_costes:
+            if n == 0:
+                c1 = c2 = _EMPTY
+            else:
+                scale = float(infer_scale(numpy.asarray(p1_zyx)))
+                c1, c2 = costes_per_object(g1, g2, offsets, n, scale, mode)
+            out[f"{F_COSTES_FORMAT}_1"] = c1
+            out[f"{F_COSTES_FORMAT}_2"] = c2
+        return out
 
     results = [
         run(m, p1, p2) for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list)

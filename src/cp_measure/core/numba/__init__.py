@@ -11,6 +11,7 @@ accelerator composes them with the numpy implementations of every other feature
 """
 
 from cp_measure.core.numba.measurecolocalization import (
+    get_correlation_all,
     get_correlation_costes,
     get_correlation_manders_fold,
     get_correlation_overlap,
@@ -20,6 +21,7 @@ from cp_measure.core.numba.measurecolocalization import (
 from cp_measure.core.numba.measureobjectintensity import get_intensity
 
 __all__ = [
+    "get_correlation_all",
     "get_correlation_costes",
     "get_correlation_manders_fold",
     "get_correlation_overlap",
