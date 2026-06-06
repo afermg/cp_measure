@@ -143,3 +143,65 @@ def test_numba_moments_empty():
 
     raw, central, normalized, hu = numba_moments(numpy.zeros((20, 20), numpy.int32))
     assert raw.shape == (0, 4, 4) and hu.shape == (0, 7)
+
+
+# --- convex hull (area_convex) ---
+
+
+def _assert_convex_matches(masks):
+    from cp_measure.core.numba._sizeshape import convex_area_2d
+
+    got = convex_area_2d(masks)
+    ref = skimage.measure.regionprops_table(masks, properties=["area_convex"])[
+        "area_convex"
+    ]
+    numpy.testing.assert_array_equal(got, ref)  # rasterised pixel count -> bit-exact
+
+
+@requires_numba
+def test_numba_convex_area_multi():
+    _assert_convex_matches(_square_objects(256, 4))
+
+
+@requires_numba
+def test_numba_convex_area_irregular():
+    rng = numpy.random.default_rng(0)
+    masks = numpy.zeros((128, 128), numpy.int32)
+    yy, xx = numpy.mgrid[0:128, 0:128]
+    for lab, (cy, cx) in enumerate(rng.integers(20, 108, size=(6, 2)), 1):
+        masks[(yy - cy) ** 2 + (xx - cx) ** 2 < rng.integers(40, 160)] = lab
+    _assert_convex_matches(masks)
+
+
+@requires_numba
+def test_numba_convex_area_noncontiguous():
+    masks = numpy.zeros((96, 96), numpy.int32)
+    masks[10:30, 10:30] = 1
+    masks[40:60, 40:60] = 3
+    masks[70:90, 70:90] = 7
+    _assert_convex_matches(masks)
+
+
+@requires_numba
+def test_numba_convex_area_edge_touching():
+    masks = numpy.zeros((64, 64), numpy.int32)
+    masks[0:20, 0:20] = 1
+    masks[44:64, 44:64] = 2
+    _assert_convex_matches(masks)
+
+
+@requires_numba
+def test_numba_convex_area_degenerate():
+    # single pixel and a 1-wide line: hull is the pixels themselves (area == pixel count).
+    masks = numpy.zeros((32, 32), numpy.int32)
+    masks[16, 16] = 1
+    masks[5, 5:15] = 2
+    masks[20:28, 20:24] = 3
+    _assert_convex_matches(masks)
+
+
+@requires_numba
+def test_numba_convex_area_empty():
+    from cp_measure.core.numba._sizeshape import convex_area_2d
+
+    assert convex_area_2d(numpy.zeros((20, 20), numpy.int32)).shape == (0,)
