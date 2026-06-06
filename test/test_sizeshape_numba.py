@@ -329,6 +329,15 @@ def test_get_sizeshape_flag_variants():
 
 
 @requires_numba
+def test_get_sizeshape_empty():
+    # all-background tile: exercises the full _sizeshape_2d dict assembly with zero objects
+    # (the individual kernels have empty tests, but the wrapper's assembly did not).
+    masks = numpy.zeros((24, 24), numpy.int32)
+    pixels = numpy.zeros((24, 24))
+    _assert_full_sizeshape_matches(masks, pixels)
+
+
+@requires_numba
 def test_get_sizeshape_3d_falls_back_to_numpy():
     import cp_measure.core.measureobjectsizeshape as numpy_ss
     from cp_measure.core.numba._sizeshape import get_sizeshape as numba_ss

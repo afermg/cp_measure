@@ -22,6 +22,7 @@ from cp_measure.primitives._moments import (
     axes_eccentricity_orientation,
     derive_normalized_hu,
     inertia_2d,
+    moment_feature_dict,
 )
 from cp_measure.primitives.segment import labels_to_offsets
 from cp_measure.primitives.shapes import to_bzyx
@@ -578,23 +579,10 @@ def _sizeshape_2d(labels, pixels, calculate_advanced, new_features):
 
     if calculate_advanced:
         it_00, it_off, it_11, eig_0, eig_1 = inertia_2d(central)
-        for p in range(3):  # spatial / central exposed for p in {0,1,2}, q in {0,1,2,3}
-            for q in range(4):
-                results[f"SpatialMoment_{p}_{q}"] = raw[:, p, q]
-                results[f"CentralMoment_{p}_{q}"] = central[:, p, q]
-        for p in range(4):  # normalized full 4x4
-            for q in range(4):
-                results[f"NormalizedMoment_{p}_{q}"] = normalized[:, p, q]
-        for k in range(7):
-            results[f"HuMoment_{k}"] = hu[:, k]
-        results |= {
-            _ss.F_INERTIA_TENSOR_0_0: it_00,
-            _ss.F_INERTIA_TENSOR_0_1: it_off,
-            _ss.F_INERTIA_TENSOR_1_0: it_off,
-            _ss.F_INERTIA_TENSOR_1_1: it_11,
-            _ss.F_INERTIA_TENSOR_EIGENVALUES_0: eig_0,
-            _ss.F_INERTIA_TENSOR_EIGENVALUES_1: eig_1,
-        }
+        # off-diagonal is symmetric (it_0_1 == it_1_0); shared assembler owns the feature names
+        results |= moment_feature_dict(
+            raw, central, normalized, hu, (it_00, it_off, it_off, it_11, eig_0, eig_1)
+        )
 
     if new_features:
         results |= {_ss.F_PERIMETER_CROFTON: crofton}
@@ -609,8 +597,13 @@ def get_sizeshape(
     new_features: bool = True,
     spacing=None,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """numba sizeshape backend (2D). 3D volumes fall back to the numpy baseline."""
-    masks_zyx, _pixels_zyx, unwrap = to_bzyx(masks, masks if pixels is None else pixels)
+    """numba sizeshape backend (2D). 3D volumes fall back to the numpy baseline.
+
+    ``pixels`` is accepted for dispatch-signature parity but unused: sizeshape is purely
+    geometric (no intensity-weighted features), exactly like the numpy backend. ``masks`` is
+    passed to ``to_bzyx`` only to normalise the batch/spatial axes.
+    """
+    masks_zyx, _, unwrap = to_bzyx(masks, masks)
     results = [
         _sizeshape_2d(m[0], None, calculate_advanced, new_features)
         if m.shape[0] == 1

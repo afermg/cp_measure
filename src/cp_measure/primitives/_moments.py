@@ -122,7 +122,9 @@ def axes_eccentricity_orientation(
     axis_major = 4 * numpy.sqrt(eig_major)
     axis_minor = 4 * numpy.sqrt(eig_minor)
     with numpy.errstate(invalid="ignore", divide="ignore"):
-        eccentricity = numpy.where(eig_major == 0, 0.0, numpy.sqrt(1 - eig_minor / eig_major))
+        eccentricity = numpy.where(
+            eig_major == 0, 0.0, numpy.sqrt(1 - eig_minor / eig_major)
+        )
     orientation = numpy.where(
         it00 - it11 == 0,
         numpy.where(it_off < 0, numpy.pi / 4, -numpy.pi / 4),
@@ -163,3 +165,46 @@ def spatial_moments_2d(
 
     normalized, hu = derive_normalized_hu(central)
     return raw, central, normalized, hu
+
+
+def moment_feature_dict(
+    raw: NDArray[numpy.floating],
+    central: NDArray[numpy.floating],
+    normalized: NDArray[numpy.floating],
+    hu: NDArray[numpy.floating],
+    inertia: tuple[
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+    ],
+) -> dict[str, NDArray[numpy.floating]]:
+    """Assemble the ``calculate_advanced`` moment + inertia features of 2D ``get_sizeshape``.
+
+    Single source of truth for these 53 feature names and the ``(p, q)`` orders exposed, shared by
+    the numpy and numba sizeshape backends (the key strings match the ``F_*`` constants in
+    ``core.measureobjectsizeshape``; the sizeshape golden test cross-checks the two). ``raw`` and
+    ``central`` are ``(n, 4, 4)`` with only ``p in {0, 1, 2}`` exposed; ``normalized`` is the full
+    ``(n, 4, 4)``; ``hu`` is ``(n, 7)``. ``inertia`` is the tuple
+    ``(it_0_0, it_0_1, it_1_0, it_1_1, eigenvalue_0, eigenvalue_1)``.
+    """
+    it_0_0, it_0_1, it_1_0, it_1_1, eig_0, eig_1 = inertia
+    features: dict[str, NDArray[numpy.floating]] = {}
+    for p in range(3):  # spatial / central expose p in {0,1,2}, q in {0,1,2,3}
+        for q in range(_ORDER):
+            features[f"SpatialMoment_{p}_{q}"] = raw[:, p, q]
+            features[f"CentralMoment_{p}_{q}"] = central[:, p, q]
+    for p in range(_ORDER):  # normalized full 4x4
+        for q in range(_ORDER):
+            features[f"NormalizedMoment_{p}_{q}"] = normalized[:, p, q]
+    for k in range(7):
+        features[f"HuMoment_{k}"] = hu[:, k]
+    features["InertiaTensor_0_0"] = it_0_0
+    features["InertiaTensor_0_1"] = it_0_1
+    features["InertiaTensor_1_0"] = it_1_0
+    features["InertiaTensor_1_1"] = it_1_1
+    features["InertiaTensorEigenvalues_0"] = eig_0
+    features["InertiaTensorEigenvalues_1"] = eig_1
+    return features
