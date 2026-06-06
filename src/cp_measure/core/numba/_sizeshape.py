@@ -8,6 +8,8 @@ the derived quantities (normalized / Hu / inertia) reuse the shared algebra in
 matrices match to floating-point round-off.
 """
 
+from typing import NamedTuple
+
 import centrosome.cpmorphology
 import numba
 import numpy
@@ -26,6 +28,25 @@ from cp_measure.primitives.shapes import to_bzyx
 from cp_measure.utils import _ensure_np_scalar
 
 _ORDER = 4
+
+
+class _Prep(NamedTuple):
+    """The ``labels_to_offsets`` result, computed once and threaded into every primitive.
+
+    All four sizeshape primitives otherwise recompute ``labels_to_offsets`` independently (4x over
+    the same raster); the wrapper computes it once and passes it in. ``lut``/``n``/``offsets`` are
+    the only prep shared by every primitive — the full foreground pixel list (rows/cols/object
+    index) is needed by the moment kernel alone, so it is built there from ``lut``.
+    """
+
+    lut: NDArray[numpy.int64]
+    n: int
+    offsets: NDArray[numpy.int64]
+
+
+def _foreground_prep(labels: NDArray[numpy.integer]) -> _Prep:
+    """``label->offsets`` (``lut``, object count, CSR ``offsets``), shared by every primitive."""
+    return _Prep(*labels_to_offsets(labels))
 
 
 @numba.njit(cache=True)
@@ -89,6 +110,7 @@ def _moment_kernel(
 
 def spatial_moments_2d(
     labels: NDArray[numpy.integer],
+    prep: _Prep | None = None,
 ) -> tuple[
     NDArray[numpy.floating],
     NDArray[numpy.floating],
@@ -99,16 +121,18 @@ def spatial_moments_2d(
 
     Drop-in for ``cp_measure.primitives._moments.spatial_moments_2d`` (same object order, same
     derivation), but computes the moment matrices with the fused numba kernel instead of 32
-    ``numpy.bincount`` passes.
+    ``numpy.bincount`` passes. ``prep`` supplies the shared ``labels_to_offsets`` result when
+    called from the wrapper; left ``None`` it is computed here (standalone use).
     """
-    lut, n, _offsets = labels_to_offsets(labels)
-    if n == 0:
+    if prep is None:
+        prep = _foreground_prep(labels)
+    if prep.n == 0:
         empty = numpy.zeros((0, _ORDER, _ORDER))
         return empty, empty, empty, numpy.zeros((0, 7))
     rows, cols = numpy.nonzero(labels)
-    obj = lut[labels[rows, cols]].astype(numpy.int64)
+    obj = prep.lut[labels[rows, cols]].astype(numpy.int64)
     raw, central = _moment_kernel(
-        rows.astype(numpy.int64), cols.astype(numpy.int64), obj, n
+        rows.astype(numpy.int64), cols.astype(numpy.int64), obj, prep.n
     )
     normalized, hu = derive_normalized_hu(central)
     return raw, central, normalized, hu
@@ -224,10 +248,15 @@ def _hull_kernel(
     return out_x[:cur], out_y[:cur], hull_offsets
 
 
-def convex_area_2d(labels: NDArray[numpy.integer]) -> NDArray[numpy.floating]:
+def convex_area_2d(
+    labels: NDArray[numpy.integer], prep: _Prep | None = None
+) -> NDArray[numpy.floating]:
     """Per-object ``area_convex`` (pixel count inside the convex hull), ordered by ascending
-    label. Bit-exact vs ``skimage.measure.regionprops``."""
-    lut, n, offsets = labels_to_offsets(labels)
+    label. Bit-exact vs ``skimage.measure.regionprops``. Reuses ``prep``'s ``lut``/``n``/
+    ``offsets`` when supplied; the boundary scan below is its own (smaller) pass."""
+    if prep is None:
+        prep = _foreground_prep(labels)
+    lut, n, offsets = prep.lut, prep.n, prep.offsets
     if n == 0:
         return numpy.zeros(0)
     bnd = _boundary_mask(labels)
@@ -432,9 +461,13 @@ def _xf_hist_kernel(
     return hist
 
 
-def perimeter_2d(labels: NDArray[numpy.integer]) -> NDArray[numpy.floating]:
+def perimeter_2d(
+    labels: NDArray[numpy.integer], prep: _Prep | None = None
+) -> NDArray[numpy.floating]:
     """Per-object 4-connectivity perimeter, bit-exact vs ``skimage.regionprops``."""
-    lut, n, _ = labels_to_offsets(labels)
+    if prep is None:
+        prep = _foreground_prep(labels)
+    lut, n = prep.lut, prep.n
     if n == 0:
         return numpy.zeros(0)
     return _perimeter_kernel(
@@ -443,10 +476,12 @@ def perimeter_2d(labels: NDArray[numpy.integer]) -> NDArray[numpy.floating]:
 
 
 def crofton_euler_2d(
-    labels: NDArray[numpy.integer],
+    labels: NDArray[numpy.integer], prep: _Prep | None = None
 ) -> tuple[NDArray[numpy.floating], NDArray[numpy.floating]]:
     """Per-object ``(perimeter_crofton, euler_number)`` from the shared 2x2-config histogram."""
-    lut, n, _ = labels_to_offsets(labels)
+    if prep is None:
+        prep = _foreground_prep(labels)
+    lut, n = prep.lut, prep.n
     if n == 0:
         return numpy.zeros(0), numpy.zeros(0)
     padded = numpy.pad(numpy.ascontiguousarray(labels), 1)
@@ -478,10 +513,13 @@ def _sizeshape_2d(labels, pixels, calculate_advanced, new_features):
     props = regionprops_table(labels, pixels, properties=props_list)
     area = props["area"]
 
-    raw, central, normalized, hu = spatial_moments_2d(labels)
-    area_convex = convex_area_2d(labels)
-    perimeter = perimeter_2d(labels)
-    crofton, euler = crofton_euler_2d(labels)
+    prep = _foreground_prep(
+        labels
+    )  # one labels_to_offsets shared by all four primitives
+    raw, central, normalized, hu = spatial_moments_2d(labels, prep)
+    area_convex = convex_area_2d(labels, prep)
+    perimeter = perimeter_2d(labels, prep)
+    crofton, euler = crofton_euler_2d(labels, prep)
     axis_major, axis_minor, eccentricity, orientation = axes_eccentricity_orientation(
         central
     )
