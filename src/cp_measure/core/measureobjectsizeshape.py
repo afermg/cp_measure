@@ -7,7 +7,7 @@ import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
-from cp_measure.utils import masks_to_ijv
+from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
 MeasureObjectSizeShape
@@ -1009,22 +1009,20 @@ def get_zernike(
     zernike_numbers: int = 9,
 ) -> dict[str, NDArray[numpy.floating]]:
     #
-    # Zernike features (2D only)
+    # Zernike features (2D only). `pixels` is unused: these are shape moments.
     #
     if masks.ndim == 3:
         return {}
-    unique_indices = numpy.unique(masks)
-    unique_indices = unique_indices[unique_indices > 0]
-    indices = list(range(1, len(unique_indices) + 1))
-    labels = masks
-    zernike_numbers = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
+    indices = numpy.unique(masks)
+    indices = indices[indices > 0]
+    zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
 
-    zf_l = centrosome.zernike.zernike(zernike_numbers, labels, indices)
-    results = {}
-    for (n, m), z in zip(zernike_numbers, zf_l.transpose()):  # type: ignore[call-overload]
-        results[f"Zernike_{n}_{m}"] = z
+    real_sums, imag_sums, radii = _zernike_scores(masks, indices, zernike_indexes)
+    areas = numpy.pi * radii * radii
+    with numpy.errstate(divide="ignore", invalid="ignore"):
+        score = numpy.sqrt(real_sums**2 + imag_sums**2) / areas[:, numpy.newaxis]
 
-    return results
+    return {f"Zernike_{n}_{m}": score[:, i] for i, (n, m) in enumerate(zernike_indexes)}
 
 
 def get_feret(
