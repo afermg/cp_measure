@@ -71,12 +71,10 @@ def test_set_accelerator_numba_composes_with_numpy():
         )
         # The colocalization features route to the numba backend too.
         corr = cp_measure.bulk.get_correlation_measurements()
-        for feature in ("pearson", "manders_fold", "rwc", "overlap"):
+        for feature in ("pearson", "manders_fold", "rwc", "costes", "overlap"):
             assert corr[feature].__module__ == (
                 "cp_measure.core.numba.measurecolocalization"
             ), feature
-        # costes stays on numpy until its follow-up lands.
-        assert corr["costes"].__module__ == "cp_measure.core.measurecolocalization"
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
         assert core["texture"].__module__ == "cp_measure.core.measuretexture"

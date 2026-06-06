@@ -49,18 +49,25 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     """Registries for the 'numba' accelerator.
 
     Composes the numba implementations (``intensity`` and the ``pearson`` /
-    ``manders_fold`` / ``rwc`` / ``overlap`` colocalization features) with the
-    numpy implementations of every other feature — a single global "numba"
+    ``manders_fold`` / ``rwc`` / ``costes`` / ``overlap`` colocalization features)
+    with the numpy implementations of every other feature — a single global "numba"
     selection still yields a full, working feature set, accelerated where a
     numba backend exists. This is explicit per-function composition, NOT an
     error-driven fallback.
 
+    The five correlation entries are kept per-group so the featurizer's per-group
+    selection (``_collect_correlation_features``) keeps working; each is now a thin,
+    gated wrapper over the shared ``get_correlation_all`` kernel. A caller wanting
+    several coloc features in ONE flatten+kernel pass (the efficient path) calls
+    ``cp_measure.core.numba.get_correlation_all(..., features=...)`` directly — it is
+    stateless, so fusion happens by requesting the set in one call, not by the
+    registry.
+
     Note: ``overlap`` is not in the numpy ``_CORRELATION`` registry, so the numba
-    correlation registry intentionally exposes one feature the numpy one does not
-    (the numba ``overlap`` backend exists and is cheap to surface). Adding
-    ``overlap`` to the numpy ``_CORRELATION`` for symmetry is a separate call.
+    correlation registry intentionally exposes one feature the numpy one does not.
     """
     from cp_measure.core.numba import (
+        get_correlation_costes as _numba_costes,
         get_correlation_manders_fold as _numba_manders_fold,
         get_correlation_overlap as _numba_overlap,
         get_correlation_pearson as _numba_pearson,
@@ -75,6 +82,7 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
             "pearson": _numba_pearson,
             "manders_fold": _numba_manders_fold,
             "rwc": _numba_rwc,
+            "costes": _numba_costes,
             "overlap": _numba_overlap,
         },
     }
