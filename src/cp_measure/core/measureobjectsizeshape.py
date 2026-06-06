@@ -7,6 +7,7 @@ import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
+from cp_measure.primitives._moments import inertia_2d, spatial_moments_2d
 from cp_measure.utils import masks_to_ijv
 
 __doc__ = """\
@@ -604,29 +605,21 @@ def get_sizeshape(
         if new_features:
             desired_properties += ["perimeter_crofton"]
 
-    if calculate_advanced:
-        if masks.ndim == 2:
+    # 2D advanced moments (spatial / central / normalized / Hu) and the inertia tensor are all
+    # derived from the `spatial_moments_2d` scatter below, so 2D requests nothing moment-related
+    # from regionprops — removing its per-region einsum. Only the 3D path still needs them.
+    if calculate_advanced and masks.ndim != 2:
+        desired_properties += ["solidity"]
+
+        # These advanced props were not in CP4 for 3D images
+        if new_features:
             desired_properties += [
                 "inertia_tensor",
                 "inertia_tensor_eigvals",
                 "moments",
-                "moments_hu",
                 "moments_central",
                 "moments_normalized",
             ]
-
-        else:
-            desired_properties += ["solidity"]
-
-            # These advanced props were not in CP4 for 3D images
-            if new_features:
-                desired_properties += [
-                    "inertia_tensor",
-                    "inertia_tensor_eigvals",
-                    "moments",
-                    "moments_central",
-                    "moments_normalized",
-                ]
 
     labels = masks
     nobjects = (numpy.unique(masks) > 0).sum()
@@ -686,60 +679,65 @@ def get_sizeshape(
             }
 
         if calculate_advanced:
+            # Spatial / central / normalized / Hu moments via one scatter pass (drop-in for the
+            # regionprops einsum columns); the inertia tensor is derived from the same central
+            # moments, so regionprops computes no moments at all.
+            raw, central, normalized, hu = spatial_moments_2d(labels)
+            it_00, it_off, it_11, eig_0, eig_1 = inertia_2d(central)
             results |= {
-                F_SPATIAL_MOMENT_0_0: props["moments-0-0"],
-                F_SPATIAL_MOMENT_0_1: props["moments-0-1"],
-                F_SPATIAL_MOMENT_0_2: props["moments-0-2"],
-                F_SPATIAL_MOMENT_0_3: props["moments-0-3"],
-                F_SPATIAL_MOMENT_1_0: props["moments-1-0"],
-                F_SPATIAL_MOMENT_1_1: props["moments-1-1"],
-                F_SPATIAL_MOMENT_1_2: props["moments-1-2"],
-                F_SPATIAL_MOMENT_1_3: props["moments-1-3"],
-                F_SPATIAL_MOMENT_2_0: props["moments-2-0"],
-                F_SPATIAL_MOMENT_2_1: props["moments-2-1"],
-                F_SPATIAL_MOMENT_2_2: props["moments-2-2"],
-                F_SPATIAL_MOMENT_2_3: props["moments-2-3"],
-                F_CENTRAL_MOMENT_0_0: props["moments_central-0-0"],
-                F_CENTRAL_MOMENT_0_1: props["moments_central-0-1"],
-                F_CENTRAL_MOMENT_0_2: props["moments_central-0-2"],
-                F_CENTRAL_MOMENT_0_3: props["moments_central-0-3"],
-                F_CENTRAL_MOMENT_1_0: props["moments_central-1-0"],
-                F_CENTRAL_MOMENT_1_1: props["moments_central-1-1"],
-                F_CENTRAL_MOMENT_1_2: props["moments_central-1-2"],
-                F_CENTRAL_MOMENT_1_3: props["moments_central-1-3"],
-                F_CENTRAL_MOMENT_2_0: props["moments_central-2-0"],
-                F_CENTRAL_MOMENT_2_1: props["moments_central-2-1"],
-                F_CENTRAL_MOMENT_2_2: props["moments_central-2-2"],
-                F_CENTRAL_MOMENT_2_3: props["moments_central-2-3"],
-                F_NORMALIZED_MOMENT_0_0: props["moments_normalized-0-0"],
-                F_NORMALIZED_MOMENT_0_1: props["moments_normalized-0-1"],
-                F_NORMALIZED_MOMENT_0_2: props["moments_normalized-0-2"],
-                F_NORMALIZED_MOMENT_0_3: props["moments_normalized-0-3"],
-                F_NORMALIZED_MOMENT_1_0: props["moments_normalized-1-0"],
-                F_NORMALIZED_MOMENT_1_1: props["moments_normalized-1-1"],
-                F_NORMALIZED_MOMENT_1_2: props["moments_normalized-1-2"],
-                F_NORMALIZED_MOMENT_1_3: props["moments_normalized-1-3"],
-                F_NORMALIZED_MOMENT_2_0: props["moments_normalized-2-0"],
-                F_NORMALIZED_MOMENT_2_1: props["moments_normalized-2-1"],
-                F_NORMALIZED_MOMENT_2_2: props["moments_normalized-2-2"],
-                F_NORMALIZED_MOMENT_2_3: props["moments_normalized-2-3"],
-                F_NORMALIZED_MOMENT_3_0: props["moments_normalized-3-0"],
-                F_NORMALIZED_MOMENT_3_1: props["moments_normalized-3-1"],
-                F_NORMALIZED_MOMENT_3_2: props["moments_normalized-3-2"],
-                F_NORMALIZED_MOMENT_3_3: props["moments_normalized-3-3"],
-                F_HU_MOMENT_0: props["moments_hu-0"],
-                F_HU_MOMENT_1: props["moments_hu-1"],
-                F_HU_MOMENT_2: props["moments_hu-2"],
-                F_HU_MOMENT_3: props["moments_hu-3"],
-                F_HU_MOMENT_4: props["moments_hu-4"],
-                F_HU_MOMENT_5: props["moments_hu-5"],
-                F_HU_MOMENT_6: props["moments_hu-6"],
-                F_INERTIA_TENSOR_0_0: props["inertia_tensor-0-0"],
-                F_INERTIA_TENSOR_0_1: props["inertia_tensor-0-1"],
-                F_INERTIA_TENSOR_1_0: props["inertia_tensor-1-0"],
-                F_INERTIA_TENSOR_1_1: props["inertia_tensor-1-1"],
-                F_INERTIA_TENSOR_EIGENVALUES_0: props["inertia_tensor_eigvals-0"],
-                F_INERTIA_TENSOR_EIGENVALUES_1: props["inertia_tensor_eigvals-1"],
+                F_SPATIAL_MOMENT_0_0: raw[:, 0, 0],
+                F_SPATIAL_MOMENT_0_1: raw[:, 0, 1],
+                F_SPATIAL_MOMENT_0_2: raw[:, 0, 2],
+                F_SPATIAL_MOMENT_0_3: raw[:, 0, 3],
+                F_SPATIAL_MOMENT_1_0: raw[:, 1, 0],
+                F_SPATIAL_MOMENT_1_1: raw[:, 1, 1],
+                F_SPATIAL_MOMENT_1_2: raw[:, 1, 2],
+                F_SPATIAL_MOMENT_1_3: raw[:, 1, 3],
+                F_SPATIAL_MOMENT_2_0: raw[:, 2, 0],
+                F_SPATIAL_MOMENT_2_1: raw[:, 2, 1],
+                F_SPATIAL_MOMENT_2_2: raw[:, 2, 2],
+                F_SPATIAL_MOMENT_2_3: raw[:, 2, 3],
+                F_CENTRAL_MOMENT_0_0: central[:, 0, 0],
+                F_CENTRAL_MOMENT_0_1: central[:, 0, 1],
+                F_CENTRAL_MOMENT_0_2: central[:, 0, 2],
+                F_CENTRAL_MOMENT_0_3: central[:, 0, 3],
+                F_CENTRAL_MOMENT_1_0: central[:, 1, 0],
+                F_CENTRAL_MOMENT_1_1: central[:, 1, 1],
+                F_CENTRAL_MOMENT_1_2: central[:, 1, 2],
+                F_CENTRAL_MOMENT_1_3: central[:, 1, 3],
+                F_CENTRAL_MOMENT_2_0: central[:, 2, 0],
+                F_CENTRAL_MOMENT_2_1: central[:, 2, 1],
+                F_CENTRAL_MOMENT_2_2: central[:, 2, 2],
+                F_CENTRAL_MOMENT_2_3: central[:, 2, 3],
+                F_NORMALIZED_MOMENT_0_0: normalized[:, 0, 0],
+                F_NORMALIZED_MOMENT_0_1: normalized[:, 0, 1],
+                F_NORMALIZED_MOMENT_0_2: normalized[:, 0, 2],
+                F_NORMALIZED_MOMENT_0_3: normalized[:, 0, 3],
+                F_NORMALIZED_MOMENT_1_0: normalized[:, 1, 0],
+                F_NORMALIZED_MOMENT_1_1: normalized[:, 1, 1],
+                F_NORMALIZED_MOMENT_1_2: normalized[:, 1, 2],
+                F_NORMALIZED_MOMENT_1_3: normalized[:, 1, 3],
+                F_NORMALIZED_MOMENT_2_0: normalized[:, 2, 0],
+                F_NORMALIZED_MOMENT_2_1: normalized[:, 2, 1],
+                F_NORMALIZED_MOMENT_2_2: normalized[:, 2, 2],
+                F_NORMALIZED_MOMENT_2_3: normalized[:, 2, 3],
+                F_NORMALIZED_MOMENT_3_0: normalized[:, 3, 0],
+                F_NORMALIZED_MOMENT_3_1: normalized[:, 3, 1],
+                F_NORMALIZED_MOMENT_3_2: normalized[:, 3, 2],
+                F_NORMALIZED_MOMENT_3_3: normalized[:, 3, 3],
+                F_HU_MOMENT_0: hu[:, 0],
+                F_HU_MOMENT_1: hu[:, 1],
+                F_HU_MOMENT_2: hu[:, 2],
+                F_HU_MOMENT_3: hu[:, 3],
+                F_HU_MOMENT_4: hu[:, 4],
+                F_HU_MOMENT_5: hu[:, 5],
+                F_HU_MOMENT_6: hu[:, 6],
+                F_INERTIA_TENSOR_0_0: it_00,
+                F_INERTIA_TENSOR_0_1: it_off,
+                F_INERTIA_TENSOR_1_0: it_off,
+                F_INERTIA_TENSOR_1_1: it_11,
+                F_INERTIA_TENSOR_EIGENVALUES_0: eig_0,
+                F_INERTIA_TENSOR_EIGENVALUES_1: eig_1,
             }
 
         if new_features:
