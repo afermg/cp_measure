@@ -7,7 +7,11 @@ import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
-from cp_measure.primitives._moments import inertia_2d, spatial_moments_2d
+from cp_measure.primitives._moments import (
+    axes_eccentricity_orientation,
+    inertia_2d,
+    spatial_moments_2d,
+)
 from cp_measure.utils import masks_to_ijv
 
 __doc__ = """\
@@ -586,40 +590,34 @@ def get_sizeshape(
         "centroid",
         "euler_number",
         "extent",
-        "axis_major_length",
-        "axis_minor_length",
     ]
 
     # Features not in CellProfiler 4
     if new_features:
         desired_properties += ["area_filled"]
 
-    # 2d specific properties
     if masks.ndim == 2:
-        desired_properties += [
-            "eccentricity",
-            "orientation",
-            "perimeter",
-            "solidity",
-        ]
+        # 2D requests NOTHING moment-related from regionprops: the spatial / central / normalized
+        # / Hu moments, the inertia tensor, AND the axis lengths / eccentricity / orientation are
+        # all derived from the `spatial_moments_2d` central moments below (option B), so
+        # regionprops never runs its per-region moment einsum.
+        desired_properties += ["perimeter", "solidity"]
         if new_features:
             desired_properties += ["perimeter_crofton"]
-
-    # 2D advanced moments (spatial / central / normalized / Hu) and the inertia tensor are all
-    # derived from the `spatial_moments_2d` scatter below, so 2D requests nothing moment-related
-    # from regionprops — removing its per-region einsum. Only the 3D path still needs them.
-    if calculate_advanced and masks.ndim != 2:
-        desired_properties += ["solidity"]
-
-        # These advanced props were not in CP4 for 3D images
-        if new_features:
-            desired_properties += [
-                "inertia_tensor",
-                "inertia_tensor_eigvals",
-                "moments",
-                "moments_central",
-                "moments_normalized",
-            ]
+    else:
+        # 3D: axis lengths still come from regionprops (3D moments are out of scope here).
+        desired_properties += ["axis_major_length", "axis_minor_length"]
+        if calculate_advanced:
+            desired_properties += ["solidity"]
+            # These advanced props were not in CP4 for 3D images
+            if new_features:
+                desired_properties += [
+                    "inertia_tensor",
+                    "inertia_tensor_eigvals",
+                    "moments",
+                    "moments_central",
+                    "moments_normalized",
+                ]
 
     labels = masks
     nobjects = (numpy.unique(masks) > 0).sum()
@@ -627,6 +625,15 @@ def get_sizeshape(
     if labels.ndim == 2:
         props = skimage.measure.regionprops_table(
             labels, pixels, properties=desired_properties
+        )
+
+        # Option B: every moment-derived 2D feature (spatial / central / normalized / Hu moments,
+        # the inertia tensor, AND axis lengths / eccentricity / orientation) comes from this one
+        # scatter pass, so regionprops above ran no moment einsum. normalized / Hu are only emitted
+        # under calculate_advanced, but the scatter returns them in the same call.
+        raw, central, normalized, hu = spatial_moments_2d(labels)
+        axis_major, axis_minor, eccentricity, orientation = (
+            axes_eccentricity_orientation(central)
         )
 
         formfactor = 4.0 * numpy.pi * props["area"] / props["perimeter"] ** 2
@@ -652,10 +659,10 @@ def get_sizeshape(
             F_CONVEX_AREA: props["area_convex"],
             F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
             F_PERIMETER: props["perimeter"],
-            F_MAJOR_AXIS_LENGTH: props["axis_major_length"],
-            F_MINOR_AXIS_LENGTH: props["axis_minor_length"],
-            F_ECCENTRICITY: props["eccentricity"],
-            F_ORIENTATION: props["orientation"] * (180 / numpy.pi),
+            F_MAJOR_AXIS_LENGTH: axis_major,
+            F_MINOR_AXIS_LENGTH: axis_minor,
+            F_ECCENTRICITY: eccentricity,
+            F_ORIENTATION: orientation * (180 / numpy.pi),
             F_CENTER_X: props["centroid-1"],
             F_CENTER_Y: props["centroid-0"],
             F_MIN_X: props["bbox-1"],
@@ -679,10 +686,8 @@ def get_sizeshape(
             }
 
         if calculate_advanced:
-            # Spatial / central / normalized / Hu moments via one scatter pass (drop-in for the
-            # regionprops einsum columns); the inertia tensor is derived from the same central
-            # moments, so regionprops computes no moments at all.
-            raw, central, normalized, hu = spatial_moments_2d(labels)
+            # Spatial / central / normalized / Hu moments and the inertia tensor all come from the
+            # scatter `central` computed above — regionprops ran no moment einsum.
             it_00, it_off, it_11, eig_0, eig_1 = inertia_2d(central)
             results |= {
                 F_SPATIAL_MOMENT_0_0: raw[:, 0, 0],

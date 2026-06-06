@@ -172,3 +172,57 @@ def test_get_sizeshape_wires_moment_features():
     numpy.testing.assert_array_equal(out["InertiaTensor_1_1"], it_11)
     numpy.testing.assert_array_equal(out["InertiaTensorEigenvalues_0"], eig_0)
     numpy.testing.assert_array_equal(out["InertiaTensorEigenvalues_1"], eig_1)
+
+
+def _assert_axes_match(masks):
+    # Option B: axis lengths / eccentricity / orientation are derived from the scatter central
+    # moments instead of regionprops, so get_sizeshape requests no moments at all. They must still
+    # match regionprops to round-off (orientation reported in degrees: radians * 180/pi).
+    out = get_sizeshape(masks, masks.astype(float))
+    ref = skimage.measure.regionprops_table(
+        masks,
+        properties=[
+            "axis_major_length",
+            "axis_minor_length",
+            "eccentricity",
+            "orientation",
+        ],
+    )
+    numpy.testing.assert_allclose(
+        out["MajorAxisLength"], ref["axis_major_length"], rtol=1e-9, atol=1e-9
+    )
+    numpy.testing.assert_allclose(
+        out["MinorAxisLength"], ref["axis_minor_length"], rtol=1e-9, atol=1e-9
+    )
+    numpy.testing.assert_allclose(
+        out["Eccentricity"], ref["eccentricity"], rtol=1e-9, atol=1e-9
+    )
+    numpy.testing.assert_allclose(
+        out["Orientation"], ref["orientation"] * (180 / numpy.pi), rtol=1e-9, atol=1e-9
+    )
+
+
+def test_axes_match_multi_object():
+    _assert_axes_match(_square_objects(256, 4))
+
+
+def test_axes_match_single_object():
+    masks = numpy.zeros((64, 64), numpy.int32)
+    masks[18:50, 20:45] = 1  # rectangle -> nonzero orientation, distinct axis lengths
+    _assert_axes_match(masks)
+
+
+def test_axes_match_noncontiguous_labels():
+    masks = numpy.zeros((96, 96), numpy.int32)
+    masks[10:30, 10:30] = 1
+    masks[40:60, 40:55] = 3
+    masks[70:90, 72:90] = 7
+    _assert_axes_match(masks)
+
+
+def test_axes_match_single_pixel_and_line():
+    # degenerate objects: single pixel (axes 0) and a 1-wide line (minor axis 0).
+    masks = numpy.zeros((40, 40), numpy.int32)
+    masks[20, 20] = 1
+    masks[5:15, 8] = 2
+    _assert_axes_match(masks)
