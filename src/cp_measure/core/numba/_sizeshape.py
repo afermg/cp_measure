@@ -8,13 +8,22 @@ the derived quantities (normalized / Hu / inertia) reuse the shared algebra in
 matrices match to floating-point round-off.
 """
 
+import centrosome.cpmorphology
 import numba
 import numpy
+import scipy.ndimage
 from numpy.typing import NDArray
-from skimage.measure import grid_points_in_poly
+from skimage.measure import grid_points_in_poly, regionprops_table
 
-from cp_measure.primitives._moments import derive_normalized_hu
+from cp_measure.core import measureobjectsizeshape as _ss
+from cp_measure.primitives._moments import (
+    axes_eccentricity_orientation,
+    derive_normalized_hu,
+    inertia_2d,
+)
 from cp_measure.primitives.segment import labels_to_offsets
+from cp_measure.primitives.shapes import to_bzyx
+from cp_measure.utils import _ensure_np_scalar
 
 _ORDER = 4
 
@@ -443,3 +452,131 @@ def crofton_euler_2d(
     padded = numpy.pad(numpy.ascontiguousarray(labels), 1)
     hist = _xf_hist_kernel(padded, lut, n)
     return hist @ _CROFTON_COEFS_4, hist @ _EULER_COEFS_8
+
+
+# --- Full get_sizeshape wrapper -------------------------------------------------------------
+# Assembles the complete sizeshape feature dict, sourcing the einsum-heavy / QHull / per-region
+# pieces from the numba kernels above and keeping only cheap, moment-free regionprops props
+# (area / bbox / centroid / extent / area_filled / image) plus the scipy Euclidean EDT radius
+# loop. With option B (axes/eccentricity/orientation derived from the central moments),
+# regionprops computes no moments at all.
+
+# moment-free regionprops props (verified 0 ms einsum); `image` feeds the EDT radius loop.
+_CHEAP_PROPS = [
+    "image",
+    "area",
+    "area_bbox",
+    "equivalent_diameter_area",
+    "bbox",
+    "centroid",
+    "extent",
+]
+
+
+def _sizeshape_2d(labels, pixels, calculate_advanced, new_features):
+    props_list = _CHEAP_PROPS + (["area_filled"] if new_features else [])
+    props = regionprops_table(labels, pixels, properties=props_list)
+    area = props["area"]
+
+    raw, central, normalized, hu = spatial_moments_2d(labels)
+    area_convex = convex_area_2d(labels)
+    perimeter = perimeter_2d(labels)
+    crofton, euler = crofton_euler_2d(labels)
+    axis_major, axis_minor, eccentricity, orientation = axes_eccentricity_orientation(
+        central
+    )
+
+    formfactor = 4.0 * numpy.pi * area / perimeter**2
+    denom = numpy.maximum(4.0 * numpy.pi * area, 1.0)
+    compactness = perimeter**2 / denom
+    solidity = area / area_convex
+
+    nobjects = len(props["image"])
+    max_radius = numpy.zeros(nobjects)
+    mean_radius = numpy.zeros(nobjects)
+    median_radius = numpy.zeros(nobjects)
+    for index, mini_image in enumerate(props["image"]):
+        mini_image = numpy.pad(mini_image, 1)
+        distances = scipy.ndimage.distance_transform_edt(mini_image)
+        max_radius[index] = _ensure_np_scalar(
+            scipy.ndimage.maximum(distances, mini_image)
+        )
+        mean_radius[index] = _ensure_np_scalar(
+            scipy.ndimage.mean(distances, mini_image)
+        )
+        median_radius[index] = _ensure_np_scalar(
+            centrosome.cpmorphology.median_of_labels(
+                distances, mini_image.astype("int"), [1]
+            )
+        )
+
+    results = {
+        _ss.F_AREA: area,
+        _ss.F_BBOX_AREA: props["area_bbox"],
+        _ss.F_CONVEX_AREA: area_convex,
+        _ss.F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
+        _ss.F_PERIMETER: perimeter,
+        _ss.F_MAJOR_AXIS_LENGTH: axis_major,
+        _ss.F_MINOR_AXIS_LENGTH: axis_minor,
+        _ss.F_ECCENTRICITY: eccentricity,
+        _ss.F_ORIENTATION: orientation * (180 / numpy.pi),
+        _ss.F_CENTER_X: props["centroid-1"],
+        _ss.F_CENTER_Y: props["centroid-0"],
+        _ss.F_MIN_X: props["bbox-1"],
+        _ss.F_MAX_X: props["bbox-3"],
+        _ss.F_MIN_Y: props["bbox-0"],
+        _ss.F_MAX_Y: props["bbox-2"],
+        _ss.F_FORM_FACTOR: formfactor,
+        _ss.F_EXTENT: props["extent"],
+        _ss.F_SOLIDITY: solidity,
+        _ss.F_COMPACTNESS: compactness,
+        _ss.F_EULER_NUMBER: euler,
+        _ss.F_MAXIMUM_RADIUS: max_radius,
+        _ss.F_MEAN_RADIUS: mean_radius,
+        _ss.F_MEDIAN_RADIUS: median_radius,
+    }
+    if new_features:
+        results |= {_ss.F_FILLED_AREA: props["area_filled"]}
+
+    if calculate_advanced:
+        it_00, it_off, it_11, eig_0, eig_1 = inertia_2d(central)
+        for p in range(3):  # spatial / central exposed for p in {0,1,2}, q in {0,1,2,3}
+            for q in range(4):
+                results[f"SpatialMoment_{p}_{q}"] = raw[:, p, q]
+                results[f"CentralMoment_{p}_{q}"] = central[:, p, q]
+        for p in range(4):  # normalized full 4x4
+            for q in range(4):
+                results[f"NormalizedMoment_{p}_{q}"] = normalized[:, p, q]
+        for k in range(7):
+            results[f"HuMoment_{k}"] = hu[:, k]
+        results |= {
+            _ss.F_INERTIA_TENSOR_0_0: it_00,
+            _ss.F_INERTIA_TENSOR_0_1: it_off,
+            _ss.F_INERTIA_TENSOR_1_0: it_off,
+            _ss.F_INERTIA_TENSOR_1_1: it_11,
+            _ss.F_INERTIA_TENSOR_EIGENVALUES_0: eig_0,
+            _ss.F_INERTIA_TENSOR_EIGENVALUES_1: eig_1,
+        }
+
+    if new_features:
+        results |= {_ss.F_PERIMETER_CROFTON: crofton}
+
+    return results
+
+
+def get_sizeshape(
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None = None,
+    calculate_advanced: bool = True,
+    new_features: bool = True,
+    spacing=None,
+) -> dict[str, NDArray[numpy.floating]]:
+    """numba sizeshape backend (2D). 3D volumes fall back to the numpy baseline."""
+    masks_zyx, _pixels_zyx, unwrap = to_bzyx(masks, masks if pixels is None else pixels)
+    results = [
+        _sizeshape_2d(m[0], None, calculate_advanced, new_features)
+        if m.shape[0] == 1
+        else _ss.get_sizeshape(m, None, calculate_advanced, new_features, spacing)
+        for m in masks_zyx
+    ]
+    return unwrap(results)

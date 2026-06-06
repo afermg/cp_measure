@@ -104,6 +104,33 @@ def inertia_2d(
     return c, -b, a, half_trace + disc, half_trace - disc
 
 
+def axes_eccentricity_orientation(
+    central: NDArray[numpy.floating],
+) -> tuple[
+    NDArray[numpy.floating],
+    NDArray[numpy.floating],
+    NDArray[numpy.floating],
+    NDArray[numpy.floating],
+]:
+    """``(axis_major, axis_minor, eccentricity, orientation)`` from per-object central moments.
+
+    Matches ``skimage.measure.regionprops`` to floating-point round-off, including the symmetric
+    fallback (``it00 == it11`` -> ±pi/4). Derived from the same inertia tensor / eigenvalues as
+    :func:`inertia_2d`, so requesting these no longer forces regionprops' moment einsum.
+    """
+    it00, it_off, it11, eig_major, eig_minor = inertia_2d(central)
+    axis_major = 4 * numpy.sqrt(eig_major)
+    axis_minor = 4 * numpy.sqrt(eig_minor)
+    with numpy.errstate(invalid="ignore", divide="ignore"):
+        eccentricity = numpy.where(eig_major == 0, 0.0, numpy.sqrt(1 - eig_minor / eig_major))
+    orientation = numpy.where(
+        it00 - it11 == 0,
+        numpy.where(it_off < 0, numpy.pi / 4, -numpy.pi / 4),
+        0.5 * numpy.arctan2(-2 * it_off, it11 - it00),
+    )
+    return axis_major, axis_minor, eccentricity, orientation
+
+
 def spatial_moments_2d(
     labels: NDArray[numpy.integer],
 ) -> tuple[

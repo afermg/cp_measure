@@ -276,3 +276,89 @@ def test_numba_perimeter_euler_empty():
     assert perimeter_2d(numpy.zeros((20, 20), numpy.int32)).shape == (0,)
     cro, eul = crofton_euler_2d(numpy.zeros((20, 20), numpy.int32))
     assert cro.shape == (0,) and eul.shape == (0,)
+
+
+# --- end-to-end get_sizeshape wrapper ---
+
+
+def _assert_full_sizeshape_matches(masks, pixels, **kw):
+    import cp_measure.core.measureobjectsizeshape as numpy_ss
+    from cp_measure.core.numba._sizeshape import get_sizeshape as numba_ss
+
+    got = numba_ss(masks, pixels, **kw)
+    ref = numpy_ss.get_sizeshape(masks, pixels, **kw)
+    assert set(got) == set(ref), set(got).symmetric_difference(ref)
+    for k in ref:
+        g, r = numpy.asarray(got[k], float), numpy.asarray(ref[k], float)
+        assert g.shape == r.shape, k
+        finite = numpy.abs(r[numpy.isfinite(r)])  # NormalizedMoment_0_* are always NaN
+        s = max(finite.max() if finite.size else 0.0, 1.0)
+        numpy.testing.assert_allclose(
+            g, r, rtol=1e-7, atol=1e-7 * s, equal_nan=True, err_msg=k
+        )
+
+
+@requires_numba
+def test_get_sizeshape_matches_numpy_multi():
+    masks = _square_objects(256, 4)
+    _assert_full_sizeshape_matches(
+        masks, _pixels := numpy.random.default_rng(0).random(masks.shape)
+    )
+
+
+@requires_numba
+def test_get_sizeshape_matches_numpy_noncontiguous():
+    masks = numpy.zeros((96, 96), numpy.int32)
+    masks[10:30, 10:30] = 1
+    masks[40:60, 40:60] = 3
+    masks[70:90, 70:90] = 7
+    _assert_full_sizeshape_matches(
+        masks, numpy.random.default_rng(1).random(masks.shape)
+    )
+
+
+@requires_numba
+def test_get_sizeshape_flag_variants():
+    masks = _square_objects(160, 3)
+    pixels = numpy.random.default_rng(2).random(masks.shape)
+    _assert_full_sizeshape_matches(masks, pixels, calculate_advanced=False)
+    _assert_full_sizeshape_matches(masks, pixels, new_features=False)
+    _assert_full_sizeshape_matches(
+        masks, pixels, calculate_advanced=False, new_features=False
+    )
+
+
+@requires_numba
+def test_get_sizeshape_3d_falls_back_to_numpy():
+    import cp_measure.core.measureobjectsizeshape as numpy_ss
+    from cp_measure.core.numba._sizeshape import get_sizeshape as numba_ss
+
+    rng = numpy.random.default_rng(3)
+    masks = numpy.zeros((12, 32, 32), numpy.int32)
+    zz, yy, xx = numpy.mgrid[0:12, 0:32, 0:32]
+    masks[(zz - 6) ** 2 + (yy - 16) ** 2 + (xx - 16) ** 2 < 60] = 1
+    pixels = rng.random((12, 32, 32))
+    got = numba_ss(masks, pixels)
+    ref = numpy_ss.get_sizeshape(masks, pixels)
+    assert set(got) == set(ref)
+    for k in ref:
+        numpy.testing.assert_allclose(
+            numpy.asarray(got[k], float),
+            numpy.asarray(ref[k], float),
+            rtol=1e-7,
+            atol=1e-6,
+            equal_nan=True,
+        )
+
+
+@requires_numba
+def test_get_sizeshape_dispatch():
+    import cp_measure
+    from cp_measure.bulk import _dispatch
+    from cp_measure.core.numba._sizeshape import get_sizeshape as numba_ss
+
+    cp_measure.set_accelerator("numba")
+    try:
+        assert _dispatch("core")["sizeshape"] is numba_ss
+    finally:
+        cp_measure.set_accelerator(None)
