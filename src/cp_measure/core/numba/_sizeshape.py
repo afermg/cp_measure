@@ -259,3 +259,187 @@ def convex_area_2d(labels: NDArray[numpy.integer]) -> NDArray[numpy.floating]:
             shape = (int(rmax[o] - rmin[o] + 1), int(cmax[o] - cmin[o] + 1))
             area[o] = (grid_points_in_poly(shape, verts, binarize=False) >= 1).sum()
     return area
+
+
+# --- Perimeter, perimeter_crofton, euler_number ---------------------------------------------
+# All three are deterministic neighbour-pattern reductions skimage runs per-region with C
+# convolutions. A whole-image label-aware numba pass reproduces them bit-exact: each object's
+# pattern histogram is identical to running skimage on the isolated object (other labels read as
+# background), and skimage's per-region 1-pixel pad is the whole-image edge pad.
+
+# perimeter (4-connectivity): skimage convolves the border image with [[10,2,10],[2,1,2],[10,2,10]]
+# and weights the histogram. Only border-centre pixels (odd values) carry nonzero weight; a border
+# pixel's value is 1 + 2*(same-object 4-conn border) + 10*(same-object diagonal border).
+_PERIMETER_WEIGHTS = numpy.zeros(50)
+_PERIMETER_WEIGHTS[[5, 7, 15, 17, 25, 27]] = 1.0
+_PERIMETER_WEIGHTS[[21, 33]] = numpy.sqrt(2)
+_PERIMETER_WEIGHTS[[13, 23]] = (1 + numpy.sqrt(2)) / 2
+
+# crofton (4 directions) and euler (8-connectivity) share the 2x2 binary-config histogram
+# (skimage's XF kernel [[0,0,0],[0,1,4],[0,2,8]], 16 bins); only the coefficients differ.
+_CROFTON_COEFS_4 = numpy.array(
+    [
+        0.0,
+        numpy.pi / 4 * (1 + 1 / numpy.sqrt(2)),
+        numpy.pi / (4 * numpy.sqrt(2)),
+        numpy.pi / (2 * numpy.sqrt(2)),
+        0.0,
+        numpy.pi / 4 * (1 + 1 / numpy.sqrt(2)),
+        0.0,
+        numpy.pi / (4 * numpy.sqrt(2)),
+        numpy.pi / 4,
+        numpy.pi / 2,
+        numpy.pi / (4 * numpy.sqrt(2)),
+        numpy.pi / (4 * numpy.sqrt(2)),
+        numpy.pi / 4,
+        numpy.pi / 2,
+        0.0,
+        0.0,
+    ]
+)
+_EULER_COEFS_8 = numpy.array(
+    [0, 0, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0, 0, 0, -1, 0], dtype=numpy.float64
+)
+
+
+@numba.njit(cache=True)
+def _perimeter_kernel(
+    labels: NDArray[numpy.integer],
+    lut: NDArray[numpy.int64],
+    n: int,
+    weights: NDArray[numpy.float64],
+) -> NDArray[numpy.float64]:
+    """Per-object 4-connectivity perimeter (skimage's border-pattern weighting)."""
+    height, width = labels.shape
+    border = numpy.zeros((height, width), numpy.uint8)
+    for r in range(height):
+        for c in range(width):
+            lab = labels[r, c]
+            if lab <= 0:
+                continue
+            same = (
+                (r > 0 and labels[r - 1, c] == lab)
+                and (r < height - 1 and labels[r + 1, c] == lab)
+                and (c > 0 and labels[r, c - 1] == lab)
+                and (c < width - 1 and labels[r, c + 1] == lab)
+            )
+            if not same:
+                border[r, c] = 1
+
+    out = numpy.zeros(n)
+    for r in range(height):
+        for c in range(width):
+            if border[r, c] == 0:
+                continue
+            lab = labels[r, c]
+            edges = 0
+            corners = 0
+            if r > 0 and border[r - 1, c] and labels[r - 1, c] == lab:
+                edges += 1
+            if r < height - 1 and border[r + 1, c] and labels[r + 1, c] == lab:
+                edges += 1
+            if c > 0 and border[r, c - 1] and labels[r, c - 1] == lab:
+                edges += 1
+            if c < width - 1 and border[r, c + 1] and labels[r, c + 1] == lab:
+                edges += 1
+            if r > 0 and c > 0 and border[r - 1, c - 1] and labels[r - 1, c - 1] == lab:
+                corners += 1
+            if (
+                r > 0
+                and c < width - 1
+                and border[r - 1, c + 1]
+                and labels[r - 1, c + 1] == lab
+            ):
+                corners += 1
+            if (
+                r < height - 1
+                and c > 0
+                and border[r + 1, c - 1]
+                and labels[r + 1, c - 1] == lab
+            ):
+                corners += 1
+            if (
+                r < height - 1
+                and c < width - 1
+                and border[r + 1, c + 1]
+                and labels[r + 1, c + 1] == lab
+            ):
+                corners += 1
+            out[lut[lab]] += weights[1 + 2 * edges + 10 * corners]
+    return out
+
+
+@numba.njit(cache=True)
+def _xf_hist_kernel(
+    padded: NDArray[numpy.integer], lut: NDArray[numpy.int64], n: int
+) -> NDArray[numpy.int64]:
+    """Per-object 2x2 binary-config histogram (16 bins), label-aware over the padded image.
+
+    For each 2x2 window and each distinct positive label in it, the config bit pattern (matching
+    skimage's ``XF`` convolution) is incremented for that label — equal to running skimage's
+    convolution on each isolated, 1-pixel-padded object.
+    """
+    h_pad, w_pad = padded.shape
+    hist = numpy.zeros((n, 16), numpy.int64)
+    for i in range(h_pad):
+        for j in range(w_pad):
+            a = padded[i, j]
+            b = padded[i, j - 1] if j > 0 else 0
+            c = padded[i - 1, j] if i > 0 else 0
+            d = padded[i - 1, j - 1] if (i > 0 and j > 0) else 0
+            # each distinct positive label in the 2x2 window contributes its config once
+            if a > 0:
+                hist[
+                    lut[a],
+                    1
+                    + (4 if b == a else 0)
+                    + (2 if c == a else 0)
+                    + (8 if d == a else 0),
+                ] += 1
+            if b > 0 and b != a:
+                hist[
+                    lut[b],
+                    (1 if a == b else 0)
+                    + 4
+                    + (2 if c == b else 0)
+                    + (8 if d == b else 0),
+                ] += 1
+            if c > 0 and c != a and c != b:
+                hist[
+                    lut[c],
+                    (1 if a == c else 0)
+                    + (4 if b == c else 0)
+                    + 2
+                    + (8 if d == c else 0),
+                ] += 1
+            if d > 0 and d != a and d != b and d != c:
+                hist[
+                    lut[d],
+                    (1 if a == d else 0)
+                    + (4 if b == d else 0)
+                    + (2 if c == d else 0)
+                    + 8,
+                ] += 1
+    return hist
+
+
+def perimeter_2d(labels: NDArray[numpy.integer]) -> NDArray[numpy.floating]:
+    """Per-object 4-connectivity perimeter, bit-exact vs ``skimage.regionprops``."""
+    lut, n, _ = labels_to_offsets(labels)
+    if n == 0:
+        return numpy.zeros(0)
+    return _perimeter_kernel(
+        numpy.ascontiguousarray(labels), lut, n, _PERIMETER_WEIGHTS
+    )
+
+
+def crofton_euler_2d(
+    labels: NDArray[numpy.integer],
+) -> tuple[NDArray[numpy.floating], NDArray[numpy.floating]]:
+    """Per-object ``(perimeter_crofton, euler_number)`` from the shared 2x2-config histogram."""
+    lut, n, _ = labels_to_offsets(labels)
+    if n == 0:
+        return numpy.zeros(0), numpy.zeros(0)
+    padded = numpy.pad(numpy.ascontiguousarray(labels), 1)
+    hist = _xf_hist_kernel(padded, lut, n)
+    return hist @ _CROFTON_COEFS_4, hist @ _EULER_COEFS_8

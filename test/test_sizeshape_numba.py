@@ -205,3 +205,74 @@ def test_numba_convex_area_empty():
     from cp_measure.core.numba._sizeshape import convex_area_2d
 
     assert convex_area_2d(numpy.zeros((20, 20), numpy.int32)).shape == (0,)
+
+
+# --- perimeter / perimeter_crofton / euler_number ---
+
+
+def _ring(size=40):
+    """An object with a hole (euler_number = 0) plus a solid one (euler_number = 1)."""
+    m = numpy.zeros((size, size), numpy.int32)
+    m[5:25, 5:25] = 1
+    m[10:20, 10:20] = 0  # punch a hole -> object 1 has euler 0
+    m[28:36, 28:36] = 2
+    return m
+
+
+def _assert_per_crofton_euler(masks):
+    from cp_measure.core.numba._sizeshape import crofton_euler_2d, perimeter_2d
+
+    ref = skimage.measure.regionprops_table(
+        masks, properties=["perimeter", "perimeter_crofton", "euler_number"]
+    )
+    per = perimeter_2d(masks)
+    cro, eul = crofton_euler_2d(masks)
+    numpy.testing.assert_allclose(per, ref["perimeter"], rtol=1e-9, atol=1e-9)
+    numpy.testing.assert_allclose(cro, ref["perimeter_crofton"], rtol=1e-9, atol=1e-9)
+    numpy.testing.assert_array_equal(eul, ref["euler_number"])  # integer -> exact
+
+
+@requires_numba
+def test_numba_perimeter_euler_multi():
+    _assert_per_crofton_euler(_square_objects(256, 4))
+
+
+@requires_numba
+def test_numba_perimeter_euler_holed():
+    _assert_per_crofton_euler(_ring())
+
+
+@requires_numba
+def test_numba_perimeter_euler_noncontiguous():
+    masks = numpy.zeros((96, 96), numpy.int32)
+    masks[10:30, 10:30] = 1
+    masks[40:60, 40:60] = 3
+    masks[70:90, 70:90] = 7
+    _assert_per_crofton_euler(masks)
+
+
+@requires_numba
+def test_numba_perimeter_euler_edge_touching():
+    masks = numpy.zeros((64, 64), numpy.int32)
+    masks[0:20, 0:20] = 1
+    masks[44:64, 44:64] = 2
+    _assert_per_crofton_euler(masks)
+
+
+@requires_numba
+def test_numba_perimeter_euler_irregular():
+    rng = numpy.random.default_rng(1)
+    masks = numpy.zeros((128, 128), numpy.int32)
+    yy, xx = numpy.mgrid[0:128, 0:128]
+    for lab, (cy, cx) in enumerate(rng.integers(20, 108, size=(6, 2)), 1):
+        masks[(yy - cy) ** 2 + (xx - cx) ** 2 < rng.integers(40, 160)] = lab
+    _assert_per_crofton_euler(masks)
+
+
+@requires_numba
+def test_numba_perimeter_euler_empty():
+    from cp_measure.core.numba._sizeshape import crofton_euler_2d, perimeter_2d
+
+    assert perimeter_2d(numpy.zeros((20, 20), numpy.int32)).shape == (0,)
+    cro, eul = crofton_euler_2d(numpy.zeros((20, 20), numpy.int32))
+    assert cro.shape == (0,) and eul.shape == (0,)
