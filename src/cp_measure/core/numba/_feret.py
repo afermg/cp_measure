@@ -109,9 +109,12 @@ def _feret_2d(masks_2d: NDArray[numpy.integer]) -> dict[str, NDArray[numpy.float
 
 
 def get_feret(
-    masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating]
+    masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None = None
 ) -> dict[str, NDArray[numpy.floating]]:
     """Feret diameters (2D only). 3D volumes yield ``{}``, as in the baseline."""
-    masks_zyx, _pixels_zyx, unwrap = to_bzyx(masks, pixels)
+    # Feret is shape-only and ignores ``pixels`` (the baseline accepts ``None``). Feed the
+    # mask into the (masks, pixels) batch-normaliser's pixel slot so it has a real array to
+    # shape-check against — ``to_bzyx`` rejects ``None`` (``numpy.asarray(None)`` is 0-D).
+    masks_zyx, _pixels_zyx, unwrap = to_bzyx(masks, masks if pixels is None else pixels)
     results = [_feret_2d(m[0]) if m.shape[0] == 1 else {} for m in masks_zyx]
     return unwrap(results)

@@ -44,6 +44,17 @@ def test_feret_matches_numpy_2d():
 
 
 @requires_numba
+def test_feret_pixels_none_matches_numpy():
+    """feret is shape-only: the accelerator dispatch calls it with ``pixels=None`` (the
+    baseline convention). The numba backend must accept None rather than handing it to
+    ``to_bzyx`` (which rejects the 0-D ``numpy.asarray(None)``)."""
+    from cp_measure.core.numba import get_feret as feret_nb
+
+    masks = _rich_mask()
+    _assert_match(feret_numpy(masks, None), feret_nb(masks, None))
+
+
+@requires_numba
 def test_feret_noncontiguous_labels_match_numpy():
     """Labels need not be 1..n contiguous; nonzero(counts) must recover the same
     ascending index set numpy gets from unique(ijv[:, 2])."""
