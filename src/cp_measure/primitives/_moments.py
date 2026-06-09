@@ -101,7 +101,11 @@ def inertia_2d(
     c = central[:, 0, 2] / mu00
     half_trace = (a + c) / 2
     disc = numpy.sqrt(((c - a) / 2) ** 2 + b**2)
-    return c, -b, a, half_trace + disc, half_trace - disc
+    # Clip eigenvalues to >= 0 (skimage does the same): tiny-negative float error on degenerate /
+    # thin objects would otherwise give NaN axis lengths and eccentricity > 1.
+    eig_major = numpy.clip(half_trace + disc, 0.0, None)
+    eig_minor = numpy.clip(half_trace - disc, 0.0, None)
+    return c, -b, a, eig_major, eig_minor
 
 
 def axes_eccentricity_orientation(
@@ -192,9 +196,13 @@ def moment_feature_dict(
     """
     it_0_0, it_0_1, it_1_0, it_1_1, eig_0, eig_1 = inertia
     features: dict[str, NDArray[numpy.floating]] = {}
+    # Grouped order (all Spatial, then Central, then Normalized, ...) matching the CellProfiler /
+    # PyPI 0.1.19 release column order — NOT interleaved by (p, q).
     for p in range(3):  # spatial / central expose p in {0,1,2}, q in {0,1,2,3}
         for q in range(_ORDER):
             features[f"SpatialMoment_{p}_{q}"] = raw[:, p, q]
+    for p in range(3):
+        for q in range(_ORDER):
             features[f"CentralMoment_{p}_{q}"] = central[:, p, q]
     for p in range(_ORDER):  # normalized full 4x4
         for q in range(_ORDER):
