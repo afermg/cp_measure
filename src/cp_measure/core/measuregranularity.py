@@ -75,11 +75,12 @@ def _make_fused_upsample_mean(
     ``(n_labels x n_downsampled)`` operator, built once here and applied as a single mat-vec per
     step instead of a full-resolution interpolation + label reduction every iteration.
 
-    The result matches the direct path to floating-point round-off (~1e-12, sparse-accumulation
-    order). 2D only; the rarely used 3D path keeps the direct interpolation.
+    The result matches the direct ``map_coordinates`` + ``ndimage.mean`` path to floating-point
+    round-off (~1e-12, sparse-accumulation order), including objects on the last row/column where
+    the source coordinate floats just outside the grid. 2D only; the rarely used 3D path keeps the
+    direct interpolation.
     """
-    # Fractional source coordinates of every original pixel (same grid map_coordinates uses);
-    # because the grid spans exactly [0, new-1], all four bilinear neighbours stay in bounds.
+    # Fractional source coordinates of every original pixel (same grid map_coordinates uses).
     i, j = numpy.mgrid[0 : orig_shape[0], 0 : orig_shape[1]].astype(float)
     i *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
     j *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
@@ -87,7 +88,20 @@ def _make_fused_upsample_mean(
     # so restrict the four-neighbour expansion to foreground pixels only.
     labels = orig_mask.ravel()
     foreground = labels > 0
+    fg_labels = labels[foreground]
     r, c = i.ravel()[foreground], j.ravel()[foreground]
+    # scipy.ndimage.map_coordinates(mode='constant', cval=0) returns 0 for any source coordinate
+    # outside [0, new-1] — the float-rounded scale can push the last row/col just past new-1
+    # (e.g. 63.0000000000001 for orig 160 -> new 64). Reproduce that by keeping only in-bounds
+    # pixels in the operator; `counts` below still spans ALL foreground, so a dropped pixel
+    # contributes 0 to the numerator but 1 to the denominator, exactly as the direct path does.
+    in_bounds = (
+        (r >= 0)
+        & (r <= new_shape[0] - 1)
+        & (c >= 0)
+        & (c <= new_shape[1] - 1)
+    )
+    r, c, op_labels = r[in_bounds], c[in_bounds], fg_labels[in_bounds]
     r0, c0 = numpy.floor(r).astype(int), numpy.floor(c).astype(int)
     fr, fc = r - r0, c - c0
     r1 = numpy.minimum(r0 + 1, new_shape[0] - 1)
@@ -99,7 +113,7 @@ def _make_fused_upsample_mean(
     weights = numpy.concatenate(
         [(1 - fr) * (1 - fc), (1 - fr) * fc, fr * (1 - fc), fr * fc]
     )
-    rows = numpy.tile(labels[foreground], 4)
+    rows = numpy.tile(op_labels, 4)
     max_label = int(orig_mask.max())
     objects = slice(
         1, max_label + 1

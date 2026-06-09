@@ -196,6 +196,17 @@ def test_granularity_object_touching_edge():
     _assert_matches(masks, _textured((96, 96)))
 
 
+def test_granularity_overshoot_boundary_object():
+    # orig 160 -> new 64 (subsample 0.4) floats the last-row source coordinate just past new-1
+    # (63.0000000000001), so map_coordinates(mode='constant') zeros those pixels; the fused
+    # operator must do the same. Object on the last rows is the regression guard for the boundary
+    # fix (pre-fix the fused mean diverged ~0.08 from the reference for such objects).
+    masks = numpy.zeros((160, 160), numpy.int32)
+    masks[153:160, 30:90] = 1  # touches the last row
+    masks[10:40, 10:40] = 2  # interior control object
+    _assert_matches(masks, _textured((160, 160)), subsample_size=0.4)
+
+
 def test_granularity_non_default_params():
     masks = _disks(128, [(40, 40, 22), (90, 90, 30)])
     _assert_matches(
