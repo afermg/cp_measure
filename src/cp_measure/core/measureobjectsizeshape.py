@@ -1017,11 +1017,9 @@ def get_zernike(
     """
     if masks.ndim == 3:
         return {}
-    indices = numpy.unique(masks)
-    indices = indices[indices > 0]
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
 
-    real_sums, imag_sums, radii = _zernike_scores(masks, indices, zernike_indexes)
+    real_sums, imag_sums, radii, _counts = _zernike_scores(masks, zernike_indexes)
     areas = numpy.pi * radii * radii
     with numpy.errstate(divide="ignore", invalid="ignore"):
         score = numpy.sqrt(real_sums**2 + imag_sums**2) / areas[:, numpy.newaxis]
