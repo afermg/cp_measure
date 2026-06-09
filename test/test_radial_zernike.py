@@ -13,6 +13,7 @@ implementation raised ``IndexError``.
 import centrosome.cpmorphology
 import centrosome.zernike
 import numpy
+import pytest
 
 from cp_measure.core.measureobjectintensitydistribution import (
     M_CATEGORY,
@@ -144,3 +145,11 @@ def test_radial_zernike_empty_mask():
 def test_radial_zernike_3d_returns_empty():
     masks = numpy.zeros((4, 16, 16), numpy.int32)
     assert get_radial_zernikes(masks, numpy.zeros((4, 16, 16))) == {}
+
+
+def test_radial_zernike_mismatched_shape_raises():
+    # The intensity-weighted scatter requires pixels co-registered with labels; a mismatched
+    # pixels image is rejected with a clear error rather than an opaque IndexError.
+    masks = _square_objects(64, 2)
+    with pytest.raises(ValueError, match="same shape"):
+        get_radial_zernikes(masks, _pixels((48, 48)))

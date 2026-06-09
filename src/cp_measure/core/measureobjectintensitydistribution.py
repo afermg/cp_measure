@@ -313,6 +313,11 @@ def get_radial_zernikes(
     # Radial Zernike features (2D only)
     if labels.ndim == 3:
         return {}
+    if pixels.shape != labels.shape:
+        raise ValueError(
+            "pixels and labels must have the same shape; got pixels "
+            f"{pixels.shape} and labels {labels.shape}"
+        )
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
     # The intensity-weighted moment sums are exactly `_zernike_scores` with the pixel image
