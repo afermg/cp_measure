@@ -10,8 +10,10 @@ import skimage.measure
 from cp_measure.primitives._moments import (
     axes_eccentricity_orientation,
     inertia_2d,
+    moment_feature_dict,
     spatial_moments_2d,
 )
+from cp_measure.primitives.segment import label_to_idx_lut
 from cp_measure.utils import masks_to_ijv
 
 __doc__ = """\
@@ -620,7 +622,7 @@ def get_sizeshape(
                 ]
 
     labels = masks
-    nobjects = (numpy.unique(masks) > 0).sum()
+    nobjects = label_to_idx_lut(masks)[1]
     results: dict[str, NDArray[numpy.floating]] = {}
     if labels.ndim == 2:
         props = skimage.measure.regionprops_table(
@@ -629,11 +631,14 @@ def get_sizeshape(
 
         # Option B: every moment-derived 2D feature (spatial / central / normalized / Hu moments,
         # the inertia tensor, AND axis lengths / eccentricity / orientation) comes from this one
-        # scatter pass, so regionprops above ran no moment einsum. normalized / Hu are only emitted
-        # under calculate_advanced, but the scatter returns them in the same call.
-        raw, central, normalized, hu = spatial_moments_2d(labels)
+        # scatter pass, so regionprops above ran no moment einsum. The normalized / Hu moments are
+        # only needed under calculate_advanced, so the scatter skips them otherwise.
+        raw, central, normalized, hu = spatial_moments_2d(
+            labels, advanced=calculate_advanced
+        )
+        inertia = inertia_2d(central)
         axis_major, axis_minor, eccentricity, orientation = (
-            axes_eccentricity_orientation(central)
+            axes_eccentricity_orientation(inertia)
         )
 
         formfactor = 4.0 * numpy.pi * props["area"] / props["perimeter"] ** 2
@@ -687,63 +692,13 @@ def get_sizeshape(
 
         if calculate_advanced:
             # Spatial / central / normalized / Hu moments and the inertia tensor all come from the
-            # scatter `central` computed above — regionprops ran no moment einsum.
-            it_00, it_off, it_11, eig_0, eig_1 = inertia_2d(central)
-            results |= {
-                F_SPATIAL_MOMENT_0_0: raw[:, 0, 0],
-                F_SPATIAL_MOMENT_0_1: raw[:, 0, 1],
-                F_SPATIAL_MOMENT_0_2: raw[:, 0, 2],
-                F_SPATIAL_MOMENT_0_3: raw[:, 0, 3],
-                F_SPATIAL_MOMENT_1_0: raw[:, 1, 0],
-                F_SPATIAL_MOMENT_1_1: raw[:, 1, 1],
-                F_SPATIAL_MOMENT_1_2: raw[:, 1, 2],
-                F_SPATIAL_MOMENT_1_3: raw[:, 1, 3],
-                F_SPATIAL_MOMENT_2_0: raw[:, 2, 0],
-                F_SPATIAL_MOMENT_2_1: raw[:, 2, 1],
-                F_SPATIAL_MOMENT_2_2: raw[:, 2, 2],
-                F_SPATIAL_MOMENT_2_3: raw[:, 2, 3],
-                F_CENTRAL_MOMENT_0_0: central[:, 0, 0],
-                F_CENTRAL_MOMENT_0_1: central[:, 0, 1],
-                F_CENTRAL_MOMENT_0_2: central[:, 0, 2],
-                F_CENTRAL_MOMENT_0_3: central[:, 0, 3],
-                F_CENTRAL_MOMENT_1_0: central[:, 1, 0],
-                F_CENTRAL_MOMENT_1_1: central[:, 1, 1],
-                F_CENTRAL_MOMENT_1_2: central[:, 1, 2],
-                F_CENTRAL_MOMENT_1_3: central[:, 1, 3],
-                F_CENTRAL_MOMENT_2_0: central[:, 2, 0],
-                F_CENTRAL_MOMENT_2_1: central[:, 2, 1],
-                F_CENTRAL_MOMENT_2_2: central[:, 2, 2],
-                F_CENTRAL_MOMENT_2_3: central[:, 2, 3],
-                F_NORMALIZED_MOMENT_0_0: normalized[:, 0, 0],
-                F_NORMALIZED_MOMENT_0_1: normalized[:, 0, 1],
-                F_NORMALIZED_MOMENT_0_2: normalized[:, 0, 2],
-                F_NORMALIZED_MOMENT_0_3: normalized[:, 0, 3],
-                F_NORMALIZED_MOMENT_1_0: normalized[:, 1, 0],
-                F_NORMALIZED_MOMENT_1_1: normalized[:, 1, 1],
-                F_NORMALIZED_MOMENT_1_2: normalized[:, 1, 2],
-                F_NORMALIZED_MOMENT_1_3: normalized[:, 1, 3],
-                F_NORMALIZED_MOMENT_2_0: normalized[:, 2, 0],
-                F_NORMALIZED_MOMENT_2_1: normalized[:, 2, 1],
-                F_NORMALIZED_MOMENT_2_2: normalized[:, 2, 2],
-                F_NORMALIZED_MOMENT_2_3: normalized[:, 2, 3],
-                F_NORMALIZED_MOMENT_3_0: normalized[:, 3, 0],
-                F_NORMALIZED_MOMENT_3_1: normalized[:, 3, 1],
-                F_NORMALIZED_MOMENT_3_2: normalized[:, 3, 2],
-                F_NORMALIZED_MOMENT_3_3: normalized[:, 3, 3],
-                F_HU_MOMENT_0: hu[:, 0],
-                F_HU_MOMENT_1: hu[:, 1],
-                F_HU_MOMENT_2: hu[:, 2],
-                F_HU_MOMENT_3: hu[:, 3],
-                F_HU_MOMENT_4: hu[:, 4],
-                F_HU_MOMENT_5: hu[:, 5],
-                F_HU_MOMENT_6: hu[:, 6],
-                F_INERTIA_TENSOR_0_0: it_00,
-                F_INERTIA_TENSOR_0_1: it_off,
-                F_INERTIA_TENSOR_1_0: it_off,
-                F_INERTIA_TENSOR_1_1: it_11,
-                F_INERTIA_TENSOR_EIGENVALUES_0: eig_0,
-                F_INERTIA_TENSOR_EIGENVALUES_1: eig_1,
-            }
+            # scatter `central` + the single `inertia_2d` computed above — regionprops ran no
+            # moment einsum. moment_feature_dict owns the 53 feature names / orders (shared with
+            # the numba backend); the 6-tuple passes both off-diagonals (equal, symmetric tensor).
+            it_00, it_off, it_11, eig_0, eig_1 = inertia
+            results |= moment_feature_dict(
+                raw, central, normalized, hu, (it_00, it_off, it_off, it_11, eig_0, eig_1)
+            )
 
         if new_features:
             results |= {

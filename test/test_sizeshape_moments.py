@@ -212,6 +212,61 @@ def test_axes_match_single_object():
     _assert_axes_match(masks)
 
 
+# Exact output column order of the PyPI 0.1.19 release (2D, new_features + calculate_advanced on).
+# moment_feature_dict must keep this grouped order (all Spatial, then Central, then Normalized,
+# then Hu, then the inertia tensor); a reorder is a silent schema break.
+_RELEASE_KEY_ORDER = [
+    "Area", "BoundingBoxArea", "ConvexArea", "EquivalentDiameter", "Perimeter",
+    "MajorAxisLength", "MinorAxisLength", "Eccentricity", "Orientation", "Center_X",
+    "Center_Y", "BoundingBoxMinimum_X", "BoundingBoxMaximum_X", "BoundingBoxMinimum_Y",
+    "BoundingBoxMaximum_Y", "FormFactor", "Extent", "Solidity", "Compactness", "EulerNumber",
+    "MaximumRadius", "MeanRadius", "MedianRadius", "FilledArea",
+    *[f"SpatialMoment_{p}_{q}" for p in range(3) for q in range(4)],
+    *[f"CentralMoment_{p}_{q}" for p in range(3) for q in range(4)],
+    *[f"NormalizedMoment_{p}_{q}" for p in range(4) for q in range(4)],
+    *[f"HuMoment_{k}" for k in range(7)],
+    "InertiaTensor_0_0", "InertiaTensor_0_1", "InertiaTensor_1_0", "InertiaTensor_1_1",
+    "InertiaTensorEigenvalues_0", "InertiaTensorEigenvalues_1", "PerimeterCrofton",
+]
+
+
+def test_sizeshape_key_order_matches_release():
+    masks = numpy.zeros((40, 40), numpy.int32)
+    masks[5:25, 5:25] = 1
+    assert list(get_sizeshape(masks, masks.astype(float))) == _RELEASE_KEY_ORDER
+
+
+def test_axes_clip_thin_objects_match_skimage():
+    # Thin / oblique objects have a (near-)singular inertia tensor; float error can drive the minor
+    # eigenvalue slightly negative. inertia_2d clips to 0 like skimage, so axis lengths and
+    # eccentricity match regionprops and are never NaN. Pre-clip, ~4% of these gave NaN axis_minor
+    # / eccentricity > 1 — this loop guards that regression.
+    rng = numpy.random.default_rng(1)
+    for _ in range(50):
+        masks = numpy.zeros((40, 40), numpy.int32)
+        r0, c0 = rng.integers(2, 18, 2)
+        length = int(rng.integers(6, 18))
+        dr, dc = rng.integers(-2, 3, 2)
+        for t in range(length):
+            r, c = r0 + t * dr, c0 + t * dc
+            if 0 <= r < 40 and 0 <= c < 40:
+                masks[r, c] = 1
+        if masks.max() == 0:
+            continue
+        out = get_sizeshape(masks, masks.astype(float))
+        assert not numpy.isnan(out["MinorAxisLength"]).any()
+        assert not numpy.isnan(out["Eccentricity"]).any()
+        ref = skimage.measure.regionprops_table(
+            masks, properties=["axis_minor_length", "eccentricity"]
+        )
+        numpy.testing.assert_allclose(
+            out["MinorAxisLength"], ref["axis_minor_length"], rtol=1e-7, atol=1e-9
+        )
+        numpy.testing.assert_allclose(
+            out["Eccentricity"], ref["eccentricity"], rtol=1e-7, atol=1e-9
+        )
+
+
 def test_axes_match_noncontiguous_labels():
     masks = numpy.zeros((96, 96), numpy.int32)
     masks[10:30, 10:30] = 1

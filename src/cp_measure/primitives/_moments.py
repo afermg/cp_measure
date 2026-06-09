@@ -6,14 +6,17 @@ contraction path is re-derived for every object — on a 1080² / 142-object til
 ``get_sizeshape`` (~120 ms, ~40 ms of which is pure ``einsum_path`` overhead). The moments are
 plain reductions, so the whole set is one scatter over the foreground pixels.
 
-The raw spatial moments are bit-exact vs regionprops; the centroid-dependent matrices
-(``central`` / ``normalized`` / ``hu``) match to floating-point round-off (~1e-13 relative — the
-moments reach ~1e8 magnitude). Objects are ordered by ascending label, exactly as
-``regionprops_table``.
+The raw spatial moments match ``regionprops`` to floating-point round-off — NOT bit-exact: the
+``bincount`` summation order differs from skimage's ``einsum``, so the divergence grows with object
+size (worst seen ~3e-12 relative on a 1000² object). The centroid-dependent matrices
+(``central`` / ``normalized`` / ``hu``) likewise match to round-off. Objects are ordered by
+ascending label, exactly as ``regionprops_table``.
 """
 
 import numpy
 from numpy.typing import NDArray
+
+from cp_measure.primitives.segment import label_to_idx_lut
 
 # Moments up to order 3 (indices 0..3), matching skimage's order-3 regionprops matrices.
 _ORDER = 4
@@ -26,8 +29,8 @@ def _moment_matrix(
     n: int,
 ) -> NDArray[numpy.floating]:
     """Segment-sum ``r**p * c**q`` per object into an ``(n, 4, 4)`` moment matrix."""
-    r_pow = [numpy.ones_like(r), r, r * r, r * r * r]
-    c_pow = [numpy.ones_like(c), c, c * c, c * c * c]
+    r_pow = [r**k for k in range(_ORDER)]
+    c_pow = [c**k for k in range(_ORDER)]
     moments = numpy.zeros((n, _ORDER, _ORDER))
     for p in range(_ORDER):
         for q in range(_ORDER):
@@ -59,43 +62,45 @@ def _hu_from_normalized(nu: NDArray[numpy.floating]) -> NDArray[numpy.floating]:
 
 def spatial_moments_2d(
     labels: NDArray[numpy.integer],
+    *,
+    advanced: bool = True,
 ) -> tuple[
     NDArray[numpy.floating],
     NDArray[numpy.floating],
-    NDArray[numpy.floating],
-    NDArray[numpy.floating],
+    NDArray[numpy.floating] | None,
+    NDArray[numpy.floating] | None,
 ]:
     """Per-object ``(raw, central, normalized, hu)`` spatial moments for a 2D label image.
 
     ``raw`` / ``central`` / ``normalized`` are ``(n, 4, 4)`` and ``hu`` is ``(n, 7)``, ordered by
     ascending label. Drop-in for the matching ``regionprops_table`` columns
     (``moments-p-q`` etc.); ``normalized`` is NaN where ``p + q < 2`` (skimage convention).
+
+    ``advanced=False`` returns ``(raw, central, None, None)`` — the centroid-axes path only needs
+    ``central``, so the normalized / Hu moments are skipped when the caller won't emit them.
     """
-    unique_labels = numpy.unique(labels)
-    unique_labels = unique_labels[unique_labels > 0]
-    n = len(unique_labels)
+    lut, n, origins = label_to_idx_lut(labels, return_bbox=True)
     if n == 0:
         empty = numpy.zeros((0, _ORDER, _ORDER))
-        return empty, empty, empty, numpy.zeros((0, 7))
+        if advanced:
+            return empty, empty, empty, numpy.zeros((0, 7))
+        return empty, empty, None, None
 
     rows, cols = numpy.nonzero(labels)
-    obj = numpy.searchsorted(unique_labels, labels[rows, cols])
+    obj = lut[labels[rows, cols]]
 
-    # skimage takes moments in each object's local (bounding-box) frame, so reduce to the
-    # per-object minimum row/col. Init the accumulators above any pixel index for minimum.at.
-    sentinel = 1 << 31
-    rmin = numpy.full(n, sentinel)
-    cmin = numpy.full(n, sentinel)
-    numpy.minimum.at(rmin, obj, rows)
-    numpy.minimum.at(cmin, obj, cols)
-    local_r = (rows - rmin[obj]).astype(float)
-    local_c = (cols - cmin[obj]).astype(float)
+    # skimage takes moments in each object's local (bounding-box) frame; the per-object bbox
+    # origin comes straight from label_to_idx_lut's find_objects pass (no minimum.at).
+    local_r = (rows - origins[obj, 0]).astype(float)
+    local_c = (cols - origins[obj, 1]).astype(float)
 
     raw = _moment_matrix(obj, local_r, local_c, n)
     centre_r = raw[:, 1, 0] / raw[:, 0, 0]
     centre_c = raw[:, 0, 1] / raw[:, 0, 0]
     # Central moments by direct centred summation (binomial-from-raw loses ~1e-4 to cancellation).
     central = _moment_matrix(obj, local_r - centre_r[obj], local_c - centre_c[obj], n)
+    if not advanced:
+        return raw, central, None, None
 
     normalized = numpy.full((n, _ORDER, _ORDER), numpy.nan)
     mu00 = central[:, 0, 0]
@@ -133,25 +138,35 @@ def inertia_2d(
     c = central[:, 0, 2] / mu00
     half_trace = (a + c) / 2
     disc = numpy.sqrt(((c - a) / 2) ** 2 + b**2)
-    return c, -b, a, half_trace + disc, half_trace - disc
+    # Clip eigenvalues to >= 0 (skimage does the same): tiny-negative float error on degenerate /
+    # thin objects would otherwise give NaN axis lengths and eccentricity > 1.
+    eig_major = numpy.clip(half_trace + disc, 0.0, None)
+    eig_minor = numpy.clip(half_trace - disc, 0.0, None)
+    return c, -b, a, eig_major, eig_minor
 
 
 def axes_eccentricity_orientation(
-    central: NDArray[numpy.floating],
+    inertia: tuple[
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+    ],
 ) -> tuple[
     NDArray[numpy.floating],
     NDArray[numpy.floating],
     NDArray[numpy.floating],
     NDArray[numpy.floating],
 ]:
-    """``(axis_major, axis_minor, eccentricity, orientation)`` from per-object central moments.
+    """``(axis_major, axis_minor, eccentricity, orientation)`` from the per-object inertia tuple.
 
-    Matches ``skimage.measure.regionprops`` to floating-point round-off, including the symmetric
-    fallback (``it00 == it11`` -> ±pi/4). Derived from the same inertia tensor / eigenvalues as
-    :func:`inertia_2d`, so requesting these no longer forces regionprops' per-region moment einsum
-    (CellProfiler reports orientation in degrees; callers apply the ``180/pi`` conversion).
+    Takes the output of :func:`inertia_2d` (so the eigendecomposition is computed once and shared
+    with the inertia features) and matches ``skimage.measure.regionprops`` to floating-point
+    round-off, including the symmetric fallback (``it00 == it11`` -> ±pi/4). CellProfiler reports
+    orientation in degrees; callers apply the ``180/pi`` conversion.
     """
-    it00, it_off, it11, eig_major, eig_minor = inertia_2d(central)
+    it00, it_off, it11, eig_major, eig_minor = inertia
     axis_major = 4 * numpy.sqrt(eig_major)
     axis_minor = 4 * numpy.sqrt(eig_minor)
     with numpy.errstate(invalid="ignore", divide="ignore"):
@@ -164,3 +179,49 @@ def axes_eccentricity_orientation(
         0.5 * numpy.arctan2(-2 * it_off, it11 - it00),
     )
     return axis_major, axis_minor, eccentricity, orientation
+
+
+def moment_feature_dict(
+    raw: NDArray[numpy.floating],
+    central: NDArray[numpy.floating],
+    normalized: NDArray[numpy.floating],
+    hu: NDArray[numpy.floating],
+    inertia: tuple[
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+        NDArray[numpy.floating],
+    ],
+) -> dict[str, NDArray[numpy.floating]]:
+    """Assemble the ``calculate_advanced`` moment + inertia features of 2D ``get_sizeshape``.
+
+    Single source of truth for these 53 feature names and the ``(p, q)`` orders. Keys are emitted
+    in the *grouped* order of the CellProfiler / PyPI release (all Spatial, then Central, then
+    Normalized, then Hu, then the inertia tensor) so the output column order is unchanged. ``raw``
+    and ``central`` are ``(n, 4, 4)`` with only ``p in {0, 1, 2}`` exposed; ``normalized`` is the
+    full ``(n, 4, 4)``; ``hu`` is ``(n, 7)``. ``inertia`` is
+    ``(it_0_0, it_0_1, it_1_0, it_1_1, eigenvalue_0, eigenvalue_1)`` (both off-diagonals passed
+    explicitly — they are equal for the symmetric tensor).
+    """
+    it_0_0, it_0_1, it_1_0, it_1_1, eig_0, eig_1 = inertia
+    features: dict[str, NDArray[numpy.floating]] = {}
+    for p in range(3):  # spatial / central expose p in {0,1,2}, q in {0,1,2,3}
+        for q in range(_ORDER):
+            features[f"SpatialMoment_{p}_{q}"] = raw[:, p, q]
+    for p in range(3):
+        for q in range(_ORDER):
+            features[f"CentralMoment_{p}_{q}"] = central[:, p, q]
+    for p in range(_ORDER):  # normalized full 4x4
+        for q in range(_ORDER):
+            features[f"NormalizedMoment_{p}_{q}"] = normalized[:, p, q]
+    for k in range(7):
+        features[f"HuMoment_{k}"] = hu[:, k]
+    features["InertiaTensor_0_0"] = it_0_0
+    features["InertiaTensor_0_1"] = it_0_1
+    features["InertiaTensor_1_0"] = it_1_0
+    features["InertiaTensor_1_1"] = it_1_1
+    features["InertiaTensorEigenvalues_0"] = eig_0
+    features["InertiaTensorEigenvalues_1"] = eig_1
+    return features

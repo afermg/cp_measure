@@ -14,7 +14,9 @@ from numpy.typing import NDArray
 
 def label_to_idx_lut(
     masks: NDArray[numpy.integer],
-) -> tuple[NDArray[numpy.int64], int]:
+    *,
+    return_bbox: bool = False,
+):
     """Build a ``label -> 0..n-1`` lookup over the sorted positive labels.
 
     Returns ``(lut, n)`` where ``lut[label]`` is the segment index (and ``-1``
@@ -25,15 +27,24 @@ def label_to_idx_lut(
     Present labels are enumerated with ``scipy.ndimage.find_objects`` (one pass)
     rather than ``numpy.unique`` (a full-image sort): same ascending label set,
     identical LUT, ~3-5x faster on large/3D masks.
+
+    With ``return_bbox=True`` also returns ``origins``, an ``(n, ndim)`` array of each
+    object's per-axis bounding-box minimum (the ``find_objects`` slice starts, already
+    computed here) — the local-frame origin the moment routines need, for free instead of
+    a separate ``numpy.minimum.at`` pass.
     """
     if not numpy.issubdtype(masks.dtype, numpy.integer):
         masks = masks.astype(numpy.intp, copy=False)
     bboxes = scipy.ndimage.find_objects(masks)
-    labels = numpy.array(
-        [i + 1 for i, sl in enumerate(bboxes) if sl is not None], dtype=numpy.int64
-    )
+    present = [(i + 1, sl) for i, sl in enumerate(bboxes) if sl is not None]
+    labels = numpy.array([lab for lab, _ in present], dtype=numpy.int64)
     n = int(labels.size)
     max_label = int(labels[-1]) if n else 0
     lut = numpy.full(max_label + 1, -1, dtype=numpy.int64)
     lut[labels] = numpy.arange(n, dtype=numpy.int64)
-    return lut, n
+    if not return_bbox:
+        return lut, n
+    origins = numpy.array(
+        [[s.start for s in sl] for _, sl in present], dtype=numpy.int64
+    ).reshape(n, masks.ndim)
+    return lut, n, origins
