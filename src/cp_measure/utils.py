@@ -98,8 +98,12 @@ def _zernike_scores(
     rows, cols = numpy.nonzero(keep)
     seg = seg_full[keep]
     counts = numpy.bincount(seg, minlength=n).astype(float)
-    ym = (rows - centers[seg, 0]) / radii[seg]
-    xm = (cols - centers[seg, 1]) / radii[seg]
+    # Single-pixel objects have an enclosing-circle radius of 0; the resulting 0/0 yields NaN
+    # coordinates (which the r**2 > 1 cutoff later discards), matching centrosome — suppress the
+    # warning since it is expected, not a fault.
+    with numpy.errstate(invalid="ignore", divide="ignore"):
+        ym = (rows - centers[seg, 0]) / radii[seg]
+        xm = (cols - centers[seg, 1]) / radii[seg]
 
     coeffs = centrosome.zernike.construct_zernike_lookuptable(zernike_indexes)
     r_square = xm * xm + ym * ym
