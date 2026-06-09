@@ -8,8 +8,10 @@ shape / 3D-empty; here we lock the numerical result and the edge cases.
 
 import centrosome.zernike
 import numpy
+import scipy.ndimage
 
 from cp_measure.core.measureobjectsizeshape import get_zernike
+from cp_measure.utils import _zernike_scores
 
 ATOL = 1e-10  # >> the ~2e-16 round-off observed, << any real signal
 
@@ -104,3 +106,56 @@ def test_zernike_empty_mask():
 
 def test_zernike_3d_returns_empty():
     assert get_zernike(numpy.zeros((4, 16, 16), numpy.int32), None) == {}
+
+
+def _weighted_reference(masks, pixels, zernike_numbers=9):
+    """Independent weighted real/imag/count via centrosome's own basis + scipy segment-sum.
+
+    Mirrors centrosome.zernike()'s coordinate construction but feeds the intensity image as
+    ``weight`` to ``construct_zernike_polynomials`` — the path the radial Zernikes (PR #75) use.
+    """
+    zidx = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
+    labels = numpy.unique(masks)
+    labels = labels[labels > 0]
+    centers, radii = centrosome.zernike.minimum_enclosing_circle(masks, labels)
+    rev = numpy.full(int(masks.max()) + 1, -1, int)
+    rev[labels] = numpy.arange(len(labels))
+    mask = rev[masks] != -1
+    ny, nx = masks.shape
+    y, x = numpy.mgrid[0:ny, 0:nx].astype(float)
+    rev_ind = rev[masks[mask]]
+    xc = numpy.zeros((ny, nx))
+    yc = numpy.zeros((ny, nx))
+    yc[mask] = (y[mask] - centers[rev_ind, 0]) / radii[rev_ind]
+    xc[mask] = (x[mask] - centers[rev_ind, 1]) / radii[rev_ind]
+    zf = centrosome.zernike.construct_zernike_polynomials(xc, yc, zidx, mask, weight=pixels)
+    real = numpy.column_stack(
+        [scipy.ndimage.sum_labels(zf[:, :, i].real, masks, labels) for i in range(len(zidx))]
+    )
+    imag = numpy.column_stack(
+        [scipy.ndimage.sum_labels(zf[:, :, i].imag, masks, labels) for i in range(len(zidx))]
+    )
+    counts = numpy.asarray(scipy.ndimage.sum_labels(numpy.ones((ny, nx)), masks, labels), float)
+    return real, imag, counts
+
+
+def test_zernike_scores_weighted_matches_centrosome():
+    # The intensity-weighted path (weight != None) + per-object counts that PR #75 reuses.
+    rng = numpy.random.default_rng(1)
+    masks = _square_objects(160, 3)
+    pixels = rng.random(masks.shape)
+    zidx = centrosome.zernike.get_zernike_indexes(9 + 1)
+    real, imag, radii, counts = _zernike_scores(masks, zidx, weight=pixels)
+    ref_real, ref_imag, ref_counts = _weighted_reference(masks, pixels)
+    assert numpy.allclose(real, ref_real, atol=ATOL, rtol=1e-10)
+    assert numpy.allclose(imag, ref_imag, atol=ATOL, rtol=1e-10)
+    assert numpy.allclose(counts, ref_counts)
+
+
+def test_zernike_scores_unit_weight_equals_unweighted():
+    masks = _square_objects(128, 3)
+    zidx = centrosome.zernike.get_zernike_indexes(9 + 1)
+    r0, i0, _rad0, c0 = _zernike_scores(masks, zidx)
+    r1, i1, _rad1, c1 = _zernike_scores(masks, zidx, weight=numpy.ones(masks.shape))
+    assert numpy.allclose(r0, r1) and numpy.allclose(i0, i1)
+    assert numpy.array_equal(c0, c1)
