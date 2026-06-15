@@ -128,14 +128,24 @@ def _weighted_reference(masks, pixels, zernike_numbers=9):
     yc = numpy.zeros((ny, nx))
     yc[mask] = (y[mask] - centers[rev_ind, 0]) / radii[rev_ind]
     xc[mask] = (x[mask] - centers[rev_ind, 1]) / radii[rev_ind]
-    zf = centrosome.zernike.construct_zernike_polynomials(xc, yc, zidx, mask, weight=pixels)
+    zf = centrosome.zernike.construct_zernike_polynomials(
+        xc, yc, zidx, mask, weight=pixels
+    )
     real = numpy.column_stack(
-        [scipy.ndimage.sum_labels(zf[:, :, i].real, masks, labels) for i in range(len(zidx))]
+        [
+            scipy.ndimage.sum_labels(zf[:, :, i].real, masks, labels)
+            for i in range(len(zidx))
+        ]
     )
     imag = numpy.column_stack(
-        [scipy.ndimage.sum_labels(zf[:, :, i].imag, masks, labels) for i in range(len(zidx))]
+        [
+            scipy.ndimage.sum_labels(zf[:, :, i].imag, masks, labels)
+            for i in range(len(zidx))
+        ]
     )
-    counts = numpy.asarray(scipy.ndimage.sum_labels(numpy.ones((ny, nx)), masks, labels), float)
+    counts = numpy.asarray(
+        scipy.ndimage.sum_labels(numpy.ones((ny, nx)), masks, labels), float
+    )
     return real, imag, counts
 
 
