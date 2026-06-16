@@ -95,12 +95,7 @@ def _make_fused_upsample_mean(
     # (e.g. 63.0000000000001 for orig 160 -> new 64). Reproduce that by keeping only in-bounds
     # pixels in the operator; `counts` below still spans ALL foreground, so a dropped pixel
     # contributes 0 to the numerator but 1 to the denominator, exactly as the direct path does.
-    in_bounds = (
-        (r >= 0)
-        & (r <= new_shape[0] - 1)
-        & (c >= 0)
-        & (c <= new_shape[1] - 1)
-    )
+    in_bounds = (r >= 0) & (r <= new_shape[0] - 1) & (c >= 0) & (c <= new_shape[1] - 1)
     r, c, op_labels = r[in_bounds], c[in_bounds], fg_labels[in_bounds]
     r0, c0 = numpy.floor(r).astype(int), numpy.floor(c).astype(int)
     fr, fc = r - r0, c - c0
