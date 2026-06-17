@@ -1,0 +1,45 @@
+name: benchmark
+
+# Runs on every commit to a PR: times every public get_* on the PR head vs main and posts a
+# sticky comment with the timing table. Self-contained — workflow, tooling and generator all live
+# on the PR branch (pull_request runs the workflow from the head), so nothing is needed on main.
+
+on:
+  pull_request:
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Benchmark head vs main
+        run: bash .github/scripts/run_benchmark.sh bench-out "${{ github.event.pull_request.head.sha }}"
+      - name: Post sticky comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          { echo '<!-- cp-bench -->'; echo; cat bench-out/table.md; } > body.md
+          CID="$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" \
+                 --jq 'map(select(.body | startswith("<!-- cp-bench -->")))[0].id // empty')"
+          if [ -n "$CID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$CID" -F body=@body.md >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@body.md >/dev/null
+          fi
