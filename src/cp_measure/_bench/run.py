@@ -26,7 +26,6 @@ import argparse  # noqa: E402
 import inspect  # noqa: E402
 import json  # noqa: E402
 import signal  # noqa: E402
-import statistics  # noqa: E402
 from contextlib import contextmanager  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -119,12 +118,7 @@ def time_call(func: Func, args, warmup: int, reps: int, timeout: float) -> dict:
         Exception
     ) as exc:  # a function that can't handle the synthetic input — recorded, not fatal
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:200]}
-    return {
-        "status": "ok",
-        "min": min(times),
-        "median": statistics.median(times),
-        "reps": times,
-    }
+    return {"status": "ok", "reps": times}
 
 
 def run(

@@ -1,7 +1,9 @@
-"""Compare two ``run.py`` JSON outputs into a speedup table.
+"""Compare two ``run.py`` JSON outputs into a timing table.
 
-``speedup = base/head`` (>1 = head faster). Per (function, size, count) cell: per-fixture min, then
-median across seeds. Untouched functions land in the noise band (≈) — the "what changed" signal.
+Per (function, size, count) it shows the ``main`` and ``head`` time as mean (min–max) over
+reps×seeds and the raw ratio ``main/head``. No pass/fail classification and no normalisation —
+read the function you changed and judge the spread from its own min–max. Functions present on only
+one side are flagged ``new``/``removed``.
 """
 
 from __future__ import annotations
@@ -11,87 +13,64 @@ import json
 import statistics
 from pathlib import Path
 
-NOISE_BAND = 0.05  # |speedup - 1| within this is reported "≈" (within timing noise)
-
 
 def _cell_groups(report: dict) -> dict:
-    """Map (size, n_objects) -> [fixture keys], from a report's fixtures list."""
+    """Map (size, n_objects) -> [fixture keys] from a report's fixtures list."""
     groups: dict[tuple[int, int], list[str]] = {}
     for e in report["fixtures"]:
         groups.setdefault((e["size"], e["n_objects"]), []).append(e["key"])
     return groups
 
 
-def _aggregate(results_for_fn: dict, keys: list[str]) -> float | None:
-    """Median across seeds of each fixture's min time; None if no fixture timed ok."""
-    mins = [
-        results_for_fn[k]["min"]
+def _stats(results_for_fn: dict, keys: list[str]):
+    """(mean, min, max) in ms over all ok rep times of a cell, or None if none timed."""
+    times = [
+        t
         for k in keys
         if results_for_fn.get(k, {}).get("status") == "ok"
+        for t in results_for_fn[k]["reps"]
     ]
-    return statistics.median(mins) if mins else None
+    if not times:
+        return None
+    return statistics.mean(times) * 1e3, min(times) * 1e3, max(times) * 1e3
 
 
 def compare(base: dict, head: dict) -> list[dict]:
     groups = _cell_groups(head)  # head defines the matrix
-    base_results, head_results = base["results"], head["results"]
+    base_r, head_r = base["results"], head["results"]
     rows = []
-    for fn in sorted(head_results):
+    for fn in sorted(head_r):
         for (size, n_objects), keys in sorted(groups.items()):
-            head_t = _aggregate(head_results[fn], keys)
-            base_t = _aggregate(base_results.get(fn, {}), keys)
-            if fn not in base_results:
-                status = "new"
-                speedup = None
-            elif not head_t or base_t is None:  # missing/errored, or a head time of 0
-                status = "no-data"
-                speedup = None
-            else:
-                speedup = base_t / head_t
-                status = (
-                    "≈"
-                    if abs(speedup - 1) <= NOISE_BAND
-                    else ("faster" if speedup > 1 else "slower")
-                )
+            m = _stats(base_r.get(fn, {}), keys)
+            h = _stats(head_r[fn], keys)
             rows.append(
                 {
                     "function": fn,
                     "size": size,
                     "n_objects": n_objects,
-                    "base_ms": None if base_t is None else base_t * 1e3,
-                    "head_ms": None if head_t is None else head_t * 1e3,
-                    "speedup": speedup,
-                    "status": status,
+                    "main": m,
+                    "head": h,
+                    "speedup": (m[0] / h[0]) if (m and h) else None,
+                    "note": "" if fn in base_r else "new",
                 }
             )
-    # Functions removed on head (present in base only).
-    for fn in sorted(set(base_results) - set(head_results)):
+    for fn in sorted(set(base_r) - set(head_r)):
         rows.append(
             {
                 "function": fn,
                 "size": None,
                 "n_objects": None,
-                "base_ms": None,
-                "head_ms": None,
+                "main": None,
+                "head": None,
                 "speedup": None,
-                "status": "removed",
+                "note": "removed",
             }
         )
     return rows
 
 
-_EMOJI = {
-    "faster": "🟢",
-    "slower": "🔴",
-    "≈": "⚪",
-    "new": "🆕",
-    "removed": "🗑️",
-    "no-data": "⚠️",
-}
-
-
-def _fmt(x, spec="", suffix=""):
-    return "—" if x is None else format(x, spec) + suffix
+def _ms(stat) -> str:
+    return "—" if stat is None else f"{stat[0]:.1f} ({stat[1]:.1f}–{stat[2]:.1f})"
 
 
 def render_markdown(rows: list[dict], base_meta: dict, head_meta: dict) -> str:
@@ -104,25 +83,27 @@ def render_markdown(rows: list[dict], base_meta: dict, head_meta: dict) -> str:
     lines = [
         "### Benchmark — PR head vs `main`",
         "",
-        f"`speedup = main/head` · **>1 = faster**, ≈ within ±{int(NOISE_BAND * 100)}% noise · "
+        f"time = mean (min–max) ms over reps×seeds · `speedup = main/head` · "
         f"synth v{head_meta.get('synth_version')} · {head_meta.get('n_fixtures')} fixtures "
         f"({scope}) · reps={head_meta.get('reps')}, threads=1",
         "",
-        "| function | size | objects | main (ms) | head (ms) | speedup | status |",
-        "|---|--:|--:|--:|--:|--:|:--|",
+        "| function | size | objects | main (ms) | head (ms) | speedup |",
+        "|---|--:|--:|--:|--:|--:|",
     ]
     for r in rows:
+        label = f"`{r['function']}`" + (f" _{r['note']}_" if r["note"] else "")
+        sz = "—" if r["size"] is None else r["size"]
+        no = "—" if r["n_objects"] is None else r["n_objects"]
+        sp = "—" if r["speedup"] is None else f"{r['speedup']:.2f}×"
         lines.append(
-            f"| `{r['function']}` | {_fmt(r['size'], 'd')} | {_fmt(r['n_objects'], 'd')} | "
-            f"{_fmt(r['base_ms'], '.1f')} | {_fmt(r['head_ms'], '.1f')} | {_fmt(r['speedup'], '.2f', '×')} | "
-            f"{_EMOJI.get(r['status'], '')} {r['status']} |"
+            f"| {label} | {sz} | {no} | {_ms(r['main'])} | {_ms(r['head'])} | {sp} |"
         )
     return "\n".join(lines)
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
-        description="Compare two run.py JSON outputs into a speedup table."
+        description="Compare two run.py JSON outputs into a timing table."
     )
     p.add_argument("--base", required=True, help="main run JSON")
     p.add_argument("--head", required=True, help="head run JSON")

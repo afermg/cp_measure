@@ -57,9 +57,7 @@ def test_time_call_error_and_timeout():
 
 def _report(times):
     fix = [{"key": "k", "size": 128, "n_objects": 4, "seed": 0}]
-    results = {
-        fn: {"k": {"status": "ok", "min": s, "median": s}} for fn, s in times.items()
-    }
+    results = {fn: {"k": {"status": "ok", "reps": [s]}} for fn, s in times.items()}
     return {
         "meta": {"synth_version": "0", "reps": 1},
         "fixtures": fix,
@@ -67,23 +65,17 @@ def _report(times):
     }
 
 
-def test_compare_classifies_and_renders():
-    base = _report(
-        {"fast": 0.010, "slow": 0.010, "same": 0.010, "gone": 0.010, "err": 0.010}
-    )
-    head = _report(
-        {"fast": 0.005, "slow": 0.020, "same": 0.0101, "fresh": 0.010, "err": 0.010}
-    )
+def test_compare_reports_timings_and_renders():
+    base = _report({"win": 0.010, "gone": 0.010, "err": 0.010})
+    head = _report({"win": 0.005, "fresh": 0.010, "err": 0.010})
     head["results"]["err"]["k"] = {"status": "error", "error": "x"}
     rows = {r["function"]: r for r in compare.compare(base, head)}
-    assert rows["fast"]["status"] == "faster" and rows["fast"][
-        "speedup"
-    ] == pytest.approx(2.0)
-    assert rows["slow"]["status"] == "slower"
-    assert rows["same"]["status"] == "≈"
-    assert rows["fresh"]["status"] == "new" and rows["gone"]["status"] == "removed"
-    assert rows["err"]["status"] == "no-data"
+    assert rows["win"]["speedup"] == pytest.approx(2.0)
+    assert rows["win"]["main"][0] == pytest.approx(10.0)  # mean ms
+    assert rows["fresh"]["note"] == "new" and rows["fresh"]["speedup"] is None
+    assert rows["gone"]["note"] == "removed"
+    assert rows["err"]["speedup"] is None  # errored on head → no head timing
     md = compare.render_markdown(
         compare.compare(base, head), base["meta"], head["meta"]
     )
-    assert "speedup = main/head" in md and "| status |" in md and "2.00×" in md
+    assert "speedup = main/head" in md and "2.00×" in md and "min–max" in md
