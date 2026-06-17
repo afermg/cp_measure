@@ -34,7 +34,7 @@ from time import perf_counter  # noqa: E402
 
 import numpy  # noqa: E402
 
-MATRIX = {"sizes": (512, 1024), "counts": (16, 64), "seeds": (0,)}
+MATRIX = {"sizes": (256, 512, 1024, 2048), "counts": (16, 64), "seeds": (0,)}
 BLOBS_PER_CHANNEL = 5
 WARMUP, REPS, TIMEOUT = 1, 3, 120.0
 AFFECTED = 1.1  # a function is "affected" if its best speedup reaches this
