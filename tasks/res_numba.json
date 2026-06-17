@@ -1,0 +1,54 @@
+{
+  "sizeshape": {
+    "ms": null,
+    "note": "no numba backend (numpy fallback)"
+  },
+  "intensity": {
+    "ms": 31.96,
+    "checksum": 307492.9701
+  },
+  "texture": {
+    "ms": 33.54,
+    "checksum": 95985.6247
+  },
+  "granularity": {
+    "ms": 77.42,
+    "checksum": 13880.5469
+  },
+  "granularity_fullres": {
+    "ms": 1209.63,
+    "checksum": 14200.0
+  },
+  "feret": {
+    "ms": null,
+    "error": "ValueError: expected a 2D or 3D image, got ndim=0"
+  },
+  "zernike": {
+    "ms": 62.93,
+    "checksum": 170.3152
+  },
+  "radial_distribution": {
+    "ms": 39.66,
+    "checksum": 795.7884
+  },
+  "radial_zernikes": {
+    "ms": 65.07,
+    "checksum": 254.1086
+  },
+  "coloc_pearson": {
+    "ms": 5.65,
+    "checksum": 10.6043
+  },
+  "coloc_manders": {
+    "ms": 5.46,
+    "checksum": 284.0
+  },
+  "coloc_rwc": {
+    "ms": 27.0,
+    "checksum": 199.1481
+  },
+  "coloc_costes": {
+    "ms": 6.93,
+    "checksum": 204.791
+  }
+}

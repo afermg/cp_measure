@@ -40,7 +40,9 @@ def test_determinism():
 
 
 def test_edges():
-    labels, channels = synth.generate(128, 0, n_channels=1, seed=0)  # empty + single channel
+    labels, channels = synth.generate(
+        128, 0, n_channels=1, seed=0
+    )  # empty + single channel
     assert labels.max() == 0 and channels.shape == (1, 128, 128)
     with pytest.raises(ValueError, match="cannot fit"):
         synth.generate(256, 5000, seed=0)
