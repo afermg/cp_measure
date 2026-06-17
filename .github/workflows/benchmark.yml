@@ -37,18 +37,21 @@ jobs:
     timeout-minutes: 60
     permissions: {} # untrusted PR code runs here with no token
     steps:
-      - name: Checkout PR head (code under test)
+      - name: Checkout main (trusted tooling + baseline)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.event.inputs.head_ref }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Benchmark head vs main
-        run: bash .github/scripts/run_benchmark.sh "${{ github.event.inputs.matrix || 'ci' }}" bench-out
+      - name: Benchmark PR head vs main
+        run: >-
+          bash .github/scripts/run_benchmark.sh
+          "${{ github.event.inputs.matrix || 'ci' }}"
+          "${{ github.event.pull_request.head.sha || github.event.inputs.head_ref }}"
+          bench-out
       - name: Record PR number for the report job
         run: echo "${{ github.event.pull_request.number || github.event.inputs.pr }}" > bench-out/pr.txt
       - uses: actions/upload-artifact@v4
