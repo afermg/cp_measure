@@ -1,12 +1,7 @@
-"""Compare two ``run.py`` JSON outputs (main vs PR head) into a speedup table.
+"""Compare two ``run.py`` JSON outputs into a speedup table.
 
-``python -m cp_measure._bench.compare --base main.json --head head.json [--md out.md]``
-
-Speedup is ``base_time / head_time`` (>1 = head is faster, <1 = head is a regression). Per
-(function, size, count) cell the per-fixture **min** time is taken (noise floor), then the
-**median** across seeds. A function untouched by the PR lands within the noise band (≈) — that is
-the "what changed" signal, no change-detection needed. Functions present only on head are "new";
-only on base are "removed".
+``speedup = base/head`` (>1 = head faster). Per (function, size, count) cell: per-fixture min, then
+median across seeds. Untouched functions land in the noise band (≈) — the "what changed" signal.
 """
 
 from __future__ import annotations
@@ -48,8 +43,8 @@ def compare(base: dict, head: dict) -> list[dict]:
             if fn not in base_results:
                 status = "new"
                 speedup = None
-            elif head_t is None or base_t is None:
-                status = "no-data"  # error/timeout on at least one side
+            elif not head_t or base_t is None:  # missing/errored, or a head time of 0
+                status = "no-data"
                 speedup = None
             else:
                 speedup = base_t / head_t
@@ -85,34 +80,42 @@ def compare(base: dict, head: dict) -> list[dict]:
     return rows
 
 
-def render_markdown(rows: list[dict], base_meta: dict, head_meta: dict) -> str:
-    def fmt(x, spec):
-        return "—" if x is None else format(x, spec)
+_EMOJI = {
+    "faster": "🟢",
+    "slower": "🔴",
+    "≈": "⚪",
+    "new": "🆕",
+    "removed": "🗑️",
+    "no-data": "⚠️",
+}
 
+
+def _fmt(x, spec="", suffix=""):
+    return "—" if x is None else format(x, spec) + suffix
+
+
+def render_markdown(rows: list[dict], base_meta: dict, head_meta: dict) -> str:
+    m = head_meta.get("matrix") or {}
+    scope = (
+        f"{m.get('sizes')}×{m.get('counts')}×{len(m.get('seeds', []))} seeds"
+        if m
+        else "?"
+    )
     lines = [
         "### Benchmark — PR head vs `main`",
         "",
-        f"`speedup = main_time / head_time` · **>1 = faster**, <1 = regression, "
-        f"≈ = within ±{int(NOISE_BAND * 100)}% noise · synth v{head_meta.get('synth_version')} · "
-        f"reps={head_meta.get('reps')}, warmup={head_meta.get('warmup')}, threads=1",
+        f"`speedup = main/head` · **>1 = faster**, ≈ within ±{int(NOISE_BAND * 100)}% noise · "
+        f"synth v{head_meta.get('synth_version')} · {head_meta.get('n_fixtures')} fixtures "
+        f"({scope}) · reps={head_meta.get('reps')}, threads=1",
         "",
-        "| function | size | objects | main (ms) | head (ms) | speedup | |",
+        "| function | size | objects | main (ms) | head (ms) | speedup | status |",
         "|---|--:|--:|--:|--:|--:|:--|",
     ]
-    emoji = {
-        "faster": "🟢",
-        "slower": "🔴",
-        "≈": "⚪",
-        "new": "🆕",
-        "removed": "🗑️",
-        "no-data": "⚠️",
-    }
     for r in rows:
-        sp = "—" if r["speedup"] is None else f"{r['speedup']:.2f}×"
         lines.append(
-            f"| `{r['function']}` | {fmt(r['size'], 'd')} | {fmt(r['n_objects'], 'd')} | "
-            f"{fmt(r['base_ms'], '.1f')} | {fmt(r['head_ms'], '.1f')} | {sp} | "
-            f"{emoji.get(r['status'], '')} {r['status']} |"
+            f"| `{r['function']}` | {_fmt(r['size'], 'd')} | {_fmt(r['n_objects'], 'd')} | "
+            f"{_fmt(r['base_ms'], '.1f')} | {_fmt(r['head_ms'], '.1f')} | {_fmt(r['speedup'], '.2f', '×')} | "
+            f"{_EMOJI.get(r['status'], '')} {r['status']} |"
         )
     return "\n".join(lines)
 

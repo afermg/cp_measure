@@ -1,27 +1,10 @@
 """Deterministic synthetic cell images for benchmarking.
 
-``generate(image_size, n_objects, n_channels, seed)`` returns a cell-like integer label mask
-plus intensity channels, built so that area/shape, intensity and texture features all carry real
-signal:
-
-- **Label mask** — organic, non-convex star-shaped cells (a base radius modulated by a few low
-  Fourier harmonics), placed by dart-throwing with a minimum gap so they never overlap. Labels are
-  contiguous ``1..n`` (cp_measure's contract) and every object is well above the degenerate-size
-  floor — there are no 1-pixel cells.
-- **Channels** — a shared smooth envelope over the cells (so intensity is object-correlated) plus,
-  per channel, an *independent* field of multi-scale Gaussian splats (large gradients, mid blobs,
-  tiny puncta) and noise. Splats spread with an unclipped point-spread-like tail, so signal is
-  concentrated in cells but bleeds into the surroundings as in real microscopy. The shared envelope
-  drives a controlled positive correlation between channels (for colocalisation), while the
-  independent splats keep it below 1.
-
-The output is a pure function of ``(image_size, n_objects, n_channels, seed)`` for a fixed
-scipy/skimage build. The result is **reproducible only against a pinned generator version**:
-``__version__`` is stamped into benchmark comments so historical numbers stay comparable.
-
-Placement is *capacity-checked*: an ``n_objects`` that cannot fit (with gaps) in ``image_size``
-raises ``ValueError`` loudly rather than silently under-placing — callers that sweep an
-object-count axis must choose counts feasible at their smallest image size.
+``generate(image_size, n_objects, n_channels, seed)`` returns a contiguous ``1..n`` label mask of
+organic, non-overlapping cells (no degenerate ~1px objects) plus intensity channels that share a
+smooth envelope (cross-channel correlation < 1, for colocalisation) over independent multi-scale
+Gaussian splats (area/intensity/texture signal). Output is reproducible only against the pinned
+``__version__`` (stamped into benchmark comments); an ``n_objects`` that cannot fit raises.
 """
 
 from __future__ import annotations
@@ -32,31 +15,23 @@ from numpy.typing import NDArray
 
 __version__ = "0.2.0"
 
-# Cell geometry. Sizes are fixed in absolute pixels (NOT derived from n_objects) so that sweeping
-# the object-count axis isolates per-object cost without also shrinking the cells.
-_MEAN_RADIUS = 8.0  # median base radius of a cell, px
-_RADIUS_LOGSIGMA = (
-    0.35  # spread of the log-normal size distribution (big + small cells)
-)
-_MIN_RADIUS = (
-    3.5  # lower clamp — keeps the smallest cell well above the degenerate floor
-)
-_MAX_RADIUS_FACTOR = (
-    2.2  # clamp the log-normal upper tail to this * mean (also caps packing waste)
-)
-_GAP = 2.0  # minimum empty margin between two cells, px
-_N_HARMONICS = 3  # low Fourier harmonics that make a boundary organic/non-convex
-_HARMONIC_AMP = 0.12  # per-harmonic radial wobble as a fraction of the base radius
-_FILL_LIMIT = 0.45  # max fraction of image area the (halo-padded) cells may claim before we refuse
+# Cell geometry. Sizes are fixed in px (NOT derived from n_objects) so the object-count sweep
+# isolates per-object cost without shrinking the cells.
+_MEAN_RADIUS = 8.0  # median base radius, px
+_RADIUS_LOGSIGMA = 0.35  # log-normal size spread
+_MIN_RADIUS = 3.5  # lower clamp, keeps cells above the degenerate floor
+_MAX_RADIUS_FACTOR = 2.2  # upper clamp (× mean), also caps packing waste
+_GAP = 2.0  # minimum margin between cells, px
+_N_HARMONICS = 3  # low Fourier harmonics → organic, non-convex boundary
+_HARMONIC_AMP = 0.12  # per-harmonic radial wobble (fraction of base radius)
+_FILL_LIMIT = 0.45  # max halo-padded area fraction before placement refuses
 
-# Channel synthesis.
-_SHARED_SPLATS_PER_CELL = (
-    6  # splats identical across channels (drive cross-channel correlation)
-)
-_INDEP_SPLATS_PER_CELL = 7  # splats drawn per channel (pull correlation back below 1)
-_BG_LEVEL = 0.05  # flat background intensity
-_ENVELOPE_WEIGHT = 0.5  # weight of the shared smooth envelope
-_NOISE_LEVEL = 0.05  # additive Gaussian read noise (std)
+# Channel synthesis: a shared splat field correlates the channels, independent fields keep r < 1.
+_SHARED_SPLATS_PER_CELL = 6
+_INDEP_SPLATS_PER_CELL = 7
+_BG_LEVEL = 0.05
+_ENVELOPE_WEIGHT = 0.5
+_NOISE_LEVEL = 0.05  # read-noise std
 
 
 def generate(
@@ -65,26 +40,9 @@ def generate(
     n_channels: int = 2,
     seed: int = 0,
 ) -> tuple[NDArray[numpy.int32], NDArray[numpy.float32]]:
-    """Generate a synthetic ``(labels, channels)`` pair.
+    """Return (labels ``int32 [S,S]``, channels ``float32 [C,S,S]``); raises if cells can't fit.
 
-    Parameters
-    ----------
-    image_size : int
-        Side length; the image is ``image_size x image_size``.
-    n_objects : int
-        Number of cells to place. Raises ``ValueError`` if they cannot fit.
-    n_channels : int
-        Number of intensity channels (>= 1). cp_measure core features consume channel 0;
-        colocalisation consumes channels 0 and 1.
-    seed : int
-        Seeds all randomness; identical inputs give identical output.
-
-    Returns
-    -------
-    labels : int32 array ``(image_size, image_size)``
-        Contiguous labels ``1..n_objects`` (``0`` = background).
-    channels : float32 array ``(n_channels, image_size, image_size)``
-        Non-negative intensities.
+    Core features consume channel 0; colocalisation consumes channels 0 and 1.
     """
     if n_channels < 1:
         raise ValueError(f"n_channels must be >= 1, got {n_channels}")
@@ -104,13 +62,9 @@ def _draw_radii(rng: numpy.random.Generator, n: int) -> NDArray[numpy.float64]:
 
 
 def _cell_extent(base_r, amps):
-    """Maximum radial reach of an organic cell, ``base_r * (1 + sum|amps|)``.
-
-    The SINGLE definition of how far a cell's boundary can extend — used both for the packing
-    radius (with the worst-case amplitudes) and for the rasterisation window (with the actual
-    drawn amplitudes), so the two can never drift apart and silently break the no-overlap
-    guarantee. ``base_r`` may be a scalar or an array; ``amps`` is summed over its last axis.
-    """
+    """Max radial reach ``base_r*(1+Σ|amps|)`` — the single source for both the packing radius
+    (worst-case amps) and the raster window (actual amps), so the two can't drift and break
+    no-overlap. ``base_r`` scalar or array; ``amps`` summed over its last axis."""
     return base_r * (1.0 + numpy.sum(numpy.abs(amps)))
 
 
@@ -121,13 +75,10 @@ def _build_label_mask(
     if n_objects == 0:
         return labels
 
-    # Stable sort so tied radii order identically across numpy builds (determinism).
-    radii = numpy.sort(_draw_radii(rng, n_objects), kind="stable")[
-        ::-1
-    ]  # place big cells first (easier packing)
-    # Packing/capacity use the worst-case organic boundary: every harmonic at its extreme amplitude.
-    worst_amps = numpy.full(_N_HARMONICS, _HARMONIC_AMP)
-    bulge = _cell_extent(radii, worst_amps)
+    # Big cells first (easier packing); stable sort keeps tied radii ordered across numpy builds.
+    radii = numpy.sort(_draw_radii(rng, n_objects), kind="stable")[::-1]
+    # Packing/capacity use the worst-case boundary: every harmonic at its extreme amplitude.
+    bulge = _cell_extent(radii, numpy.full(_N_HARMONICS, _HARMONIC_AMP))
 
     halo_area = float(numpy.sum(numpy.pi * (bulge + _GAP) ** 2))
     if halo_area > _FILL_LIMIT * image_size * image_size:

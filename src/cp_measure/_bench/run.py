@@ -1,13 +1,8 @@
-"""Time every public ``get_*`` measurement function over a fixture matrix, in ONE environment.
+"""Time every public ``get_*`` function over a fixture matrix → JSON (run per env; compare.py diffs two).
 
-``python -m cp_measure._bench.run --fixtures <dir> --out <json>`` is invoked once on ``main`` and
-once on the PR head (in separate worktree envs); ``compare.py`` then diffs the two JSON outputs.
-
-Functions are enumerated from the live ``bulk`` registries at HEAD, so a PR that adds a feature is
-still timed (it simply has no ``main`` counterpart and is reported "new"). Each channel is
-normalised to ``[0, 1]`` before the call — the convention the real featurize pipeline uses and the
-range ``get_texture`` requires. Calls are positional, per arity: core ``fn(labels, img)``,
-correlation ``fn(img1, img2, labels)``.
+Functions come from the live ``bulk`` registry at HEAD (a PR-added feature is timed, reported "new").
+Each channel is normalised to ``[0, 1]`` (``get_texture`` requires it); calls are positional per arity:
+core ``fn(labels, img)``, correlation ``fn(img1, img2, labels)``.
 """
 
 from __future__ import annotations
@@ -89,6 +84,8 @@ def enumerate_functions() -> list[Func]:
     ):
         for name, fn in registry.items():
             out.append(Func(name, fn, arity, {}))
+            # [legacy] reuses the same fn, so for a numba backend it shares the base variant's
+            # JIT-warmed code — read the legacy-vs-base delta with that caveat.
             if _has_legacy(fn):
                 out.append(Func(f"{name}[legacy]", fn, arity, {"legacy": True}))
     return out
@@ -97,7 +94,7 @@ def enumerate_functions() -> list[Func]:
 def _norm01(image):
     image = image.astype("float64")
     lo, hi = float(image.min()), float(image.max())
-    return (image - lo) / (hi - lo) if hi > lo else image * 0.0
+    return (image - lo) / (hi - lo) if hi > lo else image - lo  # constant image → zeros
 
 
 def _call_args(func: Func, labels, channels):
@@ -144,7 +141,14 @@ def run(
     for entry in manifest["fixtures"]:
         labels, channels = fixtures.load_fixture(fixtures_dir, entry)
         for func in funcs:
-            args = _call_args(func, labels, channels)
+            try:
+                args = _call_args(func, labels, channels)
+            except Exception as exc:  # e.g. correlation fn on a 1-channel fixture
+                results[func.label][entry["key"]] = {
+                    "status": "error",
+                    "error": str(exc)[:200],
+                }
+                continue
             results[func.label][entry["key"]] = time_call(
                 func, args, warmup, reps, timeout
             )
@@ -152,14 +156,13 @@ def run(
     out = {
         "meta": {
             "synth_version": manifest["synth_version"],
+            "matrix": manifest["matrix"],
+            "n_fixtures": len(manifest["fixtures"]),
+            "n_functions": len(funcs),
             "warmup": warmup,
             "reps": reps,
             "timeout_s": timeout,
-            "threads": {
-                v: os.environ.get(v)
-                for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS")
-            },
-            "n_functions": len(funcs),
+            "threads": os.environ.get("OMP_NUM_THREADS"),
         },
         "fixtures": manifest["fixtures"],
         "results": results,

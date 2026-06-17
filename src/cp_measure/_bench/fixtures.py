@@ -1,10 +1,5 @@
-"""Deterministic benchmark fixtures: the (image_size x object_count x seed) matrix of synthetic
-``(labels, channels)`` arrays, generated ONCE from the pinned ``cp_measure.synth`` generator and
-serialised to ``.npz`` with a manifest + per-array sha256.
-
-The benchmark runs ``main`` and the PR head in two separate environments; both must see *identical*
-inputs, so the fixtures are built once (here) and the runner only *loads* them. The manifest stamps
-``synth.__version__`` so historical benchmark numbers stay attributable to a generator version.
+"""Build the (image_size × object_count × seed) fixture matrix once from the pinned ``synth``
+generator into ``.npz`` + a sha256 manifest, so ``main`` and the PR head load identical inputs.
 """
 
 from __future__ import annotations
@@ -81,11 +76,11 @@ def load_manifest(fixtures_dir: str | Path) -> dict:
     return json.loads((Path(fixtures_dir) / MANIFEST_NAME).read_text())
 
 
-def load_fixture(fixtures_dir: str | Path, entry: dict, verify: bool = True):
-    """Load ``(labels, channels)`` for one manifest entry, optionally checking its sha256."""
+def load_fixture(fixtures_dir: str | Path, entry: dict):
+    """Load ``(labels, channels)`` for one manifest entry, checking its sha256."""
     data = numpy.load(Path(fixtures_dir) / entry["file"])
     labels, channels = data["labels"], data["channels"]
-    if verify and _digest(labels, channels) != entry["sha256"]:
+    if _digest(labels, channels) != entry["sha256"]:
         raise ValueError(
             f"fixture {entry['key']} sha256 mismatch — corrupt or wrong generator"
         )
@@ -97,10 +92,14 @@ def main(argv=None) -> int:
 
     p = argparse.ArgumentParser(description="Build the benchmark fixture matrix.")
     p.add_argument("--out", required=True, help="output directory")
-    p.add_argument("--matrix", default="ci", choices=sorted(MATRICES), help="matrix preset")
+    p.add_argument(
+        "--matrix", default="ci", choices=sorted(MATRICES), help="matrix preset"
+    )
     a = p.parse_args(argv)
     m = build_fixtures(a.out, MATRICES[a.matrix])
-    print(f"built {len(m['fixtures'])} fixtures (matrix={a.matrix}, synth v{m['synth_version']}) -> {a.out}")
+    print(
+        f"built {len(m['fixtures'])} fixtures (matrix={a.matrix}, synth v{m['synth_version']}) -> {a.out}"
+    )
     return 0
 
 

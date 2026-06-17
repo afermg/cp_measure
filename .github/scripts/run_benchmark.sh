@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# Benchmark the PR head's measurement functions against current `main`.
-#
-# Strategy: time every get_* function in two isolated envs on IDENTICAL inputs, where only the
-# measurement code differs. The generator (synth.py) and the bench tooling (_bench/) are vendored
-# from HEAD into both checkouts, so a PR that changes the generator/tooling cannot skew the
-# comparison — only cp_measure.core.* differs between the two runs.
-#
-# Usage: run_benchmark.sh <matrix-preset> <out-dir>   (run from the HEAD checkout; needs origin/main)
+# Time every get_* in two isolated envs on IDENTICAL inputs, where only cp_measure.core differs:
+# HEAD's synth.py + _bench/ are vendored into the main worktree so generator/tooling changes can't
+# skew the comparison. Usage: run_benchmark.sh <matrix-preset> <out-dir> (from HEAD; needs origin/main).
 set -euo pipefail
 
 MATRIX="${1:-ci}"
@@ -15,16 +10,16 @@ HEAD_DIR="$(pwd)"
 WORK="$(mktemp -d)"
 SHARED="$WORK/fixtures"
 mkdir -p "$OUT"
+trap 'git worktree remove --force "$WORK/main" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 # Single-thread timing: representative (the repo forbids in-function parallelism) and low-noise.
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
        NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 NUMBA_NUM_THREADS=1
 
-vendor_tooling() {  # copy HEAD's generator + bench tooling into a worktree so both runs share them
-  local dest="$1"
-  cp "$HEAD_DIR/src/cp_measure/synth.py" "$dest/src/cp_measure/synth.py"
-  rm -rf "$dest/src/cp_measure/_bench"
-  cp -r "$HEAD_DIR/src/cp_measure/_bench" "$dest/src/cp_measure/_bench"
+vendor_tooling() {
+  cp "$HEAD_DIR/src/cp_measure/synth.py" "$1/src/cp_measure/synth.py"
+  rm -rf "$1/src/cp_measure/_bench"
+  cp -r "$HEAD_DIR/src/cp_measure/_bench" "$1/src/cp_measure/_bench"
 }
 
 echo "::group::HEAD env: install, build fixtures, run"
@@ -41,7 +36,6 @@ vendor_tooling "$WORK/main"
 uv venv "$WORK/venv-main"
 uv pip install --python "$WORK/venv-main/bin/python" -e "$WORK/main"
 "$WORK/venv-main/bin/python" -m cp_measure._bench.run --fixtures "$SHARED" --out "$OUT/main.json"
-git worktree remove --force "$WORK/main" || true
 echo "::endgroup::"
 
 echo "::group::compare"
