@@ -51,82 +51,11 @@ References
    Statistics, Moskow, (in Russian)
 """
 
-from typing import Callable
-
 import numpy
 import scipy.ndimage
-import scipy.sparse
 import skimage.morphology
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
-
-
-def _make_fused_upsample_mean(
-    orig_shape, new_shape, orig_mask
-) -> Callable[[NDArray[numpy.floating]], NDArray[numpy.floating]]:
-    """Build a callable ``rec -> per-object mean of rec restored to the original scale``.
-
-    Each granular-spectrum step restores the downsampled reconstruction ``rec`` to the original
-    scale with a bilinear ``scipy.ndimage.map_coordinates`` (order=1) and then takes the
-    per-object mean with ``scipy.ndimage.mean``. Both depend only on ``rec`` (the sampling
-    geometry and the labels are fixed across iterations), and both are linear in ``rec``: every
-    original pixel is a fixed convex combination of four downsampled pixels, and the per-object
-    mean sums those contributions. So the whole "upsample then average per object" is one sparse
-    ``(n_labels x n_downsampled)`` operator, built once here and applied as a single mat-vec per
-    step instead of a full-resolution interpolation + label reduction every iteration.
-
-    The result matches the direct ``map_coordinates`` + ``ndimage.mean`` path to floating-point
-    round-off (~1e-12, sparse-accumulation order), including objects on the last row/column where
-    the source coordinate floats just outside the grid. 2D only; the rarely used 3D path keeps the
-    direct interpolation.
-    """
-    # Fractional source coordinates of every original pixel (same grid map_coordinates uses).
-    i, j = numpy.mgrid[0 : orig_shape[0], 0 : orig_shape[1]].astype(float)
-    i *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
-    j *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
-    # Drop background up front: those pixels carry no object and would be filtered out anyway,
-    # so restrict the four-neighbour expansion to foreground pixels only.
-    labels = orig_mask.ravel()
-    foreground = labels > 0
-    fg_labels = labels[foreground]
-    r, c = i.ravel()[foreground], j.ravel()[foreground]
-    # scipy.ndimage.map_coordinates(mode='constant', cval=0) returns 0 for any source coordinate
-    # outside [0, new-1] — the float-rounded scale can push the last row/col just past new-1
-    # (e.g. 63.0000000000001 for orig 160 -> new 64). Reproduce that by keeping only in-bounds
-    # pixels in the operator; `counts` below still spans ALL foreground, so a dropped pixel
-    # contributes 0 to the numerator but 1 to the denominator, exactly as the direct path does.
-    in_bounds = (r >= 0) & (r <= new_shape[0] - 1) & (c >= 0) & (c <= new_shape[1] - 1)
-    r, c, op_labels = r[in_bounds], c[in_bounds], fg_labels[in_bounds]
-    r0, c0 = numpy.floor(r).astype(int), numpy.floor(c).astype(int)
-    fr, fc = r - r0, c - c0
-    r1 = numpy.minimum(r0 + 1, new_shape[0] - 1)
-    c1 = numpy.minimum(c0 + 1, new_shape[1] - 1)
-    ncols = int(new_shape[1])
-    neighbours = numpy.concatenate(
-        [r0 * ncols + c0, r0 * ncols + c1, r1 * ncols + c0, r1 * ncols + c1]
-    )
-    weights = numpy.concatenate(
-        [(1 - fr) * (1 - fc), (1 - fr) * fc, fr * (1 - fc), fr * fc]
-    )
-    rows = numpy.tile(op_labels, 4)
-    max_label = int(orig_mask.max())
-    objects = slice(
-        1, max_label + 1
-    )  # operator/count rows for real labels; row 0 is background
-    # Row L accumulates sum_{pixel in L} weight; dividing the mat-vec by the pixel count gives
-    # the per-object mean.
-    operator = scipy.sparse.coo_matrix(
-        (weights, (rows, neighbours)),
-        shape=(max_label + 1, int(new_shape[0]) * ncols),
-    ).tocsr()
-    counts = numpy.bincount(labels, minlength=max_label + 1)[objects].astype(float)
-
-    def fused(rec):
-        # counts is 0 for labels absent from the mask, yielding NaN exactly as ndimage.mean does.
-        with numpy.errstate(invalid="ignore"):
-            return (operator @ rec.ravel())[objects] / counts
-
-    return fused
 
 
 def get_granularity(
@@ -324,13 +253,6 @@ def get_granularity(
     current_mean = fix(scipy.ndimage.mean(orig_pixels, orig_mask, range_))
     start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
 
-    # The per-step "restore to original scale + per-object mean" is linear in the
-    # reconstruction and uses fixed geometry, so precompute it once as a sparse operator
-    # (2D only; the 3D path keeps the direct interpolation below).
-    fused_mean = None
-    if pixels.ndim == 2 and unique_labels.any():
-        fused_mean = _make_fused_upsample_mean(orig_shape, new_shape, orig_mask)
-
     results: dict[str, NDArray[numpy.floating]] = {}
     for granularity_id in range(1, ng + 1):
         ero_mask = ero.copy()
@@ -339,21 +261,25 @@ def get_granularity(
         # Reconstruct: undo erosion for pixels that were already small
         rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
 
+        # Restore reconstructed image to original scale to match object labels
+        if pixels.ndim == 2:
+            i, j = numpy.mgrid[0 : orig_shape[0], 0 : orig_shape[1]].astype(float)
+            i *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
+            j *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
+            rec_orig = scipy.ndimage.map_coordinates(rec, (i, j), order=1)
+        else:
+            k, i, j = numpy.mgrid[
+                0 : orig_shape[0], 0 : orig_shape[1], 0 : orig_shape[2]
+            ].astype(float)
+            k *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
+            i *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
+            j *= float(new_shape[2] - 1) / float(orig_shape[2] - 1)
+            rec_orig = scipy.ndimage.map_coordinates(rec, (k, i, j), order=1)
+
         # Calculate the means for the objects
         gss = numpy.zeros((0,))
         if unique_labels.any():
-            if fused_mean is not None:
-                new_mean = fused_mean(rec)
-            else:
-                # 3D: restore reconstructed image to original scale, then per-object means.
-                k, i, j = numpy.mgrid[
-                    0 : orig_shape[0], 0 : orig_shape[1], 0 : orig_shape[2]
-                ].astype(float)
-                k *= float(new_shape[0] - 1) / float(orig_shape[0] - 1)
-                i *= float(new_shape[1] - 1) / float(orig_shape[1] - 1)
-                j *= float(new_shape[2] - 1) / float(orig_shape[2] - 1)
-                rec_orig = scipy.ndimage.map_coordinates(rec, (k, i, j), order=1)
-                new_mean = fix(scipy.ndimage.mean(rec_orig, orig_mask, range_))
+            new_mean = fix(scipy.ndimage.mean(rec_orig, orig_mask, range_))
             gss = (current_mean - new_mean) * 100 / start_mean
             current_mean = new_mean  # update running mean for next iteration
 
