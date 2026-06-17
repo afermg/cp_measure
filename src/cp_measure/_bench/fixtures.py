@@ -24,7 +24,12 @@ DEFAULT_MATRIX = {
     "counts": (16, 48, 96, 144),
     "seeds": (0, 1, 2),
 }
+# CI default: bounded so the full sweep stays well within a hosted runner's memory/time budget
+# (the 2048²×144 corner of DEFAULT can OOM/overrun). Use DEFAULT via workflow_dispatch for depth.
+CI_MATRIX = {"sizes": (512, 1024), "counts": (16, 64), "seeds": (0, 1)}
 SMOKE_MATRIX = {"sizes": (128,), "counts": (4, 8), "seeds": (0,)}
+
+MATRICES = {"default": DEFAULT_MATRIX, "ci": CI_MATRIX, "smoke": SMOKE_MATRIX}
 
 MANIFEST_NAME = "manifest.json"
 
@@ -85,3 +90,19 @@ def load_fixture(fixtures_dir: str | Path, entry: dict, verify: bool = True):
             f"fixture {entry['key']} sha256 mismatch — corrupt or wrong generator"
         )
     return labels, channels
+
+
+def main(argv=None) -> int:
+    import argparse
+
+    p = argparse.ArgumentParser(description="Build the benchmark fixture matrix.")
+    p.add_argument("--out", required=True, help="output directory")
+    p.add_argument("--matrix", default="ci", choices=sorted(MATRICES), help="matrix preset")
+    a = p.parse_args(argv)
+    m = build_fixtures(a.out, MATRICES[a.matrix])
+    print(f"built {len(m['fixtures'])} fixtures (matrix={a.matrix}, synth v{m['synth_version']}) -> {a.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
