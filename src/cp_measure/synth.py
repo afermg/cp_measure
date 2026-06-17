@@ -5,13 +5,15 @@ plus intensity channels, built so that area/shape, intensity and texture feature
 signal:
 
 - **Label mask** — organic, non-convex star-shaped cells (a base radius modulated by a few low
-  Fourier harmonics), placed by dart-throwing with a minimum gap so they are separated (a few may
-  sit close to form clusters, none overlap). Labels are contiguous ``1..n`` (cp_measure's
-  contract) and every object is well above the degenerate-size floor — there are no 1-pixel cells.
+  Fourier harmonics), placed by dart-throwing with a minimum gap so they never overlap. Labels are
+  contiguous ``1..n`` (cp_measure's contract) and every object is well above the degenerate-size
+  floor — there are no 1-pixel cells.
 - **Channels** — a shared smooth envelope over the cells (so intensity is object-correlated) plus,
   per channel, an *independent* field of multi-scale Gaussian splats (large gradients, mid blobs,
-  tiny clustered puncta) and noise. The shared envelope drives a controlled positive correlation
-  between channels (for colocalisation), while the independent splats keep it below 1.
+  tiny puncta) and noise. Splats spread with an unclipped point-spread-like tail, so signal is
+  concentrated in cells but bleeds into the surroundings as in real microscopy. The shared envelope
+  drives a controlled positive correlation between channels (for colocalisation), while the
+  independent splats keep it below 1.
 
 The output is a pure function of ``(image_size, n_objects, n_channels, seed)`` for a fixed
 scipy/skimage build. The result is **reproducible only against a pinned generator version**:
@@ -28,7 +30,7 @@ import numpy
 import scipy.ndimage
 from numpy.typing import NDArray
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Cell geometry. Sizes are fixed in absolute pixels (NOT derived from n_objects) so that sweeping
 # the object-count axis isolates per-object cost without also shrinking the cells.
@@ -101,6 +103,17 @@ def _draw_radii(rng: numpy.random.Generator, n: int) -> NDArray[numpy.float64]:
     return numpy.clip(r, _MIN_RADIUS, _MEAN_RADIUS * _MAX_RADIUS_FACTOR)
 
 
+def _cell_extent(base_r, amps):
+    """Maximum radial reach of an organic cell, ``base_r * (1 + sum|amps|)``.
+
+    The SINGLE definition of how far a cell's boundary can extend — used both for the packing
+    radius (with the worst-case amplitudes) and for the rasterisation window (with the actual
+    drawn amplitudes), so the two can never drift apart and silently break the no-overlap
+    guarantee. ``base_r`` may be a scalar or an array; ``amps`` is summed over its last axis.
+    """
+    return base_r * (1.0 + numpy.sum(numpy.abs(amps)))
+
+
 def _build_label_mask(
     rng: numpy.random.Generator, image_size: int, n_objects: int
 ) -> NDArray[numpy.int32]:
@@ -108,11 +121,13 @@ def _build_label_mask(
     if n_objects == 0:
         return labels
 
-    radii = numpy.sort(_draw_radii(rng, n_objects))[
+    # Stable sort so tied radii order identically across numpy builds (determinism).
+    radii = numpy.sort(_draw_radii(rng, n_objects), kind="stable")[
         ::-1
     ]  # place big cells first (easier packing)
-    # The organic boundary can bulge to this radius, so packing and capacity use the bulge radius.
-    bulge = radii * (1.0 + _N_HARMONICS * _HARMONIC_AMP)
+    # Packing/capacity use the worst-case organic boundary: every harmonic at its extreme amplitude.
+    worst_amps = numpy.full(_N_HARMONICS, _HARMONIC_AMP)
+    bulge = _cell_extent(radii, worst_amps)
 
     halo_area = float(numpy.sum(numpy.pi * (bulge + _GAP) ** 2))
     if halo_area > _FILL_LIMIT * image_size * image_size:
@@ -190,7 +205,7 @@ def _rasterize_cell(
     phases: NDArray[numpy.float64],
 ) -> tuple[NDArray[numpy.bool_], tuple[int, int, int, int]]:
     """Boolean mask of one organic star-shaped cell, plus its ``(y0, x0, y1, x1)`` window."""
-    reach = base_r * (1.0 + numpy.sum(numpy.abs(amps)))
+    reach = _cell_extent(base_r, amps)  # same definition the packing radius uses
     y0 = max(0, int(numpy.floor(cy - reach)))
     x0 = max(0, int(numpy.floor(cx - reach)))
     y1 = min(image_size, int(numpy.ceil(cy + reach)) + 1)
@@ -249,16 +264,17 @@ def _splat_field(
     fg_idx: NDArray[numpy.intp],
     n_splats: int,
 ) -> NDArray[numpy.float64]:
-    """Sum of multi-scale 2D Gaussians stamped inside the cells (intra-object texture signal)."""
+    """Sum of multi-scale 2D Gaussians centred on cell pixels (texture signal; tails bleed past edges)."""
     field = numpy.zeros((image_size, image_size), dtype=numpy.float64)
     if n_splats == 0 or fg_idx.size == 0:
         return field
     picks = fg_idx[rng.integers(0, fg_idx.size, size=n_splats)]
     ys, xs = numpy.divmod(picks, image_size)
     # Scale mixture: tiny puncta dominate (texture), with fewer mid blobs and a few large gradients.
-    scale_choice = rng.choice(
-        numpy.array([1.2, 3.0, 6.0]), size=n_splats, p=[0.6, 0.3, 0.1]
-    )
+    # Inverse-CDF sampling on rng.random (version-stable draw count, unlike rng.choice(p=...)).
+    scales = numpy.array([1.2, 3.0, 6.0])
+    cum_weights = numpy.array([0.6, 0.9, 1.0])
+    scale_choice = scales[numpy.searchsorted(cum_weights, rng.random(n_splats))]
     amps = rng.uniform(0.3, 1.0, size=n_splats)
     for cy, cx, sigma, amp in zip(ys, xs, scale_choice, amps):
         _add_gaussian(field, int(cy), int(cx), float(sigma), float(amp))

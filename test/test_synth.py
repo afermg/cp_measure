@@ -37,6 +37,31 @@ def _per_object_std(img, labels):
     return numpy.asarray(scipy.ndimage.standard_deviation(img, labels, idx))
 
 
+def _radial_roughness(labels):
+    """Per-object coefficient of variation of boundary-pixel distance to the centroid.
+
+    A perfect disk gives ~0 (only pixelation); the Fourier-wobbled cells give a clearly larger
+    value, so this distinguishes organic cells from plain disks where global metrics (solidity,
+    circularity) cannot at this cell size.
+    """
+    fg = labels > 0
+    eroded = scipy.ndimage.grey_erosion(labels, footprint=numpy.ones((3, 3), bool))
+    boundary = fg & (eroded != labels)
+    n = int(labels.max())
+    centroids = numpy.asarray(
+        scipy.ndimage.center_of_mass(fg, labels, numpy.arange(1, n + 1))
+    )
+    ys, xs = numpy.nonzero(boundary)
+    lab = labels[ys, xs] - 1
+    dist = numpy.hypot(ys - centroids[lab, 0], xs - centroids[lab, 1])
+    cv = numpy.zeros(n)
+    for k in range(n):
+        dk = dist[lab == k]
+        if dk.size > 3 and dk.mean() > 0:
+            cv[k] = dk.std() / dk.mean()
+    return cv
+
+
 @pytest.mark.parametrize("size,n", CORNERS)
 def test_deterministic(size, n):
     labels_a, ch_a = synth.generate(size, n, n_channels=2, seed=7)
@@ -88,15 +113,20 @@ def test_no_degenerate_objects(size, n):
 
 
 def test_shape_variety_is_organic():
-    # Multi-object config: cells must vary in elongation and be non-convex (organic), not disks.
+    # Multi-object config: cells must vary in elongation/size AND have non-circular boundaries.
     labels, _ = synth.generate(*MID, n_channels=2, seed=0)
-    rp = regionprops_table(labels, properties=("eccentricity", "solidity", "area"))
+    rp = regionprops_table(labels, properties=("eccentricity", "area"))
     assert rp["eccentricity"].max() - rp["eccentricity"].min() > 0.2, (
         "shapes too uniform"
     )
-    assert rp["solidity"].min() < 0.99, "boundaries are convex disks, not organic cells"
     areas = rp["area"]
     assert areas.max() / areas.min() > 2.0, "no size variety (big vs tiny cells)"
+    # Boundaries must be organically wavy, not disks. At this config plain disks give a median
+    # radial CV <=0.057 and the harmonic-wobbled cells >=0.082 (measured over 8 seeds); 0.07 sits
+    # between, so a regression that drops the harmonics (disks) fails this assert.
+    assert numpy.median(_radial_roughness(labels)) > 0.07, (
+        "boundaries are circular, not organic"
+    )
 
 
 @pytest.mark.parametrize("size,n", CORNERS)
@@ -109,10 +139,14 @@ def test_intensity_is_object_correlated(size, n):
 
 @pytest.mark.parametrize("size,n", CORNERS)
 def test_texture_signal_within_objects(size, n):
-    # Haralick/texture features need intra-object intensity structure: per-object std must be > 0.
+    # Haralick/texture features need real intra-object structure, not just read-noise. Per-object
+    # std must sit well ABOVE the noise floor (median ~0.45 vs noise 0.05); a flat-objects
+    # regression (splats removed) would collapse this to ~noise and fail.
     labels, channels = synth.generate(size, n, n_channels=2, seed=4)
     stds = _per_object_std(channels[0], labels)
-    assert numpy.all(stds > 0), "objects are flat — no texture signal"
+    assert numpy.median(stds) > 5 * synth._NOISE_LEVEL, (
+        "objects flat — no texture above noise"
+    )
 
 
 @pytest.mark.parametrize("size,n", CORNERS)
@@ -132,7 +166,9 @@ def test_channel_correlation_band_seed_averaged():
         labels, channels = synth.generate(*MID, n_channels=2, seed=seed)
         fg = labels > 0
         rs.append(numpy.corrcoef(channels[0][fg], channels[1][fg])[0, 1])
-    assert 0.4 <= numpy.mean(rs) <= 0.7
+    # Wider than the observed ~0.61 so a legitimate constant re-tune doesn't flip the test, but
+    # still pins the controlled mid-band (not ~0 decorrelated, not ~1 identical).
+    assert 0.35 <= numpy.mean(rs) <= 0.8
 
 
 def test_single_channel_for_core_features():
