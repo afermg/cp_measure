@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Benchmark head vs main
-        run: bash .github/scripts/run_benchmark.sh ci bench-out
+        run: bash .github/scripts/run_benchmark.sh bench-out "${{ github.event.pull_request.head.sha }}"
       - name: Post sticky comment
         env:
           GH_TOKEN: ${{ github.token }}
