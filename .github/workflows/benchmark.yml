@@ -1,0 +1,91 @@
+name: benchmark
+
+# Times every public get_* function on the PR head vs current `main` and posts a sticky comment.
+#
+# Security model (two-job split):
+#  - `build` runs untrusted PR code (pip install + the functions) with `permissions: {}` — NO token,
+#    nothing to steal, persist-credentials disabled. Labels can only be applied by users with write
+#    access, so the label trigger is inherently maintainer-gated.
+#  - `report` holds the write token but NEVER checks out PR code; it only renders the artifact.
+#
+# Test the workflow itself with `workflow_dispatch` (pull_request_target always runs the base copy).
+
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      head_ref:
+        description: branch or SHA to benchmark vs main
+        required: true
+      pr:
+        description: PR number to comment on (optional)
+        required: false
+      matrix:
+        description: matrix preset (ci | default | smoke)
+
+permissions: {}
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number || github.event.inputs.pr || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'benchmark' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions: {} # untrusted PR code runs here with no token
+    steps:
+      - name: Checkout main (trusted tooling + baseline)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Benchmark PR head vs main
+        run: >-
+          bash .github/scripts/run_benchmark.sh
+          "${{ github.event.inputs.matrix || 'ci' }}"
+          "${{ github.event.pull_request.head.sha || github.event.inputs.head_ref }}"
+          bench-out
+      - name: Record PR number for the report job
+        run: echo "${{ github.event.pull_request.number || github.event.inputs.pr }}" > bench-out/pr.txt
+      - uses: actions/upload-artifact@v4
+        if: always() # surface partial output even if the benchmark step fails
+        with:
+          name: bench-out
+          path: bench-out/
+
+  report:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write # PR labels/comments go through the issues API
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bench-out
+          path: bench-out
+      - name: Post sticky comment and remove the trigger label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PR="$(tr -d '[:space:]' < bench-out/pr.txt)"
+          if [ -z "$PR" ]; then echo "no PR number; nothing to post"; exit 0; fi
+          { echo '<!-- cp-bench -->'; echo; cat bench-out/table.md; } > bench-out/comment.md
+          CID="$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" \
+                 --jq 'map(select(.body | startswith("<!-- cp-bench -->")))[0].id // empty')"
+          if [ -n "$CID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$CID" -F body=@bench-out/comment.md >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@bench-out/comment.md >/dev/null
+          fi
+          # Remove the trigger label so re-labelling can re-run (label path only; ignore on dispatch).
+          gh api -X DELETE "repos/$REPO/issues/$PR/labels/benchmark" >/dev/null 2>&1 || true
