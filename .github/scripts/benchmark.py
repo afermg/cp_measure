@@ -10,8 +10,6 @@ deterministic), then compare. The driver installs each env; this script only nee
 importable plus numpy.
 """
 
-from __future__ import annotations
-
 import os
 
 for _v in (
@@ -41,7 +39,7 @@ AFFECTED = 1.05  # report a function if any cell moves by this factor either way
 
 
 # --- synthetic generator: n ellipses on a grid + random Gaussian blobs per channel --------------
-def generate(size: int, n: int, n_channels: int = 2, seed: int = 0):
+def generate(size: int, n: int, seed: int = 0):
     rng = numpy.random.default_rng(seed)
     yy, xx = numpy.mgrid[0:size, 0:size]
     labels = numpy.zeros((size, size), numpy.int32)
@@ -54,7 +52,7 @@ def generate(size: int, n: int, n_channels: int = 2, seed: int = 0):
             cy, cx = (r + 0.5) * size / rows, (c + 0.5) * size / cols
             labels[((yy - cy) / a) ** 2 + ((xx - cx) / b) ** 2 <= 1] = k + 1
     channels = []
-    for _ in range(n_channels):
+    for _ in range(2):  # ch0 → core features, ch0+ch1 → colocalisation
         img = numpy.zeros((size, size))
         for _ in range(BLOBS_PER_CHANNEL):
             cy, cx = rng.uniform(0, size, 2)
@@ -125,7 +123,7 @@ def run(out_path: str):
     for size in MATRIX["sizes"]:
         for n in MATRIX["counts"]:
             for seed in MATRIX["seeds"]:
-                labels, channels = generate(size, n, 2, seed)
+                labels, channels = generate(size, n, seed)
                 imgs = (_norm01(channels[0]), _norm01(channels[1]))
                 key = f"s{size}_n{n}_seed{seed}"
                 cells.append({"key": key, "size": size, "n_objects": n})

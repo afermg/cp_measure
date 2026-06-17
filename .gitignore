@@ -2,6 +2,5 @@ __pycache__/
 /.agent-shell/
 .pre-commit-config.yaml
 
-# local benchmark artifacts
+# local benchmark output
 bench-out/
-*.npz
