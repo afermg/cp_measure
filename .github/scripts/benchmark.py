@@ -37,7 +37,7 @@ import numpy  # noqa: E402
 MATRIX = {"sizes": (256, 512, 1024), "counts": (16, 64, 256), "seeds": (0, 1, 2)}
 BLOBS_PER_CHANNEL = 5
 WARMUP, REPS, TIMEOUT = 1, 3, 120.0
-AFFECTED = 1.1  # a function is "affected" if its best speedup reaches this
+AFFECTED = 1.05  # report a function if any cell moves by this factor either way (faster or slower)
 
 
 # --- synthetic generator: n ellipses on a grid + random Gaussian blobs per channel --------------
@@ -163,24 +163,26 @@ def compare(base: dict, head: dict, commit: str = "") -> str:
     out = [
         f"### Benchmark — {ref} vs `main`",
         "",
-        f"`speedup = main/head` · median per cell · showing functions ≥ {AFFECTED:.1f}× faster",
+        f"`speedup = main/head` (>1 faster, <1 slower) · median per cell · "
+        f"showing functions that moved ≥{AFFECTED:.2f}× either way",
     ]
 
+    lo = 1.0 / AFFECTED  # a cell at or below this is a regression worth reporting
     affected = []  # (function, {(size, count): speedup})
     for fn in sorted(hr):
-        grid, best = {}, 0.0
+        grid, speedups = {}, []
         for size in sizes:
             for n in counts:
                 m = _median_ms(br.get(fn, {}), groups.get((size, n), []))
                 h = _median_ms(hr[fn], groups.get((size, n), []))
                 grid[(size, n)] = (m / h) if (m and h) else None
                 if grid[(size, n)]:
-                    best = max(best, grid[(size, n)])
-        if best >= AFFECTED:
+                    speedups.append(grid[(size, n)])
+        if speedups and (max(speedups) >= AFFECTED or min(speedups) <= lo):
             affected.append((fn, grid))
 
     if not affected:
-        out += ["", f"_No function changed by ≥{AFFECTED:.1f}×._"]
+        out += ["", f"_No function moved by ≥{AFFECTED:.2f}× (faster or slower)._"]
         return "\n".join(out)
 
     for fn, grid in affected:
