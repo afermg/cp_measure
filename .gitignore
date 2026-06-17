@@ -5,3 +5,7 @@ bench-out/
 *.npz
 /.agent-shell/
 .pre-commit-config.yaml
+
+# scratch / agent
+tasks/
+.claude/
