@@ -27,7 +27,7 @@ vendor_tooling() { # copy main's generator + bench tooling into the head worktre
 
 echo "::group::main env: install, build fixtures, run"
 uv venv "$WORK/venv-main"
-uv pip install --python "$WORK/venv-main/bin/python" -e "$MAIN_DIR"
+uv pip install --python "$WORK/venv-main/bin/python" -e "$MAIN_DIR" six
 "$WORK/venv-main/bin/python" -m cp_measure._bench.fixtures --out "$SHARED" --matrix "$MATRIX"
 "$WORK/venv-main/bin/python" -m cp_measure._bench.run --fixtures "$SHARED" --out "$OUT/main.json"
 echo "::endgroup::"
@@ -37,7 +37,7 @@ git fetch --no-tags --depth=1 origin "$HEAD_REF"
 git worktree add --detach "$WORK/head" FETCH_HEAD
 vendor_tooling "$WORK/head"
 uv venv "$WORK/venv-head"
-uv pip install --python "$WORK/venv-head/bin/python" -e "$WORK/head"
+uv pip install --python "$WORK/venv-head/bin/python" -e "$WORK/head" six
 "$WORK/venv-head/bin/python" -m cp_measure._bench.run --fixtures "$SHARED" --out "$OUT/head.json"
 echo "::endgroup::"
 
