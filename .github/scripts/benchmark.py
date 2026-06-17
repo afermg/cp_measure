@@ -34,7 +34,7 @@ from time import perf_counter  # noqa: E402
 
 import numpy  # noqa: E402
 
-MATRIX = {"sizes": (256, 512, 1024, 2048), "counts": (16, 64), "seeds": (0,)}
+MATRIX = {"sizes": (256, 512, 1024, 2048), "counts": (16, 64, 256), "seeds": (0, 1, 2)}
 BLOBS_PER_CHANNEL = 5
 WARMUP, REPS, TIMEOUT = 1, 3, 120.0
 AFFECTED = 1.1  # a function is "affected" if its best speedup reaches this
@@ -140,16 +140,15 @@ def run(out_path: str):
 
 
 # --- compare ------------------------------------------------------------------------------------
-def _stats(results_for_fn: dict, keys: list[str]):
+def _median_ms(results_for_fn: dict, keys: list[str]):
+    """Median (ms) over all ok rep times in a cell's seeds, or None."""
     times = [
         t
         for k in keys
         if results_for_fn.get(k, {}).get("status") == "ok"
         for t in results_for_fn[k]["reps"]
     ]
-    if not times:
-        return None
-    return statistics.mean(times) * 1e3, min(times) * 1e3, max(times) * 1e3
+    return statistics.median(times) * 1e3 if times else None
 
 
 def compare(base: dict, head: dict, commit: str = "") -> str:
@@ -164,7 +163,7 @@ def compare(base: dict, head: dict, commit: str = "") -> str:
     out = [
         f"### Benchmark — {ref} vs `main`",
         "",
-        "`speedup = main/head` (>1 = faster)",
+        f"`speedup = main/head` · median per cell · showing functions ≥ {AFFECTED:.1f}× faster",
     ]
 
     affected = []  # (function, {(size, count): speedup})
@@ -172,9 +171,9 @@ def compare(base: dict, head: dict, commit: str = "") -> str:
         grid, best = {}, 0.0
         for size in sizes:
             for n in counts:
-                m = _stats(br.get(fn, {}), groups.get((size, n), []))
-                h = _stats(hr[fn], groups.get((size, n), []))
-                grid[(size, n)] = (m[0] / h[0]) if (m and h) else None
+                m = _median_ms(br.get(fn, {}), groups.get((size, n), []))
+                h = _median_ms(hr[fn], groups.get((size, n), []))
+                grid[(size, n)] = (m / h) if (m and h) else None
                 if grid[(size, n)]:
                     best = max(best, grid[(size, n)])
         if best >= AFFECTED:
