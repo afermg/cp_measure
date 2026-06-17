@@ -64,13 +64,15 @@ will be positive, but there may not be a corresponding
 
 """
 
+from typing import Union
+
 import numpy
 import scipy
 import scipy.ndimage
 import scipy.signal
 import skimage.morphology
 from centrosome.cpmorphology import centers_of_labels, strel_disk
-from centrosome.cpmorphology import fixup_scipy_ndimage_result as fix
+from cp_measure.utils import _ensure_np_array as fix
 from centrosome.outline import outline
 
 D_ADJACENT = "Adjacent"
@@ -106,7 +108,7 @@ def measureobjectneighbors(
     masks2: numpy.ndarray,
     distance_method: str = D_EXPAND,
     distance: int = 5,
-) -> dict[str, list[float | int]]:
+) -> dict[str, list[Union[float, int]]]:
     """
     Calculate neighbors of objects based on different methods. Supports 3D masks.
 
@@ -146,8 +148,6 @@ def measureobjectneighbors(
     -------
     List of dictionaries with overlap features.
     """
-    dimensions = masks1.ndim
-    # has_pixels = masks.any()
     dimensions = masks1.ndim
     # has_pixels = masks.any()
     labels = masks1

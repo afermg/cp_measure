@@ -5,8 +5,8 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
-
 from cp_measure.utils import masks_to_ijv
+from numpy.typing import NDArray
 
 """"
 ============ ============ ===============
@@ -90,13 +90,15 @@ MEASUREMENT_ALIASES = {
 
 
 def get_radial_distribution(
-    labels: numpy.ndarray,
-    pixels: numpy.ndarray,
+    labels: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
     scaled: bool = True,
     bin_count: int = 4,
     maximum_radius: int = 100,
-):
+) -> dict[str, NDArray[numpy.floating]]:
     """
+    Radial features (2D only)
+
     zernike_degree : int
         Maximum zernike moment.
 
@@ -132,11 +134,15 @@ def get_radial_distribution(
         radius will be counted in an overflow bin. The radius is measured in pixels.
     """
 
+    if labels.ndim == 3:
+        return {}
+
     if labels.dtype == bool:
         labels = labels.astype(numpy.integer)
 
     unique_labels = numpy.unique(labels)
-    nobjects = len(unique_labels[unique_labels > 0])
+    unique_labels = unique_labels[unique_labels > 0]
+    nobjects = len(unique_labels)
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
 
     # Find the point in each object farthest away from the edge.
@@ -152,7 +158,7 @@ def get_radial_distribution(
         # d_to_edge, labels, indices=[1]
         d_to_edge,
         labels,
-        indices=[1],
+        indices=unique_labels,
     )
 
     center_labels = numpy.zeros(labels.shape, int)
@@ -173,13 +179,13 @@ def get_radial_distribution(
 
     for color in range(1, ncolors + 1):
         mask = colors == color
-        l, d = centrosome.propagate.propagate(
+        l_, d = centrosome.propagate.propagate(
             numpy.zeros(center_labels.shape), center_labels, mask, 1
         )
 
         d_from_center[mask] = d[mask]
 
-        cl[mask] = l[mask]
+        cl[mask] = l_[mask]
 
     good_mask = cl > 0
 
@@ -223,7 +229,7 @@ def get_radial_distribution(
     fraction_at_distance = histogram / sum_by_object_per_bin
 
     number_at_distance = scipy.sparse.coo_matrix(
-        (numpy.ones(ngood_pixels), labels_and_bins), (nobjects, bin_count + 1)
+        (numpy.ones(int(ngood_pixels)), labels_and_bins), (nobjects, bin_count + 1)
     ).toarray()
 
     sum_by_object = numpy.sum(number_at_distance, 1)
@@ -276,7 +282,9 @@ def get_radial_distribution(
 
         mask = pixel_count == 0
 
-        radial_means = numpy.ma.masked_array(radial_values / pixel_count, mask)
+        radial_means: numpy.ma.MaskedArray = numpy.ma.masked_array(
+            radial_values / pixel_count, mask
+        )
 
         radial_cv = numpy.std(radial_means, 1) / numpy.mean(radial_means, 1)
 
@@ -298,23 +306,22 @@ def get_radial_distribution(
 
 
 def get_radial_zernikes(
-    labels: numpy.ndarray, pixels: numpy.ndarray, zernike_degree: int = 9
-):
+    labels: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
+    zernike_degree: int = 9,
+) -> dict[str, NDArray[numpy.floating]]:
+    # Radial Zernike features (2D only)
+    if labels.ndim == 3:
+        return {}
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
     unique_labels = numpy.unique(labels)  # Will be used later for scipy.ndimage.sum
     unique_labels = unique_labels[unique_labels > 0]
     # MODIFIED: Delegate index generation to the minimum_enclosing_circle
-    # TODO: Check that this has the correct dimensions
-    ij = numpy.zeros((len(unique_labels) + 1, 2))
-    r = numpy.zeros((len(unique_labels) + 1))
     # MODIFIED: We assume non-overlapping labels for now
     # TODO Support label overlap (i.e., format in ijv)
     # MODIFIED: Delegate indexes to minimum_enclosing_circle
-    for index, _ in enumerate(unique_labels, 1):
-        ij_, r_ = centrosome.cpmorphology.minimum_enclosing_circle(labels, [index])
-        ij[[index]] = ij_
-        r[[index]] = r_
+    ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels, unique_labels)
 
     #
     # Then compute x and y, the position of each labeled pixel
@@ -322,10 +329,9 @@ def get_radial_zernikes(
     #
     ijv = masks_to_ijv(labels)
 
-    # MODIFIED: TODO double-check check that this -1 makes sense! `l` is used as indices later on
-    l = ijv[:, 2]
+    l_ = ijv[:, 2]  # (N,1) vector with labels
 
-    yx = (ijv[:, :2] - ij[l, :]) / r[l, numpy.newaxis]
+    yx = (ijv[:, :2] - ij[l_ - 1, :]) / r[l_ - 1, numpy.newaxis]
 
     z = centrosome.zernike.construct_zernike_polynomials(
         yx[:, 1], yx[:, 0], zernike_indexes
@@ -336,12 +342,12 @@ def get_radial_zernikes(
     # ijv_mask[ijv_mask] = pixels[ijv[ijv_mask,0], ijv[ijv_mask, 1]]
 
     yx = yx[ijv_mask, :]
-    l_ = l[ijv_mask]
+    l_ = l_[ijv_mask]
     z_ = z[ijv_mask, :]
 
+    results: dict[str, NDArray[numpy.floating]] = {}
     if len(l_) == 0:
         # Cover fringe case in which all labels were filtered out
-        results = {}
         for mag_or_phase in ("Magnitude", "Phase"):
             for n, m in zernike_indexes:
                 name = f"{M_CATEGORY}_Zernike{mag_or_phase}_{n}_{m}"
@@ -358,7 +364,6 @@ def get_radial_zernikes(
         # n - the radial moment of the Zernike
         # m - the azimuthal moment of the Zernike
         #
-        results = {}
         for i, (n, m) in enumerate(zernike_indexes):
             vr = scipy.ndimage.sum_labels(
                 pixels[ijv[:, 0], ijv[:, 1]] * z_[:, i].real,

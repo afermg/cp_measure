@@ -5,6 +5,23 @@ Utilities reused in multiple measurements.
 import numpy
 
 
+def _ensure_np_array(value):
+    """Convert a result from scipy.ndimage to a numpy array
+
+    scipy.ndimage has the annoying habit of returning a single, bare
+    value instead of an array if the indexes passed in are of length 1.
+    For instance:
+    scind.maximum(image, labels, [1]) returns a float
+    but
+    scind.maximum(image, labels, [1,2]) returns a list
+    """
+    return numpy.array([value]) if numpy.isscalar(value) else numpy.array(value)
+
+
+def _ensure_np_scalar(value):
+    return value if numpy.isscalar(value) else numpy.array(value).squeeze()
+
+
 def get_test_pixels_mask():
     pixels = numpy.random.randint(100, size=64**2).reshape((64, 64))
     mask = numpy.zeros_like(pixels, dtype=bool)
@@ -14,22 +31,13 @@ def get_test_pixels_mask():
 
 def masks_to_ijv(masks: numpy.ndarray) -> numpy.ndarray:
     """
-    input: 2d boolean array
-    output: (n, 3) integer array following (i,j,1)
+    input: 2d integer label array
+    output: (n, 3) integer array of rows (i, j, label) sorted by label
     """
-
-    # Extract coordinates of object from boolean mask
-    masks_ijv = numpy.empty((0, 3), dtype=int)
-    for label in range(masks.max()):
-        i, j = numpy.where(masks == label + 1)
-        n = len(i)
-        ijv = numpy.empty((n, 3), dtype=int)
-        ijv[:, 0] = i
-        ijv[:, 1] = j
-        ijv[:, 2] = label + 1
-        masks_ijv = numpy.concatenate((masks_ijv, ijv))
-
-    return masks_ijv
+    i, j = numpy.nonzero(masks)
+    v = masks[i, j]
+    order = numpy.argsort(v, kind="stable")
+    return numpy.column_stack((i[order], j[order], v[order])).astype(int, copy=False)
 
 
 def labels_to_binmasks(masks: numpy.ndarray) -> numpy.ndarray:
@@ -39,5 +47,5 @@ def labels_to_binmasks(masks: numpy.ndarray) -> numpy.ndarray:
     Returns a list of binary masks.
     """
     labels = numpy.unique(masks)
-    labels = sorted(labels[labels > 0])
-    return [(masks == i) for i in labels]
+    labels = labels[labels > 0]
+    return masks == labels.reshape((-1,) + (1,) * masks.ndim)

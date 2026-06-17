@@ -1,5 +1,7 @@
 from typing import Optional
 
+from numpy.typing import NDArray
+
 import centrosome.cpmorphology
 import centrosome.zernike
 import numpy
@@ -565,12 +567,12 @@ new_features : bool, optional
 
 
 def get_sizeshape(
-    masks: numpy.ndarray,
-    pixels: numpy.ndarray,
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None,
     calculate_advanced: bool = True,
     new_features: bool = True,
-    spacing: Optional[tuple] = None,
-):
+    spacing: Optional[tuple[float, ...]] = None,
+) -> dict[str, NDArray[numpy.floating]]:
     """Compute the measurements for multiple object masks."""
     # Properties available for both 2d and 3d
     desired_properties = [
@@ -628,7 +630,7 @@ def get_sizeshape(
 
     labels = masks
     nobjects = (numpy.unique(masks) > 0).sum()
-    results = {}
+    results: dict[str, NDArray[numpy.floating]] = {}
     if labels.ndim == 2:
         props = skimage.measure.regionprops_table(
             labels, pixels, properties=desired_properties
@@ -642,18 +644,14 @@ def get_sizeshape(
         median_radius = numpy.zeros(nobjects)
         mean_radius = numpy.zeros(nobjects)
         for index, mini_image in enumerate(props["image"]):
-            # Pad image to assist distance tranform
+            # Pad image to assist distance transform
             mini_image = numpy.pad(mini_image, 1)
             distances = scipy.ndimage.distance_transform_edt(mini_image)
-            max_radius[index] = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.maximum(distances, mini_image)
-            )
-            mean_radius[index] = centrosome.cpmorphology.fixup_scipy_ndimage_result(
-                scipy.ndimage.mean(distances, mini_image)
-            )
-            median_radius[index] = centrosome.cpmorphology.median_of_labels(
-                distances, mini_image.astype("int"), [1]
-            )
+
+            inside = distances[mini_image]
+            max_radius[index] = inside.max()
+            mean_radius[index] = inside.mean()
+            median_radius[index] = numpy.median(inside)
 
         results |= {
             F_AREA: props["area"],
@@ -764,7 +762,7 @@ def get_sizeshape(
             slices = tuple(
                 slice(
                     max(props[f"bbox-{i}"][idx] - 1, 0),
-                    min(props[f"bbox-{i+3}"][idx] + 1, labels.shape[i]),
+                    min(props[f"bbox-{i + 3}"][idx] + 1, labels.shape[i]),
                 )
                 for i in range(3)
             )
@@ -1005,10 +1003,16 @@ def get_sizeshape(
     return results
 
 
-def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: int = 9):
+def get_zernike(
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None,
+    zernike_numbers: int = 9,
+) -> dict[str, NDArray[numpy.floating]]:
     #
-    # Zernike features
+    # Zernike features (2D only)
     #
+    if masks.ndim == 3:
+        return {}
     unique_indices = numpy.unique(masks)
     unique_indices = unique_indices[unique_indices > 0]
     indices = list(range(1, len(unique_indices) + 1))
@@ -1017,13 +1021,18 @@ def get_zernike(masks: numpy.ndarray, pixels: numpy.ndarray, zernike_numbers: in
 
     zf_l = centrosome.zernike.zernike(zernike_numbers, labels, indices)
     results = {}
-    for (n, m), z in zip(zernike_numbers, zf_l.transpose()):
+    for (n, m), z in zip(zernike_numbers, zf_l.transpose()):  # type: ignore[call-overload]
         results[f"Zernike_{n}_{m}"] = z
 
     return results
 
 
-def get_ferret(masks: numpy.ndarray, pixels: numpy.ndarray):
+def get_feret(
+    masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
+) -> dict[str, NDArray[numpy.floating]]:
+    # Feret diameter (2D only)
+    if masks.ndim == 3:
+        return {}
     ijv = masks_to_ijv(masks)
     indices = numpy.unique(ijv[:, 2])
     indices = indices[indices > 0]
