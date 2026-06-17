@@ -1,11 +1,7 @@
-"""Acceptance tests for the synthetic benchmark generator ``cp_measure.synth``.
-
-These replace the (non-reproducible) "eyeball the rendered examples" gate from the design plan
-with programmatic asserts run at the **matrix corners** — the smallest image at the highest
-object count and the largest image at the lowest — where the generator is most likely to
-degenerate. They lock the guarantees the benchmark harness relies on: determinism, contiguous
-labels with the requested object count, no degenerate (≈1px) objects, real shape/texture/intensity
-signal, and a controlled (non-trivial, sub-unity) cross-channel correlation for colocalisation.
+"""Acceptance asserts for ``cp_measure.synth``, run at the matrix corners (smallest-image/highest-
+count and largest-image/lowest-count, where the generator is likeliest to degenerate): determinism,
+contiguous ``1..n`` labels, no ~1px objects, real shape/texture/intensity signal, and a controlled
+sub-unity cross-channel correlation.
 """
 
 import numpy

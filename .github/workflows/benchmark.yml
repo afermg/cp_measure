@@ -23,7 +23,6 @@ on:
         required: false
       matrix:
         description: matrix preset (ci | default | smoke)
-        default: ci
 
 permissions: {}
 
@@ -53,6 +52,7 @@ jobs:
       - name: Record PR number for the report job
         run: echo "${{ github.event.pull_request.number || github.event.inputs.pr }}" > bench-out/pr.txt
       - uses: actions/upload-artifact@v4
+        if: always() # surface partial output even if the benchmark step fails
         with:
           name: bench-out
           path: bench-out/
@@ -74,11 +74,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          PR="$(cat bench-out/pr.txt | tr -d '[:space:]')"
+          PR="$(tr -d '[:space:]' < bench-out/pr.txt)"
           if [ -z "$PR" ]; then echo "no PR number; nothing to post"; exit 0; fi
           { echo '<!-- cp-bench -->'; echo; cat bench-out/table.md; } > bench-out/comment.md
-          CID="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                 --jq '.[] | select(.body | startswith("<!-- cp-bench -->")) | .id' | head -n1)"
+          CID="$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" \
+                 --jq 'map(select(.body | startswith("<!-- cp-bench -->")))[0].id // empty')"
           if [ -n "$CID" ]; then
             gh api -X PATCH "repos/$REPO/issues/comments/$CID" -F body=@bench-out/comment.md >/dev/null
           else

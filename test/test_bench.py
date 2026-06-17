@@ -58,7 +58,7 @@ def test_enumerate_covers_core_and_correlation():
 def test_run_times_all_functions(tmp_path):
     fixtures.build_fixtures(tmp_path, SMOKE)
     out = run.run(tmp_path, tmp_path / "r.json", warmup=0, reps=1, timeout=60)
-    assert out["meta"]["threads"]["OMP_NUM_THREADS"] == "1"
+    assert out["meta"]["threads"] == "1"
     # every function timed on every fixture, and texture (needs [0,1] norm) is among the ok cells.
     statuses = [c["status"] for fn in out["results"].values() for c in fn.values()]
     assert statuses and all(s == "ok" for s in statuses)
@@ -150,8 +150,9 @@ def test_render_markdown_has_legend_and_rows():
     md = compare.render_markdown(
         compare.compare(base, head), base["meta"], head["meta"]
     )
-    assert "speedup = main_time / head_time" in md
+    assert "speedup = main/head" in md
     assert "`a`" in md and "2.00×" in md
+    assert "| status |" in md  # the status column is labelled
 
 
 def test_compare_cli(tmp_path):

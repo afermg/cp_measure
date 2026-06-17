@@ -1,2 +1,5 @@
 __pycache__/
 *.py[cod]
+# local benchmark artifacts
+bench-out/
+*.npz
