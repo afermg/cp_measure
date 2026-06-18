@@ -248,8 +248,6 @@ def get_granularity(
     # Per-object stats use original-scale labels so the cell boundaries are exact.
     # start_mean uses the raw (non-background-subtracted) original pixels, matching
     # CellProfiler's ObjectRecord initialisation which also uses im_pixel_data directly.
-    unique_labels = numpy.unique(orig_mask)
-    unique_labels = unique_labels[unique_labels > 0]
     range_ = numpy.arange(1, numpy.max(orig_mask) + 1)
 
     current_mean = fix(scipy.ndimage.mean(orig_pixels, orig_mask, range_))
@@ -280,7 +278,7 @@ def get_granularity(
 
         # Calculate the means for the objects
         gss = numpy.zeros((0,))
-        if unique_labels.any():
+        if range_.size:
             new_mean = fix(scipy.ndimage.mean(rec_orig, orig_mask, range_))
             gss = (current_mean - new_mean) * 100 / start_mean
             current_mean = new_mean  # update running mean for next iteration

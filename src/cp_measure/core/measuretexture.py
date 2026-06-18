@@ -194,9 +194,6 @@ def get_texture(
     CellProfiler 3 versions it was fixed at 256.  The minimum number of levels is
     2, the maximum is 256.
     """
-    unique_labels = numpy.unique(masks)
-    unique_labels = unique_labels[unique_labels > 0]
-
     # Modified to use the number of dimensions in pixels to determine the number of directions
     n_directions = 13 if pixels.ndim > 2 else 4
 
@@ -213,7 +210,7 @@ def get_texture(
         ).astype(numpy.uint8)
     props = skimage.measure.regionprops(masks, pixels)
 
-    features = numpy.empty((n_directions, 13, len(unique_labels)))
+    features = numpy.empty((n_directions, 13, len(props)))
 
     for index, prop in enumerate(props):
         label_data = prop["intensity_image"]

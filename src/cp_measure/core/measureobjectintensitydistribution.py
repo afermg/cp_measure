@@ -142,9 +142,8 @@ def get_radial_distribution(
     if labels.dtype == bool:
         labels = labels.astype(numpy.integer)
 
-    unique_labels = numpy.unique(labels)
-    unique_labels = unique_labels[unique_labels > 0]
-    nobjects = len(unique_labels)
+    nobjects = int(labels.max())
+    unique_labels = numpy.arange(1, nobjects + 1)
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
 
     # Find the point in each object farthest away from the edge.
@@ -318,8 +317,7 @@ def get_radial_zernikes(
         return {}
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
 
-    unique_labels = numpy.unique(labels)  # Will be used later for scipy.ndimage.sum
-    unique_labels = unique_labels[unique_labels > 0]
+    unique_labels = numpy.arange(1, int(labels.max()) + 1)
     # MODIFIED: Delegate index generation to the minimum_enclosing_circle
     # MODIFIED: We assume non-overlapping labels for now
     # TODO Support label overlap (i.e., format in ijv)
