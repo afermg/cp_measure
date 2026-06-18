@@ -1,9 +1,9 @@
 """Numba segment kernels (single-threaded, cached).
 
 These are the numba implementation of the segment-reduce / segment-quantile
-primitives. They loop over the flat ``(values, seg0, coords)`` arrays produced
-by :mod:`cp_measure.primitives.segment` — no image shape, no batch axis — so one
-kernel set covers 2D, 3D, and (future) batched inputs unchanged.
+primitives. They loop over the flat ``(values, seg0, coords)`` arrays that
+:func:`flatten_numba` builds — no image shape, no batch axis — so one kernel set
+covers 2D, 3D, and (future) batched inputs unchanged.
 
 All kernels are ``@njit(cache=True)`` and serial: no ``prange``/``nogil``.
 Parallelism is the job of the (future) batch layer over images, not the kernel.
