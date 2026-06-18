@@ -169,6 +169,27 @@ def test_featurizer_gapped_reports_original_ids():
     np.testing.assert_allclose(data_g, data_c, equal_nan=True)
 
 
+def test_featurizer_sanitizes_once_per_mask(monkeypatch):
+    # featurize() sanitizes up front and calls the raw functions, so the cost is
+    # paid once per object-type mask — not again in every feature's decorator.
+    import cp_measure._sanitize as _san
+    import cp_measure.featurizer as _fz
+
+    calls = []
+    real = _san.sanitize_masks
+
+    def counting(m):
+        calls.append(1)
+        return real(m)
+
+    monkeypatch.setattr(_san, "sanitize_masks", counting)
+    monkeypatch.setattr(_fz, "sanitize_masks", counting)
+    image = np.stack([PIX1, PIX2], axis=0)
+    config = make_featurizer_config(["DNA", "ER"])
+    featurize(image, GAPPED[np.newaxis], config)
+    assert len(calls) == 1
+
+
 def test_featurizer_does_not_mutate_input():
     image = np.stack([PIX1, PIX2], axis=0)
     config = make_featurizer_config(["DNA", "ER"])
