@@ -14,6 +14,8 @@ import numpy
 import skimage.segmentation
 from numpy.typing import NDArray
 
+from cp_measure._sanitize import sanitize_labels
+
 from cp_measure.core.measureobjectintensity import (
     C_LOCATION,
     INTEGRATED_INTENSITY,
@@ -50,6 +52,7 @@ from cp_measure.primitives._segment_numba import (
 )
 
 
+@sanitize_labels
 def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],

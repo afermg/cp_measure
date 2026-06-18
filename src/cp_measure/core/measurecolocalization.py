@@ -86,6 +86,8 @@ import scipy.ndimage
 import scipy.stats
 from scipy.linalg import lstsq
 
+from cp_measure._sanitize import sanitize_labels
+
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
 M_IMAGES_AND_OBJECTS = "Both"
@@ -544,6 +546,7 @@ def infer_scale(data: numpy.ndarray) -> int:
 # ---------------------------------------------------------------------------
 
 
+@sanitize_labels
 def get_correlation_pearson(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
@@ -562,6 +565,7 @@ def get_correlation_pearson(
     return {F_CORRELATION_FORMAT: corrs, F_SLOPE_FORMAT: slopes}
 
 
+@sanitize_labels
 def get_correlation_manders_fold(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
@@ -581,6 +585,7 @@ def get_correlation_manders_fold(
     return {f"{F_MANDERS_FORMAT}_1": m1_list, f"{F_MANDERS_FORMAT}_2": m2_list}
 
 
+@sanitize_labels
 def get_correlation_rwc(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
@@ -600,6 +605,7 @@ def get_correlation_rwc(
     return {f"{F_RWC_FORMAT}_1": r1, f"{F_RWC_FORMAT}_2": r2}
 
 
+@sanitize_labels
 def get_correlation_costes(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],

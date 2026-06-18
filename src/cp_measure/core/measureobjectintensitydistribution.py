@@ -5,6 +5,7 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
+from cp_measure._sanitize import sanitize_labels
 from cp_measure.utils import masks_to_ijv
 from numpy.typing import NDArray
 
@@ -89,6 +90,7 @@ MEASUREMENT_ALIASES = {
 }
 
 
+@sanitize_labels
 def get_radial_distribution(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -305,6 +307,7 @@ def get_radial_distribution(
     return results
 
 
+@sanitize_labels
 def get_radial_zernikes(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],

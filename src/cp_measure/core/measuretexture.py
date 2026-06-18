@@ -149,11 +149,14 @@ import skimage.measure
 from numpy.typing import NDArray
 import skimage.util
 
+from cp_measure._sanitize import sanitize_labels
+
 F_HARALICK = """AngularSecondMoment Contrast Correlation Variance
 InverseDifferenceMoment SumAverage SumVariance SumEntropy Entropy
 DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
 
 
+@sanitize_labels
 def get_texture(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],

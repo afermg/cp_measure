@@ -7,6 +7,7 @@ import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
+from cp_measure._sanitize import sanitize_labels
 from cp_measure.utils import masks_to_ijv
 
 __doc__ = """\
@@ -566,6 +567,7 @@ new_features : bool, optional
 """
 
 
+@sanitize_labels
 def get_sizeshape(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
@@ -1003,6 +1005,7 @@ def get_sizeshape(
     return results
 
 
+@sanitize_labels
 def get_zernike(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
@@ -1027,6 +1030,7 @@ def get_zernike(
     return results
 
 
+@sanitize_labels
 def get_feret(
     masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
 ) -> dict[str, NDArray[numpy.floating]]:

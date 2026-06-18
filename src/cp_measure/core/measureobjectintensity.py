@@ -3,6 +3,8 @@ import scipy.ndimage
 import skimage.segmentation
 from numpy.typing import NDArray
 
+from cp_measure._sanitize import sanitize_labels
+
 __doc__ = """
 MeasureObjectIntensity
 ======================
@@ -136,6 +138,7 @@ def _interp(sorted_arr: numpy.ndarray, n: int, frac: float, legacy: bool) -> flo
     return float(sorted_arr[lo] * (1.0 - f) + sorted_arr[hi] * f)
 
 
+@sanitize_labels
 def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],

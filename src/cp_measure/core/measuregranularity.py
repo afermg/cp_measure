@@ -54,10 +54,12 @@ References
 import numpy
 import scipy.ndimage
 import skimage.morphology
+from cp_measure._sanitize import sanitize_labels
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 
 
+@sanitize_labels
 def get_granularity(
     mask: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
