@@ -241,10 +241,7 @@ def featurize(
     columns: list[str] | None = None
 
     for mask_idx, object_name in enumerate(objects):
-        # Sanitize once, as early as possible: relabel arbitrary or
-        # non-contiguous label IDs to 1..N so every measurement function below
-        # sees clean labels, and keep the original IDs to report rows against.
-        # The input array is never mutated. See cp_measure._sanitize.
+        # Relabel arbitrary IDs to 1..N once up front; keep originals for rows.
         clean, ids = sanitize_masks(masks[mask_idx])
         if ids.size == 0:
             continue
@@ -289,9 +286,7 @@ def featurize(
         block = np.column_stack([results[c] for c in columns])
         all_blocks.append(block)
 
-        all_rows.extend(
-            (image_id, object_name, int(label)) for label in ids
-        )
+        all_rows.extend((image_id, object_name, int(label)) for label in ids)
 
     if not all_blocks:
         raise ValueError("all masks have no labels (all zeros)")

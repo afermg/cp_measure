@@ -627,6 +627,7 @@ def get_correlation_costes(
     return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
 
 
+@sanitize_labels
 def get_correlation_overlap(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],

@@ -4,18 +4,15 @@ import numpy as np
 import pytest
 
 from cp_measure._detect import HAS_NUMBA
-from cp_measure._sanitize import _is_contiguous, sanitize_labels, sanitize_masks
+from cp_measure._sanitize import sanitize_masks
 from cp_measure.bulk import (
     get_core_measurements,
     get_core_measurements_3d,
     get_correlation_measurements,
+    get_multimask_measurements,
 )
+from cp_measure.core.measurecolocalization import get_correlation_overlap
 from cp_measure.featurizer import featurize, make_featurizer_config
-
-
-# --------------------------------------------------------------------------
-# sanitize_masks policy
-# --------------------------------------------------------------------------
 
 
 def _three_objects(labels):
@@ -27,68 +24,59 @@ def _three_objects(labels):
     return m
 
 
-def test_gapped_labels_relabelled_to_1_n():
-    gapped = _three_objects((1, 5, 17))
-    clean, ids = sanitize_masks(gapped)
-    assert sorted(set(np.unique(clean)) - {0}) == [1, 2, 3]
-    assert ids.tolist() == [1, 5, 17]
+# --- sanitize_masks policy -------------------------------------------------
 
-
-def test_input_not_mutated():
-    gapped = _three_objects((1, 5, 17))
-    before = gapped.copy()
-    clean, _ids = sanitize_masks(gapped)
-    assert np.array_equal(gapped, before)
-    assert clean is not gapped  # relabel path returns a fresh copy
-
-
-def test_contiguous_fast_path_returns_input_unchanged():
-    contig = _three_objects((1, 2, 3))
-    clean, ids = sanitize_masks(contig)
-    assert clean is contig  # no copy when already 1..N
-    assert ids.tolist() == [1, 2, 3]
-
-
-def test_all_background():
-    clean, ids = sanitize_masks(np.zeros((8, 8), dtype=np.int32))
-    assert ids.size == 0
-
-
-def test_3d_gapped():
-    m = np.zeros((4, 16, 16), dtype=np.int32)
-    m[0, 0:4, 0:4] = 3
-    m[3, 10:14, 10:14] = 9
-    clean, ids = sanitize_masks(m)
-    assert sorted(set(np.unique(clean)) - {0}) == [1, 2]
-    assert ids.tolist() == [3, 9]
-
-
-def test_single_pixel():
-    m = np.zeros((8, 8), dtype=np.int32)
-    m[3, 3] = 42
-    clean, ids = sanitize_masks(m)
-    assert ids.tolist() == [42]
-    assert clean[3, 3] == 1
-
-
-def test_is_contiguous():
-    assert _is_contiguous(_three_objects((1, 2, 3)))
-    assert not _is_contiguous(_three_objects((1, 5, 17)))
-    assert _is_contiguous(np.zeros((4, 4), dtype=np.int32))
+_M3D = np.zeros((4, 16, 16), dtype=np.int32)
+_M3D[0, 0:4, 0:4] = 3
+_M3D[3, 10:14, 10:14] = 9
+_MPIX = np.zeros((8, 8), dtype=np.int32)
+_MPIX[3, 3] = 42
 
 
 @pytest.mark.parametrize(
-    "bad",
-    [np.array([[0, -1, 2]]), np.array([[0.0, 1.0, 2.0]])],
+    "mask, clean_labels, ids",
+    [
+        (_three_objects((1, 2, 3)), [1, 2, 3], [1, 2, 3]),  # contiguous
+        (_three_objects((1, 17, 5)), [1, 2, 3], [1, 5, 17]),  # gapped
+        (_M3D, [1, 2], [3, 9]),  # 3D
+        (_MPIX, [1], [42]),  # single pixel
+        (np.zeros((8, 8), np.int32), [], []),  # all background
+    ],
 )
+def test_sanitize_relabels(mask, clean_labels, ids):
+    clean, got_ids = sanitize_masks(mask)
+    assert sorted(set(np.unique(clean)) - {0}) == clean_labels
+    assert got_ids.tolist() == ids
+
+
+@pytest.mark.parametrize(
+    "mask, same_object",
+    [
+        (_three_objects((1, 2, 3)), True),  # contiguous -> returned as-is
+        (_three_objects((1, 17, 5)), False),  # relabelled -> fresh copy
+    ],
+)
+def test_no_mutation_and_copy_policy(mask, same_object):
+    before = mask.copy()
+    clean, _ids = sanitize_masks(mask)
+    assert (clean is mask) == same_object
+    assert np.array_equal(mask, before)
+
+
+def test_bool_mask_is_single_object():
+    m = np.zeros((8, 8), dtype=bool)
+    m[2:5, 2:5] = True
+    _clean, ids = sanitize_masks(m)
+    assert ids.tolist() == [1]
+
+
+@pytest.mark.parametrize("bad", [np.array([[0, -1, 2]]), np.array([[0.0, 1.0, 2.0]])])
 def test_invalid_input_raises(bad):
     with pytest.raises(ValueError):
         sanitize_masks(bad)
 
 
-# --------------------------------------------------------------------------
-# decorator coverage (every registry function is sanitized)
-# --------------------------------------------------------------------------
+# --- decorator coverage ----------------------------------------------------
 
 
 def _is_sanitized(fn):
@@ -100,13 +88,12 @@ def _is_sanitized(fn):
 
 
 def test_all_single_mask_registry_funcs_sanitized():
-    registries = [
+    for reg in (
         get_core_measurements(),
         get_core_measurements(legacy=True),  # partial-wrapped intensity
         get_core_measurements_3d(),
         get_correlation_measurements(),
-    ]
-    for reg in registries:
+    ):
         for name, fn in reg.items():
             assert _is_sanitized(fn), f"{name} is not @sanitize_labels-wrapped"
 
@@ -123,70 +110,62 @@ def test_numba_registry_funcs_sanitized():
         cp_measure.set_accelerator(None)
 
 
-def test_decorator_leaves_unknown_signature_untouched():
-    def two_mask(masks1, masks2):  # multimask-style: no recognised label arg
-        return masks1
-
-    assert sanitize_labels(two_mask) is two_mask
+def test_multimask_funcs_left_unsanitized():
+    # two-mask functions are out of scope and must not be wrapped
+    assert all(not _is_sanitized(fn) for fn in get_multimask_measurements().values())
 
 
-# --------------------------------------------------------------------------
-# per-function: gapped result == contiguous baseline (direct-call coverage)
-# --------------------------------------------------------------------------
-
-CONTIG = _three_objects((1, 2, 3))
-GAPPED = _three_objects((1, 5, 17))  # same geometry, ascending -> same ranks
+# --- per-function: gapped result == contiguous baseline --------------------
+# CONTIG and GAPPED share geometry and rank order, so a correct relabel makes
+# every feature's output identical. Labels are non-monotonic vs spatial order,
+# so this also exercises the rank remap, not just value substitution.
+CONTIG = _three_objects((1, 3, 2))
+GAPPED = _three_objects((1, 17, 5))
 _RNG = np.random.default_rng(0)
 PIX1 = _RNG.random((64, 64))
 PIX2 = _RNG.random((64, 64))
 
 
-def _allclose_dicts(a, b):
+def _assert_close_dicts(a, b):
     assert list(a.keys()) == list(b.keys())
     for k in a:
         np.testing.assert_allclose(
-            np.asarray(a[k], dtype=float),
-            np.asarray(b[k], dtype=float),
+            np.asarray(a[k], float),
+            np.asarray(b[k], float),
             equal_nan=True,
             err_msg=f"mismatch in feature {k!r}",
         )
 
 
-@pytest.mark.parametrize("name", list(get_core_measurements().keys()))
+@pytest.mark.parametrize("name", list(get_core_measurements()))
 def test_core_func_gapped_matches_contiguous(name):
     func = get_core_measurements()[name]
-    _allclose_dicts(func(GAPPED, PIX1), func(CONTIG, PIX1))
+    _assert_close_dicts(func(GAPPED, PIX1), func(CONTIG, PIX1))
 
 
-@pytest.mark.parametrize("name", list(get_correlation_measurements().keys()))
-def test_correlation_func_gapped_matches_contiguous(name):
-    func = get_correlation_measurements()[name]
-    _allclose_dicts(
+@pytest.mark.parametrize(
+    "func",
+    list(get_correlation_measurements().values()) + [get_correlation_overlap],
+    ids=lambda f: f.__name__,
+)
+def test_correlation_func_gapped_matches_contiguous(func):
+    _assert_close_dicts(
         func(pixels_1=PIX1, pixels_2=PIX2, masks=GAPPED),
         func(pixels_1=PIX1, pixels_2=PIX2, masks=CONTIG),
     )
 
 
-# --------------------------------------------------------------------------
-# featurizer end-to-end
-# --------------------------------------------------------------------------
+# --- featurizer end-to-end -------------------------------------------------
 
 
 def test_featurizer_gapped_reports_original_ids():
     image = np.stack([PIX1, PIX2], axis=0)
     config = make_featurizer_config(["DNA", "ER"])
-
-    gapped_masks = GAPPED[np.newaxis]
-    contig_masks = CONTIG[np.newaxis]
-
-    data_g, cols_g, rows_g = featurize(image, gapped_masks, config)
-    data_c, cols_c, rows_c = featurize(image, contig_masks, config)
-
+    data_g, cols_g, rows_g = featurize(image, GAPPED[np.newaxis], config)
+    data_c, cols_c, rows_c = featurize(image, CONTIG[np.newaxis], config)
     assert cols_g == cols_c
-    # rows carry the ORIGINAL ids, not 1..N
     assert rows_g == [(None, "object", 1), (None, "object", 5), (None, "object", 17)]
     assert rows_c == [(None, "object", 1), (None, "object", 2), (None, "object", 3)]
-    # and the actual feature values are identical (same geometry)
     np.testing.assert_allclose(data_g, data_c, equal_nan=True)
 
 

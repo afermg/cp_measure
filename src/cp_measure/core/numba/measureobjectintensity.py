@@ -15,7 +15,6 @@ import skimage.segmentation
 from numpy.typing import NDArray
 
 from cp_measure._sanitize import sanitize_labels
-
 from cp_measure.core.measureobjectintensity import (
     C_LOCATION,
     INTEGRATED_INTENSITY,
