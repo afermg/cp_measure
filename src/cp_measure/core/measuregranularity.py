@@ -54,12 +54,10 @@ References
 import numpy
 import scipy.ndimage
 import skimage.morphology
-from cp_measure._sanitize import sanitize_labels
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 
 
-@sanitize_labels
 def get_granularity(
     mask: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -68,7 +66,12 @@ def get_granularity(
     element_size: int = 10,
     granular_spectrum_length: int = 16,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """
+    """Per-object granularity spectrum features.
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+
     1. (Outcommented) Subsample image
     2.  Remove background pixels using a greyscale tophat filter
     3.  Calculate granular spectrum (size distribution) for all masks

@@ -3,7 +3,6 @@ import scipy.ndimage
 import skimage.segmentation
 from numpy.typing import NDArray
 
-from cp_measure._sanitize import sanitize_labels
 
 __doc__ = """
 MeasureObjectIntensity
@@ -138,7 +137,6 @@ def _interp(sorted_arr: numpy.ndarray, n: int, frac: float, legacy: bool) -> flo
     return float(sorted_arr[lo] * (1.0 - f) + sorted_arr[hi] * f)
 
 
-@sanitize_labels
 def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -146,6 +144,10 @@ def get_intensity(
     legacy: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object intensity features.
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
 
     Walks each object on its ``scipy.ndimage.find_objects`` bounding box rather
     than the full image; for each label the per-pixel reductions, quantiles, MAD,

@@ -15,7 +15,6 @@ Example
 
 from __future__ import annotations
 
-import functools
 import itertools
 import warnings
 
@@ -25,13 +24,6 @@ from cp_measure._sanitize import sanitize_masks
 
 # Feature groups that only support 2D spatial data.
 _2D_ONLY = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
-
-
-def _unwrap(fn):
-    """Strip the @sanitize_labels wrapper; the featurizer sanitizes once up front."""
-    if isinstance(fn, functools.partial):
-        return functools.partial(_unwrap(fn.func), *fn.args, **fn.keywords)
-    return getattr(fn, "__wrapped__", fn)
 
 
 def make_featurizer_config(
@@ -228,17 +220,14 @@ def featurize(
 
     is_3d = image.ndim == 4
     legacy = config.get("legacy", False)
+    # Each mask is sanitized once in the loop below, so fetch the raw
+    # implementations (sanitize=False) rather than re-sanitizing per call.
     core_funcs = (
-        get_core_measurements_3d(legacy=legacy)
+        get_core_measurements_3d(legacy=legacy, sanitize=False)
         if is_3d
-        else get_core_measurements(legacy=legacy)
+        else get_core_measurements(legacy=legacy, sanitize=False)
     )
-    corr_funcs = get_correlation_measurements()
-
-    # Each mask is sanitized once below, so call the underlying implementations
-    # directly instead of re-sanitizing in every feature's decorator.
-    core_funcs = {name: _unwrap(fn) for name, fn in core_funcs.items()}
-    corr_funcs = {name: _unwrap(fn) for name, fn in corr_funcs.items()}
+    corr_funcs = get_correlation_measurements(sanitize=False)
 
     if is_3d:
         _warn_2d_only_in_3d(config)
@@ -299,7 +288,7 @@ def featurize(
         block = np.column_stack([results[c] for c in columns])
         all_blocks.append(block)
 
-        all_rows.extend((image_id, object_name, int(label)) for label in ids)
+        all_rows.extend((image_id, object_name, label) for label in ids)
 
     if not all_blocks:
         raise ValueError("all masks have no labels (all zeros)")

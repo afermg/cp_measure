@@ -5,7 +5,6 @@ import numpy
 import numpy.ma
 import scipy.ndimage
 import scipy.sparse
-from cp_measure._sanitize import sanitize_labels
 from cp_measure.utils import masks_to_ijv
 from numpy.typing import NDArray
 
@@ -90,7 +89,6 @@ MEASUREMENT_ALIASES = {
 }
 
 
-@sanitize_labels
 def get_radial_distribution(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -100,6 +98,10 @@ def get_radial_distribution(
 ) -> dict[str, NDArray[numpy.floating]]:
     """
     Radial features (2D only)
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
 
     zernike_degree : int
         Maximum zernike moment.
@@ -306,13 +308,17 @@ def get_radial_distribution(
     return results
 
 
-@sanitize_labels
 def get_radial_zernikes(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     zernike_degree: int = 9,
 ) -> dict[str, NDArray[numpy.floating]]:
-    # Radial Zernike features (2D only)
+    """Per-object radial Zernike features (2D only).
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    """
     if labels.ndim == 3:
         return {}
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)

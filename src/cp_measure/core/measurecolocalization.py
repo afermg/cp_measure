@@ -86,7 +86,6 @@ import scipy.ndimage
 import scipy.stats
 from scipy.linalg import lstsq
 
-from cp_measure._sanitize import sanitize_labels
 
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
@@ -546,12 +545,17 @@ def infer_scale(data: numpy.ndarray) -> int:
 # ---------------------------------------------------------------------------
 
 
-@sanitize_labels
 def get_correlation_pearson(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
 ) -> dict[str, list[float]]:
+    """Per-object Pearson correlation and slope between two channels.
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    """
     corrs: list[float] = []
     slopes: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -565,13 +569,18 @@ def get_correlation_pearson(
     return {F_CORRELATION_FORMAT: corrs, F_SLOPE_FORMAT: slopes}
 
 
-@sanitize_labels
 def get_correlation_manders_fold(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, list[float]]:
+    """Per-object Manders fold coefficients between two channels.
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    """
     m1_list: list[float] = []
     m2_list: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -585,13 +594,18 @@ def get_correlation_manders_fold(
     return {f"{F_MANDERS_FORMAT}_1": m1_list, f"{F_MANDERS_FORMAT}_2": m2_list}
 
 
-@sanitize_labels
 def get_correlation_rwc(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, list[float]]:
+    """Per-object rank-weighted colocalization coefficients between two channels.
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    """
     r1: list[float] = []
     r2: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -605,7 +619,6 @@ def get_correlation_rwc(
     return {f"{F_RWC_FORMAT}_1": r1, f"{F_RWC_FORMAT}_2": r2}
 
 
-@sanitize_labels
 def get_correlation_costes(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
@@ -613,6 +626,12 @@ def get_correlation_costes(
     fast_costes: str = M_FASTER,
     thr: int = 15,
 ) -> dict[str, list[float]]:
+    """Per-object Costes colocalization coefficients between two channels.
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    """
     scale = infer_scale(pixels_1)
     c1: list[float] = []
     c2: list[float] = []
@@ -627,13 +646,18 @@ def get_correlation_costes(
     return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
 
 
-@sanitize_labels
 def get_correlation_overlap(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, list[float]]:
+    """Per-object overlap and k1/k2 colocalization coefficients between two channels.
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    """
     overlap_list: list[float] = []
     k1_list: list[float] = []
     k2_list: list[float] = []

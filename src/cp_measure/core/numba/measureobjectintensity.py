@@ -14,7 +14,6 @@ import numpy
 import skimage.segmentation
 from numpy.typing import NDArray
 
-from cp_measure._sanitize import sanitize_labels
 from cp_measure.core.measureobjectintensity import (
     C_LOCATION,
     INTEGRATED_INTENSITY,
@@ -50,7 +49,6 @@ from cp_measure.primitives._segment_numba import (
 )
 
 
-@sanitize_labels
 def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -58,6 +56,10 @@ def get_intensity(
     legacy: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
     """masks is a labeled array where 0 are background.
+
+    Assumes labels are the contiguous integers ``1..N``; call via a
+    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
+    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
 
     ``legacy`` mirrors the numpy backend: False (default) uses ``numpy.percentile``
     'linear' quartiles + textbook median MAD; True reproduces the original

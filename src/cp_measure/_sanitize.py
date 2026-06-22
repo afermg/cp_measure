@@ -45,10 +45,18 @@ def sanitize_masks(masks: NDArray) -> tuple[NDArray, NDArray[numpy.int64]]:
     return clean, ids
 
 
-def sanitize_labels(func: Callable) -> Callable:
-    """Decorate a ``get_*`` function to sanitize its label argument (found by
-    name in :data:`_MASK_PARAMS`); functions with no such argument (e.g. the
-    two-mask multimask functions) are returned unchanged."""
+def sanitize(func: Callable) -> Callable:
+    """Wrap a ``get_*`` function so its label argument (found by name in
+    :data:`_MASK_PARAMS`) is relabelled to ``1..N`` before the call; functions
+    with no such argument (e.g. the two-mask multimask functions) are returned
+    unchanged.
+
+    Measurement functions are *not* sanitized by default — the bulk entry
+    points (:func:`cp_measure.bulk.get_core_measurements` and friends) apply
+    this for you, and :func:`cp_measure.featurizer.featurize` sanitizes once up
+    front. Apply it yourself only when calling a raw function directly with
+    gapped or arbitrary label IDs.
+    """
     sig = inspect.signature(func)
     param = next((name for name in _MASK_PARAMS if name in sig.parameters), None)
     if param is None:
@@ -60,5 +68,4 @@ def sanitize_labels(func: Callable) -> Callable:
         bound.arguments[param], _ids = sanitize_masks(bound.arguments[param])
         return func(*bound.args, **bound.kwargs)
 
-    wrapper._sanitized = True  # type: ignore[attr-defined]
     return wrapper

@@ -3,13 +3,8 @@
 import numpy as np
 import pytest
 
-from cp_measure._sanitize import sanitize_masks
-from cp_measure.bulk import (
-    get_core_measurements,
-    get_correlation_measurements,
-    get_multimask_measurements,
-)
-from cp_measure.core.measurecolocalization import get_correlation_overlap
+from cp_measure._sanitize import sanitize, sanitize_masks
+from cp_measure.bulk import get_core_measurements
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 
@@ -56,31 +51,34 @@ def test_invalid_input_raises(bad):
         sanitize_masks(bad)
 
 
-def _is_sanitized(fn):
-    return bool(
-        getattr(fn, "_sanitized", False)
-        or getattr(getattr(fn, "func", None), "_sanitized", False)
-    )
-
-
-def test_public_funcs_sanitized_multimask_excluded():
-    public = (
-        *get_core_measurements().values(),
-        *get_core_measurements(legacy=True).values(),  # partial-wrapped intensity
-        *get_correlation_measurements().values(),
-        get_correlation_overlap,  # public, not in the registry
-    )
-    assert all(_is_sanitized(fn) for fn in public)
-    # two-mask functions are out of scope and must stay unwrapped
-    assert not any(_is_sanitized(fn) for fn in get_multimask_measurements().values())
-
-
-def test_decorated_func_handles_gapped_labels():
-    # get_zernike raises on gapped labels without sanitation; the decorator fixes it.
+def test_entry_point_sanitizes_by_default():
+    # get_zernike assumes 1..N; the bulk entry point sanitizes by default, so
+    # gapped IDs yield the same values as their contiguous relabelling.
     px = np.random.default_rng(0).random((64, 64))
     zernike = get_core_measurements()["zernike"]
     gapped = zernike(_three_objects((1, 17, 5)), px)
     contig = zernike(_three_objects((1, 3, 2)), px)
+    for key in gapped:
+        np.testing.assert_allclose(gapped[key], contig[key], equal_nan=True)
+
+
+def test_raw_function_does_not_sanitize():
+    # sanitize=False returns the bare implementation: it assumes 1..N and breaks
+    # on gapped IDs (here zernike indexes past the relabelled range).
+    px = np.random.default_rng(0).random((64, 64))
+    raw = get_core_measurements(sanitize=False)["zernike"]
+    raw(_three_objects((1, 3, 2)), px)  # contiguous: fine
+    with pytest.raises(IndexError):
+        raw(_three_objects((1, 17, 5)), px)
+
+
+def test_sanitize_helper_wraps_raw_function():
+    # The user-facing escape hatch: wrap a raw function to handle gapped IDs.
+    px = np.random.default_rng(0).random((64, 64))
+    raw = get_core_measurements(sanitize=False)["zernike"]
+    wrapped = sanitize(raw)
+    gapped = wrapped(_three_objects((1, 17, 5)), px)
+    contig = raw(_three_objects((1, 3, 2)), px)
     for key in gapped:
         np.testing.assert_allclose(gapped[key], contig[key], equal_nan=True)
 
