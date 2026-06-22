@@ -285,7 +285,7 @@ def get_radial_distribution(
 
         mask = pixel_count == 0
 
-        radial_means: numpy.ma.MaskedArray = numpy.ma.masked_array(
+        radial_means: numpy.ma.MaskedArray = numpy.ma.MaskedArray(
             radial_values / pixel_count, mask
         )
 

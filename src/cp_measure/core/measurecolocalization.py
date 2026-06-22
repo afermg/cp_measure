@@ -444,7 +444,7 @@ def linear_costes(
                 i -= i_step
         except ValueError:
             break
-    return thr_fi_c, thr_si_c
+    return float(thr_fi_c), float(thr_si_c)
 
 
 def bisection_costes(
@@ -518,7 +518,7 @@ def bisection_costes(
     thr_fi_c = (valid - 1) / scale_max
     thr_si_c = (a * thr_fi_c) + b
 
-    return thr_fi_c, thr_si_c
+    return float(thr_fi_c), float(thr_si_c)
 
 
 # MODIFIED: This reproduces the behaviour of the block at
