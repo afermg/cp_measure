@@ -575,9 +575,7 @@ def get_sizeshape(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Compute the size/shape measurements for multiple object masks.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     # Properties available for both 2d and 3d
     desired_properties = [
@@ -1015,9 +1013,7 @@ def get_zernike(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object Zernike shape features (2D only).
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     if masks.ndim == 3:
         return {}
@@ -1040,9 +1036,7 @@ def get_feret(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object Feret diameter features (2D only).
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     if masks.ndim == 3:
         return {}

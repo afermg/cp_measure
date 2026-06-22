@@ -99,9 +99,7 @@ def get_radial_distribution(
     """
     Radial features (2D only)
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
 
     zernike_degree : int
         Maximum zernike moment.
@@ -142,7 +140,7 @@ def get_radial_distribution(
         return {}
 
     if labels.dtype == bool:
-        labels = labels.astype(numpy.integer)
+        labels = labels.astype(numpy.int64)
 
     nobjects = int(labels.max())
     unique_labels = numpy.arange(1, nobjects + 1)
@@ -315,9 +313,7 @@ def get_radial_zernikes(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object radial Zernike features (2D only).
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     if labels.ndim == 3:
         return {}

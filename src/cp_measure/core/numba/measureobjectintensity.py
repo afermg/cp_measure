@@ -57,9 +57,7 @@ def get_intensity(
 ) -> dict[str, NDArray[numpy.floating]]:
     """masks is a labeled array where 0 are background.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
 
     ``legacy`` mirrors the numpy backend: False (default) uses ``numpy.percentile``
     'linear' quartiles + textbook median MAD; True reproduces the original

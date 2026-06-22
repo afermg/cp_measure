@@ -86,7 +86,6 @@ import scipy.ndimage
 import scipy.stats
 from scipy.linalg import lstsq
 
-
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
 M_IMAGES_AND_OBJECTS = "Both"
@@ -552,9 +551,7 @@ def get_correlation_pearson(
 ) -> dict[str, list[float]]:
     """Per-object Pearson correlation and slope between two channels.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     corrs: list[float] = []
     slopes: list[float] = []
@@ -577,9 +574,7 @@ def get_correlation_manders_fold(
 ) -> dict[str, list[float]]:
     """Per-object Manders fold coefficients between two channels.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     m1_list: list[float] = []
     m2_list: list[float] = []
@@ -602,9 +597,7 @@ def get_correlation_rwc(
 ) -> dict[str, list[float]]:
     """Per-object rank-weighted colocalization coefficients between two channels.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     r1: list[float] = []
     r2: list[float] = []
@@ -628,9 +621,7 @@ def get_correlation_costes(
 ) -> dict[str, list[float]]:
     """Per-object Costes colocalization coefficients between two channels.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     scale = infer_scale(pixels_1)
     c1: list[float] = []
@@ -654,9 +645,7 @@ def get_correlation_overlap(
 ) -> dict[str, list[float]]:
     """Per-object overlap and k1/k2 colocalization coefficients between two channels.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     overlap_list: list[float] = []
     k1_list: list[float] = []

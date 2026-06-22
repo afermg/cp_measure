@@ -68,9 +68,7 @@ def get_granularity(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object granularity spectrum features.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
 
     1. (Outcommented) Subsample image
     2.  Remove background pixels using a greyscale tophat filter

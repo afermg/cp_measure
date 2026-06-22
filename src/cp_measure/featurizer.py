@@ -186,10 +186,9 @@ def featurize(
     masks : numpy.ndarray
         Integer-labeled masks with shape ``(M, H, W)`` or
         ``(M, Z, H, W)``.  Must have the same ``ndim`` as *image*.
-        Background is 0; labels are positive integers. Non-contiguous or
-        arbitrary IDs (e.g. ``{1, 5, 17}``) are sanitized to ``1..N``
-        internally (see :mod:`cp_measure._sanitize`); the input array is not
-        modified and output rows are reported against the original IDs.
+        Background is 0; any positive integer labels (non-contiguous IDs are
+        relabelled internally, array untouched, original IDs reported in the
+        rows; see :mod:`cp_measure._sanitize`).
     config : dict, optional
         Configuration dictionary produced by :func:`make_featurizer_config`.
         If ``None``, all features are enabled with default parameters.
@@ -220,8 +219,7 @@ def featurize(
 
     is_3d = image.ndim == 4
     legacy = config.get("legacy", False)
-    # Each mask is sanitized once in the loop below, so fetch the raw
-    # implementations (sanitize=False) rather than re-sanitizing per call.
+    # Sanitize each mask once in the loop below, so fetch raw (unsanitized) funcs.
     core_funcs = (
         get_core_measurements_3d(legacy=legacy, sanitize=False)
         if is_3d

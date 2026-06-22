@@ -6,6 +6,7 @@ match the original names. This may change in the future.
 from functools import partial
 from typing import Callable
 
+from cp_measure._sanitize import sanitize as _sanitize
 from cp_measure.core import (
     measurecolocalization,
     measuregranularity,
@@ -109,8 +110,6 @@ def _maybe_sanitize(funcs: dict[str, Callable], sanitize: bool) -> dict[str, Cal
     """Wrap each function to relabel arbitrary IDs to ``1..N``; no-op when False."""
     if not sanitize:
         return funcs
-    from cp_measure._sanitize import sanitize as _sanitize
-
     return {name: _sanitize(fn) for name, fn in funcs.items()}
 
 

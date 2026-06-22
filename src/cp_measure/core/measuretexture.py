@@ -149,7 +149,6 @@ import skimage.measure
 from numpy.typing import NDArray
 import skimage.util
 
-
 F_HARALICK = """AngularSecondMoment Contrast Correlation Variance
 InverseDifferenceMoment SumAverage SumVariance SumEntropy Entropy
 DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
@@ -163,9 +162,7 @@ def get_texture(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object Haralick texture features.
 
-    Assumes labels are the contiguous integers ``1..N``; call via a
-    :mod:`cp_measure.bulk` ``get_*`` entry point or wrap with
-    :func:`cp_measure._sanitize.sanitize` to handle gapped IDs.
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
 
     Parameters
     ----------

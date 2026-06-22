@@ -1,10 +1,6 @@
-"""Central sanitation of non-contiguous mask label IDs.
-
-cp_measure's measurement functions assume labels are the contiguous integers
-``1..N`` (see :func:`cp_measure.featurizer.featurize`). Real segmentations may
-use gaps (``{1, 5, 17}``) or arbitrary values; this maps them to ``1..N`` before
-any math runs and reports results against the original IDs, without mutating the
-caller's array.
+"""Relabel non-contiguous mask label IDs (gaps or arbitrary values) to contiguous
+``1..N`` without mutating the caller's array, applied at the entry points. See
+:func:`sanitize`.
 """
 
 import functools
@@ -29,33 +25,29 @@ def sanitize_masks(masks: NDArray) -> tuple[NDArray, NDArray[numpy.int64]]:
     """
     if masks.dtype != bool and not numpy.issubdtype(masks.dtype, numpy.integer):
         raise ValueError(f"labels must be an integer array, got dtype {masks.dtype!r}")
+    if masks.min(initial=0) < 0:
+        raise ValueError("labels must be non-negative")
     mx = int(masks.max(initial=0))
     if mx == 0:
         return masks, numpy.empty(0, dtype=numpy.int64)
-    # Cheap contiguity check (~4x faster than numpy.unique); bincount needs a
-    # bounded range, so fall back to unique for pathologically large labels.
+    # bincount is faster than unique but needs a bounded range; fall back for huge labels.
     if mx <= masks.size:
         ids = numpy.flatnonzero(numpy.bincount(masks.ravel(), minlength=mx + 1))
     else:
         ids = numpy.unique(masks)
     ids = ids[ids > 0].astype(numpy.int64)
     if ids.size == mx:
-        return masks, ids  # already 1..N: no copy
+        # already 1..N: no copy (cast only a bool mask up to an integer dtype)
+        return (masks if masks.dtype != bool else masks.astype(numpy.intp)), ids
     clean, _forward, _inverse = relabel_sequential(masks)
     return clean, ids
 
 
 def sanitize(func: Callable) -> Callable:
-    """Wrap a ``get_*`` function so its label argument (found by name in
-    :data:`_MASK_PARAMS`) is relabelled to ``1..N`` before the call; functions
-    with no such argument (e.g. the two-mask multimask functions) are returned
-    unchanged.
-
-    Measurement functions are *not* sanitized by default — the bulk entry
-    points (:func:`cp_measure.bulk.get_core_measurements` and friends) apply
-    this for you, and :func:`cp_measure.featurizer.featurize` sanitizes once up
-    front. Apply it yourself only when calling a raw function directly with
-    gapped or arbitrary label IDs.
+    """Wrap a ``get_*`` function to relabel its label argument (named in
+    :data:`_MASK_PARAMS`) to ``1..N`` before the call; functions with no such
+    argument are returned unchanged. Use this only to call a raw measurement
+    function directly with gapped IDs — the entry points already sanitize.
     """
     sig = inspect.signature(func)
     param = next((name for name in _MASK_PARAMS if name in sig.parameters), None)
