@@ -58,6 +58,11 @@ from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 
 
+def _safe_ratio(num: float, den: float) -> float:
+    """Return ``num/den``, or 0 when ``den == 0`` (collapsed-axis bilinear scale)."""
+    return 0.0 if den == 0 else float(num) / float(den)
+
+
 def get_granularity(
     mask: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -210,18 +215,18 @@ def get_granularity(
             i, j = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
             #
             # Make sure the mapping only references the index range of
-            # back_pixels.
+            # back_pixels. _safe_ratio guards against new_shape[k] == 1 (issue #90).
             #
-            i *= float(back_shape[0] - 1) / float(new_shape[0] - 1)
-            j *= float(back_shape[1] - 1) / float(new_shape[1] - 1)
+            i *= _safe_ratio(back_shape[0] - 1, new_shape[0] - 1)
+            j *= _safe_ratio(back_shape[1] - 1, new_shape[1] - 1)
             back_pixels = scipy.ndimage.map_coordinates(back_pixels, (i, j), order=1)
         else:
             k, i, j = numpy.mgrid[
                 0 : new_shape[0], 0 : new_shape[1], 0 : new_shape[2]
             ].astype(float)
-            k *= float(back_shape[0] - 1) / float(new_shape[0] - 1)
-            i *= float(back_shape[1] - 1) / float(new_shape[1] - 1)
-            j *= float(back_shape[2] - 1) / float(new_shape[2] - 1)
+            k *= _safe_ratio(back_shape[0] - 1, new_shape[0] - 1)
+            i *= _safe_ratio(back_shape[1] - 1, new_shape[1] - 1)
+            j *= _safe_ratio(back_shape[2] - 1, new_shape[2] - 1)
             back_pixels = scipy.ndimage.map_coordinates(back_pixels, (k, i, j), order=1)
     pixels -= back_pixels
     pixels[pixels < 0] = 0
