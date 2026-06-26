@@ -60,7 +60,7 @@ from numpy.typing import NDArray
 
 def _safe_ratio(num: float, den: float) -> float:
     """Return ``num/den``, or 0 when ``den == 0`` (collapsed-axis bilinear scale)."""
-    return 0.0 if den == 0 else float(num) / float(den)
+    return 0.0 if den == 0 else num / den
 
 
 def get_granularity(
