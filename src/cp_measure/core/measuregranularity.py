@@ -139,11 +139,20 @@ def get_granularity(
     orig_shape = numpy.array(pixels.shape)
     orig_pixels = pixels  # original, non-background-subtracted, used for start_mean
     orig_mask = mask
+    # If subsampling would collapse any axis below the 2 samples bilinear
+    # interpolation needs, no meaningful spectrum exists; return NaN (issue #90).
+    effective_shape = (
+        (orig_shape * subsample_size).astype(int) if subsample_size < 1 else orig_shape
+    )
+    if (effective_shape < 2).any():
+        n_objects = int(orig_mask.max()) if orig_mask.size else 0
+        return {
+            f"Granularity_{i}": numpy.full(n_objects, numpy.nan)
+            for i in range(1, granular_spectrum_length + 1)
+        }
     new_shape = orig_shape.copy()
     if subsample_size < 1:
-        # Clamp to >=2 so tiny inputs neither collapse to a zero-size axis nor
-        # divide by (new_shape - 1) == 0 in the back-projection (issue #90).
-        new_shape = numpy.maximum((orig_shape * subsample_size).astype(int), 2)
+        new_shape = (orig_shape * subsample_size).astype(int)
         if pixels.ndim == 2:
             i, j = (
                 numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
