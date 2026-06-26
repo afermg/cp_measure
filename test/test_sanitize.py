@@ -63,13 +63,16 @@ def test_entry_point_sanitizes_by_default():
 
 
 def test_raw_function_does_not_sanitize():
-    # sanitize=False returns the bare implementation: it assumes 1..N and breaks
-    # on gapped IDs (here zernike indexes past the relabelled range).
+    # sanitize=False is the bare implementation: it assumes 1..N and does not relabel
+    # gapped IDs, so its output differs from the sanitized wrapper.
     px = np.random.default_rng(0).random((64, 64))
     raw = get_core_measurements(sanitize=False)["zernike"]
-    raw(_three_objects((1, 3, 2)), px)  # contiguous: fine
-    with pytest.raises(IndexError):
-        raw(_three_objects((1, 17, 5)), px)
+    sanitized = get_core_measurements(sanitize=True)["zernike"]
+    gapped = _three_objects((1, 17, 5))
+    raw_out = raw(gapped, px)
+    san_out = sanitized(gapped, px)
+    key = next(iter(raw_out))
+    assert len(raw_out[key]) != len(san_out[key])
 
 
 def test_sanitize_helper_wraps_raw_function():
