@@ -58,11 +58,6 @@ from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 
 
-def _safe_ratio(num: float, den: float) -> float:
-    """Return ``num/den``, or 0 when ``den == 0`` (collapsed-axis bilinear scale)."""
-    return 0.0 if den == 0 else num / den
-
-
 def get_granularity(
     mask: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -146,7 +141,9 @@ def get_granularity(
     orig_mask = mask
     new_shape = orig_shape.copy()
     if subsample_size < 1:
-        new_shape = (orig_shape * subsample_size).astype(int)
+        # Clamp to >=2 so tiny inputs neither collapse to a zero-size axis nor
+        # divide by (new_shape - 1) == 0 in the back-projection (issue #90).
+        new_shape = numpy.maximum((orig_shape * subsample_size).astype(int), 2)
         if pixels.ndim == 2:
             i, j = (
                 numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
@@ -215,18 +212,18 @@ def get_granularity(
             i, j = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
             #
             # Make sure the mapping only references the index range of
-            # back_pixels. _safe_ratio guards against new_shape[k] == 1 (issue #90).
+            # back_pixels.
             #
-            i *= _safe_ratio(back_shape[0] - 1, new_shape[0] - 1)
-            j *= _safe_ratio(back_shape[1] - 1, new_shape[1] - 1)
+            i *= (back_shape[0] - 1) / (new_shape[0] - 1)
+            j *= (back_shape[1] - 1) / (new_shape[1] - 1)
             back_pixels = scipy.ndimage.map_coordinates(back_pixels, (i, j), order=1)
         else:
             k, i, j = numpy.mgrid[
                 0 : new_shape[0], 0 : new_shape[1], 0 : new_shape[2]
             ].astype(float)
-            k *= _safe_ratio(back_shape[0] - 1, new_shape[0] - 1)
-            i *= _safe_ratio(back_shape[1] - 1, new_shape[1] - 1)
-            j *= _safe_ratio(back_shape[2] - 1, new_shape[2] - 1)
+            k *= (back_shape[0] - 1) / (new_shape[0] - 1)
+            i *= (back_shape[1] - 1) / (new_shape[1] - 1)
+            j *= (back_shape[2] - 1) / (new_shape[2] - 1)
             back_pixels = scipy.ndimage.map_coordinates(back_pixels, (k, i, j), order=1)
     pixels -= back_pixels
     pixels[pixels < 0] = 0
