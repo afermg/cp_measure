@@ -3,10 +3,10 @@ from typing import Optional
 from numpy.typing import NDArray
 
 import centrosome.cpmorphology
-import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
+from centrosome import zernike
 from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
@@ -1017,7 +1017,7 @@ def get_zernike(
     """
     if masks.ndim == 3:
         return {}
-    zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
+    zernike_indexes = zernike.get_zernike_indexes(zernike_numbers + 1)
 
     real_sums, imag_sums, radii, _counts = _zernike_scores(masks, zernike_indexes)
     areas = numpy.pi * radii * radii

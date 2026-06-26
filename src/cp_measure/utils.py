@@ -2,11 +2,9 @@
 Utilities reused in multiple measurements.
 """
 
-import centrosome.zernike
 import numpy
+from centrosome import zernike
 from numpy.typing import NDArray
-
-from cp_measure.primitives.segment import label_to_idx_lut
 
 
 def _ensure_np_array(value):
@@ -67,12 +65,15 @@ def _zernike_scores(
 ]:
     """Per-object real/imaginary Zernike moment sums, vectorised on foreground pixels.
 
-    Mirrors ``centrosome.zernike.zernike`` without its two area-scaling costs: the basis is
-    never scattered into a full ``(H, W, K)`` complex array, and each moment is segment-summed
-    by label with one ``numpy.bincount`` instead of a whole-image ``scipy.ndimage.sum``. The
-    Horner basis evaluation is copied from ``centrosome.construct_zernike_polynomials`` (same
-    lookup table, ``r**2 > 1`` cutoff, ``z = y + i*x`` convention), so results match centrosome
-    to round-off.
+    Mirrors ``zernike.zernike`` without its two area-scaling costs: the basis is never
+    scattered into a full ``(H, W, K)`` complex array, and each moment is segment-summed by
+    label with one ``numpy.bincount`` instead of a whole-image ``scipy.ndimage.sum``. The Horner
+    basis evaluation is copied from ``centrosome.construct_zernike_polynomials`` (same lookup
+    table, ``r**2 > 1`` cutoff, ``z = y + i*x`` convention), so results match centrosome to
+    round-off.
+
+    Labels must be the contiguous ``1..N`` cp_measure guarantees (see
+    :mod:`cp_measure._sanitize`); the segment index is ``label - 1``.
 
     ``weight`` (co-shaped with ``masks``, e.g. an intensity image) scales each pixel's
     contribution; ``None`` gives the unweighted shape moments. Returns
@@ -81,10 +82,13 @@ def _zernike_scores(
     ``counts`` the object pixel count. ``get_zernike`` normalises by ``pi * radii**2``; the
     intensity-weighted radial Zernikes normalise by ``counts``.
     """
-    lut, n = label_to_idx_lut(masks)
+    # Contiguous 1..N contract: segment index is label - 1, so the label->index lookup is a
+    # plain arange. masks.max() raises on a size-0 array, so guard it.
+    n = 0 if masks.size == 0 else int(masks.max())
     k = len(zernike_indexes)
-    labels = numpy.flatnonzero(lut >= 0)
-    centers, radii = centrosome.zernike.minimum_enclosing_circle(masks, labels)
+    labels = numpy.arange(1, n + 1)
+    lut = numpy.arange(-1, n)  # lut[0] = -1 (background); lut[label] = label - 1
+    centers, radii = zernike.minimum_enclosing_circle(masks, labels)
     radii = numpy.asarray(radii, dtype=float)
     real_sums = numpy.zeros((n, k))
     imag_sums = numpy.zeros((n, k))
@@ -105,7 +109,7 @@ def _zernike_scores(
         ym = (rows - centers[seg, 0]) / radii[seg]
         xm = (cols - centers[seg, 1]) / radii[seg]
 
-    coeffs = centrosome.zernike.construct_zernike_lookuptable(zernike_indexes)
+    coeffs = zernike.construct_zernike_lookuptable(zernike_indexes)
     r_square = xm * xm + ym * ym
     z = ym + 1j * xm
     w = None if weight is None else weight[keep].astype(float)
