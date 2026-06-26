@@ -1,9 +1,9 @@
 """Numba segment kernels (single-threaded, cached).
 
 These are the numba implementation of the segment-reduce / segment-quantile
-primitives. They loop over the flat ``(values, seg0, coords)`` arrays produced
-by :mod:`cp_measure.primitives.segment` — no image shape, no batch axis — so one
-kernel set covers 2D, 3D, and (future) batched inputs unchanged.
+primitives. They loop over the flat ``(values, seg0, coords)`` arrays that
+:func:`flatten_numba` builds — no image shape, no batch axis — so one kernel set
+covers 2D, 3D, and (future) batched inputs unchanged.
 
 All kernels are ``@njit(cache=True)`` and serial: no ``prange``/``nogil``.
 Parallelism is the job of the (future) batch layer over images, not the kernel.
@@ -14,12 +14,14 @@ from numba import njit
 
 
 @njit(cache=True)
-def flatten_numba(masks, pixels, lut):
+def flatten_numba(masks, pixels):
     """Flatten a labeled (Z, Y, X) image to ``(values, seg0, xc, yc, zc)``.
 
     Two grid scans (count, then fill) replace the numpy ``(masks>0)&isfinite``
     mask + ``numpy.nonzero`` + fancy-index gathers; coordinates are the loop
     indices. Background and non-finite pixels are dropped, in C (raster) order.
+    Labels are the contiguous ``1..N`` cp_measure guarantees (see
+    :mod:`cp_measure._sanitize`), so the segment index is ``label - 1``.
     ``masks`` and ``pixels`` must be C-contiguous; ``pixels`` may be any float
     dtype (kept values are upcast into the float64 ``values`` output).
     """
@@ -46,7 +48,7 @@ def flatten_numba(masks, pixels, lut):
                 if not np.isfinite(v):
                     continue
                 values[i] = v
-                seg0[i] = lut[L]
+                seg0[i] = L - 1
                 xc[i] = x
                 yc[i] = y
                 zc[i] = z

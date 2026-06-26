@@ -443,7 +443,7 @@ def linear_costes(
                 i -= i_step
         except ValueError:
             break
-    return thr_fi_c, thr_si_c
+    return float(thr_fi_c), float(thr_si_c)
 
 
 def bisection_costes(
@@ -517,7 +517,7 @@ def bisection_costes(
     thr_fi_c = (valid - 1) / scale_max
     thr_si_c = (a * thr_fi_c) + b
 
-    return thr_fi_c, thr_si_c
+    return float(thr_fi_c), float(thr_si_c)
 
 
 # MODIFIED: This reproduces the behaviour of the block at
@@ -549,6 +549,10 @@ def get_correlation_pearson(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
 ) -> dict[str, list[float]]:
+    """Per-object Pearson correlation and slope between two channels.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     corrs: list[float] = []
     slopes: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -568,6 +572,10 @@ def get_correlation_manders_fold(
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, list[float]]:
+    """Per-object Manders fold coefficients between two channels.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     m1_list: list[float] = []
     m2_list: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -587,6 +595,10 @@ def get_correlation_rwc(
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, list[float]]:
+    """Per-object rank-weighted colocalization coefficients between two channels.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     r1: list[float] = []
     r2: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -607,6 +619,10 @@ def get_correlation_costes(
     fast_costes: str = M_FASTER,
     thr: int = 15,
 ) -> dict[str, list[float]]:
+    """Per-object Costes colocalization coefficients between two channels.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     scale = infer_scale(pixels_1)
     c1: list[float] = []
     c2: list[float] = []
@@ -627,6 +643,10 @@ def get_correlation_overlap(
     masks: NDArray[numpy.integer],
     thr: int = 15,
 ) -> dict[str, list[float]]:
+    """Per-object overlap and k1/k2 colocalization coefficients between two channels.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     overlap_list: list[float] = []
     k1_list: list[float] = []
     k2_list: list[float] = []

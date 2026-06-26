@@ -6,6 +6,7 @@ match the original names. This may change in the future.
 from functools import partial
 from typing import Callable
 
+from cp_measure._sanitize import sanitize as _sanitize
 from cp_measure.core import (
     measurecolocalization,
     measuregranularity,
@@ -105,25 +106,42 @@ def _apply_legacy(core: dict[str, Callable], legacy: bool) -> dict[str, Callable
     }
 
 
-def get_core_measurements(legacy: bool = False) -> dict[str, Callable]:
+def _maybe_sanitize(funcs: dict[str, Callable], sanitize: bool) -> dict[str, Callable]:
+    """Wrap each function to relabel arbitrary IDs to ``1..N``; no-op when False."""
+    if not sanitize:
+        return funcs
+    return {name: _sanitize(fn) for name, fn in funcs.items()}
+
+
+def get_core_measurements(
+    legacy: bool = False, sanitize: bool = True
+) -> dict[str, Callable]:
     """Core per-object measurement functions.
 
     ``legacy`` (default False) selects the original CellProfiler ``n*q`` percentile
     convention for the intensity quartile/MAD features instead of the default
     ``numpy.percentile`` ``(n-1)*q``; see
     :func:`cp_measure.core.measureobjectintensity.get_intensity`.
+
+    ``sanitize`` (default True) wraps each function so non-contiguous label IDs
+    (gaps or arbitrary values) are relabelled to ``1..N`` before the call. Set
+    False only when the caller has already guaranteed contiguous labels.
     """
-    return _apply_legacy(_dispatch("core"), legacy)
+    core = _apply_legacy(_dispatch("core"), legacy)
+    return _maybe_sanitize(core, sanitize)
 
 
-def get_core_measurements_3d(legacy: bool = False) -> dict[str, Callable]:
-    """Return only measurements that support 3D input (see ``legacy`` above)."""
+def get_core_measurements_3d(
+    legacy: bool = False, sanitize: bool = True
+) -> dict[str, Callable]:
+    """Return only measurements that support 3D input (see ``legacy``/``sanitize`` above)."""
     core = {k: _dispatch("core")[k] for k in _3D_FEATURES}
-    return _apply_legacy(core, legacy)
+    return _maybe_sanitize(_apply_legacy(core, legacy), sanitize)
 
 
-def get_correlation_measurements() -> dict[str, Callable]:
-    return _dispatch("correlation")
+def get_correlation_measurements(sanitize: bool = True) -> dict[str, Callable]:
+    """Correlation/colocalization measurement functions (see ``sanitize`` above)."""
+    return _maybe_sanitize(_dispatch("correlation"), sanitize)
 
 
 def get_multimask_measurements() -> dict[str, Callable]:

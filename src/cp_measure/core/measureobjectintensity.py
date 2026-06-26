@@ -144,6 +144,8 @@ def get_intensity(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object intensity features.
 
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+
     Walks each object on its ``scipy.ndimage.find_objects`` bounding box rather
     than the full image; for each label the per-pixel reductions, quantiles, MAD,
     max position, and centroid run on the bbox crop only. 2D inputs are promoted

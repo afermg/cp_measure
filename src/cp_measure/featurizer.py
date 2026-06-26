@@ -20,6 +20,8 @@ import warnings
 
 import numpy as np
 
+from cp_measure._sanitize import sanitize_masks
+
 # Feature groups that only support 2D spatial data.
 _2D_ONLY = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
 
@@ -184,9 +186,9 @@ def featurize(
     masks : numpy.ndarray
         Integer-labeled masks with shape ``(M, H, W)`` or
         ``(M, Z, H, W)``.  Must have the same ``ndim`` as *image*.
-        Background is 0; labels must be contiguous integers ``1..N``
-        (standard cp_measure convention, see
-        ``skimage.segmentation.relabel_sequential``).
+        Background is 0; any positive integer labels (non-contiguous IDs are
+        relabelled internally, array untouched, original IDs reported in the
+        rows; see :mod:`cp_measure._sanitize`).
     config : dict, optional
         Configuration dictionary produced by :func:`make_featurizer_config`.
         If ``None``, all features are enabled with default parameters.
@@ -217,12 +219,13 @@ def featurize(
 
     is_3d = image.ndim == 4
     legacy = config.get("legacy", False)
+    # Sanitize each mask once in the loop below, so fetch raw (unsanitized) funcs.
     core_funcs = (
-        get_core_measurements_3d(legacy=legacy)
+        get_core_measurements_3d(legacy=legacy, sanitize=False)
         if is_3d
-        else get_core_measurements(legacy=legacy)
+        else get_core_measurements(legacy=legacy, sanitize=False)
     )
-    corr_funcs = get_correlation_measurements()
+    corr_funcs = get_correlation_measurements(sanitize=False)
 
     if is_3d:
         _warn_2d_only_in_3d(config)
@@ -238,21 +241,20 @@ def featurize(
     columns: list[str] | None = None
 
     for mask_idx, object_name in enumerate(objects):
-        mask = masks[mask_idx]
-        # Assumes contiguous labels 1..max (standard cp_measure contract).
-        n_labels = int(mask.max())
-        if n_labels == 0:
+        # Relabel arbitrary IDs to 1..N once up front; keep originals for rows.
+        clean, ids = sanitize_masks(masks[mask_idx])
+        if ids.size == 0:
             continue
 
         results: dict[str, np.ndarray] = {}
 
         for func, params in shape_feats:
-            results.update(func(mask, dummy_pixels, **params))
+            results.update(func(clean, dummy_pixels, **params))
 
         for ch_idx, ch_name in enumerate(channels):
             pixels = image[ch_idx]
             for func, params in channel_feats:
-                for key, values in func(mask, pixels, **params).items():
+                for key, values in func(clean, pixels, **params).items():
                     results[f"{key}__{ch_name}"] = values
 
         n_ch = len(channels)
@@ -262,7 +264,7 @@ def featurize(
                 for key, values in func(
                     pixels_1=image[ch_i],
                     pixels_2=image[ch_j],
-                    masks=mask,
+                    masks=clean,
                     **params,
                 ).items():
                     results[f"{key}__{channels[ch_i]}__{channels[ch_j]}"] = values
@@ -284,9 +286,7 @@ def featurize(
         block = np.column_stack([results[c] for c in columns])
         all_blocks.append(block)
 
-        all_rows.extend(
-            (image_id, object_name, label) for label in range(1, n_labels + 1)
-        )
+        all_rows.extend((image_id, object_name, label) for label in ids)
 
     if not all_blocks:
         raise ValueError("all masks have no labels (all zeros)")

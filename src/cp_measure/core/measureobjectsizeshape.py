@@ -573,7 +573,10 @@ def get_sizeshape(
     new_features: bool = True,
     spacing: Optional[tuple[float, ...]] = None,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """Compute the measurements for multiple object masks."""
+    """Compute the size/shape measurements for multiple object masks.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     # Properties available for both 2d and 3d
     desired_properties = [
         "image",
@@ -1008,9 +1011,10 @@ def get_zernike(
     pixels: NDArray[numpy.floating] | None,
     zernike_numbers: int = 9,
 ) -> dict[str, NDArray[numpy.floating]]:
-    #
-    # Zernike features (2D only)
-    #
+    """Per-object Zernike shape features (2D only).
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     if masks.ndim == 3:
         return {}
     unique_indices = numpy.unique(masks)
@@ -1030,7 +1034,10 @@ def get_zernike(
 def get_feret(
     masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
 ) -> dict[str, NDArray[numpy.floating]]:
-    # Feret diameter (2D only)
+    """Per-object Feret diameter features (2D only).
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     if masks.ndim == 3:
         return {}
     ijv = masks_to_ijv(masks)
