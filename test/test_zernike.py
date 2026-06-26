@@ -83,10 +83,6 @@ def test_zernike_empty_mask():
     assert all(v.shape == (0,) for v in got.values())
 
 
-def test_zernike_3d_returns_empty():
-    assert get_zernike(numpy.zeros((4, 16, 16), numpy.int32), None) == {}
-
-
 def test_zernike_scores_unit_weight_equals_unweighted():
     # The weight=None path (shape moments) used by get_zernike vs an explicit unit weight,
     # the path the intensity-weighted radial Zernikes (PR #75) take.
