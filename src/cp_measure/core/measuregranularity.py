@@ -139,6 +139,17 @@ def get_granularity(
     orig_shape = numpy.array(pixels.shape)
     orig_pixels = pixels  # original, non-background-subtracted, used for start_mean
     orig_mask = mask
+    # If subsampling would collapse any axis below the 2 samples bilinear
+    # interpolation needs, no meaningful spectrum exists; return NaN (issue #90).
+    effective_shape = (
+        (orig_shape * subsample_size).astype(int) if subsample_size < 1 else orig_shape
+    )
+    if (effective_shape < 2).any():
+        n_objects = int(orig_mask.max()) if orig_mask.size else 0
+        return {
+            f"Granularity_{i}": numpy.full(n_objects, numpy.nan)
+            for i in range(1, granular_spectrum_length + 1)
+        }
     new_shape = orig_shape.copy()
     if subsample_size < 1:
         new_shape = (orig_shape * subsample_size).astype(int)
@@ -212,16 +223,16 @@ def get_granularity(
             # Make sure the mapping only references the index range of
             # back_pixels.
             #
-            i *= float(back_shape[0] - 1) / float(new_shape[0] - 1)
-            j *= float(back_shape[1] - 1) / float(new_shape[1] - 1)
+            i *= (back_shape[0] - 1) / (new_shape[0] - 1)
+            j *= (back_shape[1] - 1) / (new_shape[1] - 1)
             back_pixels = scipy.ndimage.map_coordinates(back_pixels, (i, j), order=1)
         else:
             k, i, j = numpy.mgrid[
                 0 : new_shape[0], 0 : new_shape[1], 0 : new_shape[2]
             ].astype(float)
-            k *= float(back_shape[0] - 1) / float(new_shape[0] - 1)
-            i *= float(back_shape[1] - 1) / float(new_shape[1] - 1)
-            j *= float(back_shape[2] - 1) / float(new_shape[2] - 1)
+            k *= (back_shape[0] - 1) / (new_shape[0] - 1)
+            i *= (back_shape[1] - 1) / (new_shape[1] - 1)
+            j *= (back_shape[2] - 1) / (new_shape[2] - 1)
             back_pixels = scipy.ndimage.map_coordinates(back_pixels, (k, i, j), order=1)
     pixels -= back_pixels
     pixels[pixels < 0] = 0
