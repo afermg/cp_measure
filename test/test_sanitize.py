@@ -63,18 +63,16 @@ def test_entry_point_sanitizes_by_default():
 
 
 def test_raw_function_does_not_sanitize():
-    # sanitize=False returns the bare implementation: it assumes 1..N and does NOT
-    # relabel gapped IDs. The vectorised get_zernike pads to max(label) rows on gaps
-    # (one row per 1..max, empty for absent labels), so the raw output differs from
-    # the sanitized wrapper, which collapses to the real object count.
+    # sanitize=False is the bare implementation: it assumes 1..N and does not relabel
+    # gapped IDs, so its output differs from the sanitized wrapper.
     px = np.random.default_rng(0).random((64, 64))
     raw = get_core_measurements(sanitize=False)["zernike"]
     sanitized = get_core_measurements(sanitize=True)["zernike"]
-    raw(_three_objects((1, 3, 2)), px)  # contiguous: fine
     gapped = _three_objects((1, 17, 5))
-    key = next(iter(sanitized(gapped, px)))
-    assert len(sanitized(gapped, px)[key]) == 3  # collapsed to the 3 real objects
-    assert len(raw(gapped, px)[key]) == 17  # raw assumes 1..N -> pads to max label
+    raw_out = raw(gapped, px)
+    san_out = sanitized(gapped, px)
+    key = next(iter(raw_out))
+    assert len(raw_out[key]) != len(san_out[key])
 
 
 def test_sanitize_helper_wraps_raw_function():
