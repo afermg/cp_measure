@@ -1,4 +1,4 @@
-"""Regression test for ``get_granularity`` (issue #90).
+"""Regression test for ``get_granularity``
 
 When subsampling would shrink any axis below 2 samples, the bilinear
 back-projection has no well-defined geometry; ``get_granularity`` short-circuits
