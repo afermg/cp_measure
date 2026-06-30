@@ -3,11 +3,11 @@ from typing import Optional
 from numpy.typing import NDArray
 
 import centrosome.cpmorphology
-import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
-from cp_measure.utils import masks_to_ijv
+from centrosome import zernike
+from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
 MeasureObjectSizeShape
@@ -1011,24 +1011,20 @@ def get_zernike(
     pixels: NDArray[numpy.floating] | None,
     zernike_numbers: int = 9,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """Per-object Zernike shape features (2D only).
+    """Per-object Zernike shape features (2D only). ``pixels`` is unused: these are shape moments.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
     if masks.ndim == 3:
         return {}
-    unique_indices = numpy.unique(masks)
-    unique_indices = unique_indices[unique_indices > 0]
-    indices = list(range(1, len(unique_indices) + 1))
-    labels = masks
-    zernike_numbers = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
+    zernike_indexes = zernike.get_zernike_indexes(zernike_numbers + 1)
 
-    zf_l = centrosome.zernike.zernike(zernike_numbers, labels, indices)
-    results = {}
-    for (n, m), z in zip(zernike_numbers, zf_l.transpose()):  # type: ignore[call-overload]
-        results[f"Zernike_{n}_{m}"] = z
+    real_sums, imag_sums, radii, _counts = _zernike_scores(masks, zernike_indexes)
+    areas = numpy.pi * radii * radii
+    with numpy.errstate(divide="ignore", invalid="ignore"):
+        score = numpy.sqrt(real_sums**2 + imag_sums**2) / areas[:, numpy.newaxis]
 
-    return results
+    return {f"Zernike_{n}_{m}": score[:, i] for i, (n, m) in enumerate(zernike_indexes)}
 
 
 def get_feret(
