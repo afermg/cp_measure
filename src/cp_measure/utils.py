@@ -113,7 +113,12 @@ def _zernike_scores(
     r_square = xm * xm + ym * ym
     z = ym + 1j * xm
     w = None if weight is None else weight[keep].astype(float)
-    z_pows = {m: z**m for m in numpy.unique(zernike_indexes[:, 1]) if m}
+    # z**m via `**` is ~20x slower than repeated multiply; build the powers iteratively.
+    z_pows = {}
+    zp = z
+    for m in range(1, int(zernike_indexes[:, 1].max()) + 1):
+        z_pows[m] = zp
+        zp = zp * z
     for idx, (zn, zm) in enumerate(zernike_indexes):
         s = numpy.zeros_like(xm)
         for c in coeffs[idx, : (zn - zm) // 2 + 1]:  # Horner scheme on r**2
