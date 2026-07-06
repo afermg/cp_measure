@@ -632,7 +632,7 @@ def get_sizeshape(
                 ]
 
     labels = masks
-    nobjects = (numpy.unique(masks) > 0).sum()
+    nobjects = int(masks.max())  # contiguous 1..N (see cp_measure._sanitize)
     results: dict[str, NDArray[numpy.floating]] = {}
     if labels.ndim == 2:
         props = skimage.measure.regionprops_table(
@@ -1037,8 +1037,7 @@ def get_feret(
     if masks.ndim == 3:
         return {}
     ijv = masks_to_ijv(masks)
-    indices = numpy.unique(ijv[:, 2])
-    indices = indices[indices > 0]
+    indices = numpy.arange(1, int(masks.max()) + 1)  # contiguous 1..N
     chulls, chull_counts = centrosome.cpmorphology.convex_hull_ijv(ijv, indices)
     #
     # Feret diameter

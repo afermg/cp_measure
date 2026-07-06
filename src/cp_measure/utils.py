@@ -48,8 +48,9 @@ def labels_to_binmasks(masks: numpy.ndarray) -> numpy.ndarray:
 
     Returns a list of binary masks.
     """
-    labels = numpy.unique(masks)
-    labels = labels[labels > 0]
+    labels = numpy.arange(
+        1, int(masks.max()) + 1
+    )  # contiguous 1..N (see cp_measure._sanitize)
     return masks == labels.reshape((-1,) + (1,) * masks.ndim)
 
 

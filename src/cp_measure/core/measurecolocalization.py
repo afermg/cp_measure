@@ -84,7 +84,6 @@ import numpy
 from numpy.typing import NDArray
 import scipy.ndimage
 import scipy.stats
-from scipy.linalg import lstsq
 
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
@@ -155,8 +154,9 @@ def _pearson_pair(
     fi: NDArray[numpy.floating], si: NDArray[numpy.floating]
 ) -> tuple[float, float]:
     corr = numpy.corrcoef(fi, si)[0, 1]
-    coeffs = lstsq(numpy.array((fi, numpy.ones_like(fi))).transpose(), si)[0]
-    return float(corr), float(coeffs[0])
+    # OLS slope of si on fi is cov/var — avoids a per-object lstsq + design-matrix build.
+    slope = numpy.cov(fi, si)[0, 1] / numpy.var(fi, ddof=1)
+    return float(corr), float(slope)
 
 
 def _manders_pair(
@@ -384,13 +384,15 @@ def linear_costes(
     """
     i_step = 1 / scale_max
     non_zero = (fi > 0) | (si > 0)
-    xvar = numpy.var(fi[non_zero], axis=0, ddof=1)
-    yvar = numpy.var(si[non_zero], axis=0, ddof=1)
+    fz = fi[non_zero]
+    sz = si[non_zero]
+    xvar = numpy.var(fz, axis=0, ddof=1)
+    yvar = numpy.var(sz, axis=0, ddof=1)
 
-    xmean = numpy.mean(fi[non_zero], axis=0)
-    ymean = numpy.mean(si[non_zero], axis=0)
+    xmean = numpy.mean(fz, axis=0)
+    ymean = numpy.mean(sz, axis=0)
 
-    z = fi[non_zero] + si[non_zero]
+    z = fz + sz
     zvar = numpy.var(z, axis=0, ddof=1)
 
     covar = 0.5 * (zvar - (xvar + yvar))
@@ -464,13 +466,15 @@ def bisection_costes(
     """
 
     non_zero = (fi > 0) | (si > 0)
-    xvar = numpy.var(fi[non_zero], axis=0, ddof=1)
-    yvar = numpy.var(si[non_zero], axis=0, ddof=1)
+    fz = fi[non_zero]
+    sz = si[non_zero]
+    xvar = numpy.var(fz, axis=0, ddof=1)
+    yvar = numpy.var(sz, axis=0, ddof=1)
 
-    xmean = numpy.mean(fi[non_zero], axis=0)
-    ymean = numpy.mean(si[non_zero], axis=0)
+    xmean = numpy.mean(fz, axis=0)
+    ymean = numpy.mean(sz, axis=0)
 
-    z = fi[non_zero] + si[non_zero]
+    z = fz + sz
     zvar = numpy.var(z, axis=0, ddof=1)
 
     covar = 0.5 * (zvar - (xvar + yvar))
