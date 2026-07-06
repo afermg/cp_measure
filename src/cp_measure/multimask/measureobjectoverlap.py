@@ -111,24 +111,6 @@ def nan_divide(
     return float(numerator) / float(denominator)
 
 
-def subscripts(
-    condition1: numpy.ndarray,
-    condition2: numpy.ndarray,
-    GT_pixels: numpy.ndarray,
-    ID_pixels: numpy.ndarray,
-) -> list:
-    x1, y1 = numpy.where(GT_pixels == condition1)
-    x2, y2 = numpy.where(ID_pixels == condition2)
-    mask = set(zip(x1, y1)) & set(zip(x2, y2))
-    return list(mask)
-
-
-def maskimg(mask, img):
-    for ea in mask:
-        img[ea] = 1
-    return img
-
-
 def measureobjectoverlap(
     masks1: numpy.ndarray,
     masks2: numpy.ndarray,
@@ -385,20 +367,6 @@ def measureobjectoverlap(
         for k, v in measurement_value.items():
             results[f"{C_IMAGE_OVERLAP}_{k}"] = v
 
-        TP_mask = subscripts(1, 1, GT_pixels, ID_pixels)
-        FN_mask = subscripts(1, 0, GT_pixels, ID_pixels)
-        FP_mask = subscripts(0, 1, GT_pixels, ID_pixels)
-        TN_mask = subscripts(0, 0, GT_pixels, ID_pixels)
-
-        TP_pixels = numpy.zeros((xGT, yGT))
-        FN_pixels = numpy.zeros((xGT, yGT))
-        FP_pixels = numpy.zeros((xGT, yGT))
-        TN_pixels = numpy.zeros((xGT, yGT))
-
-        TP_pixels = maskimg(TP_mask, TP_pixels)
-        FN_pixels = maskimg(FN_mask, FN_pixels)
-        FP_pixels = maskimg(FP_mask, FP_pixels)
-        TN_pixels = maskimg(TN_mask, TN_pixels)
         if wants_emd:
             emd = compute_emd(
                 objects_ID,
