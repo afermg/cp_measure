@@ -63,7 +63,7 @@ def spatial_moments_2d(
     ascending label. Drop-in for the matching ``regionprops_table`` columns
     (``moments-p-q`` etc.); ``normalized`` is NaN where ``p + q < 2`` (skimage convention).
     """
-    n = int(labels.max())
+    n = labels.max()  # numpy int: fine for == 0 and as an array dimension
     if n == 0:
         empty = numpy.zeros((0, _ORDER, _ORDER))
         return empty, empty, empty, numpy.zeros((0, 7))

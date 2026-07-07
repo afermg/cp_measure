@@ -2,9 +2,9 @@
 
 These lock **numerical fidelity to skimage regionprops**: the scatter ``spatial_moments_2d`` /
 ``inertia_2d`` must reproduce ``regionprops_table``'s ``moments`` / ``moments_central`` /
-``moments_normalized`` / ``moments_hu`` / ``inertia_tensor`` columns to round-off (raw moments
-bit-exact; centroid-dependent matrices ~1e-13 relative), and the derived axis lengths /
-eccentricity / orientation must match regionprops. The rest of ``get_sizeshape`` is unchanged.
+``moments_normalized`` / ``moments_hu`` / ``inertia_tensor`` columns, and the derived axis lengths /
+eccentricity / orientation must match regionprops. Everything agrees to ~1 ULP once compared
+against the right scale (see ``RTOL`` below). The rest of ``get_sizeshape`` is unchanged.
 """
 
 import numpy
@@ -13,7 +13,11 @@ import skimage.measure
 from cp_measure.core.measureobjectsizeshape import get_sizeshape
 from cp_measure.primitives._moments import inertia_2d, spatial_moments_2d
 
-ATOL_REL = 1e-7  # relative tolerance; moments span many orders of magnitude
+# Relative equivalence tolerance. The batched matmul reorders sums vs regionprops' einsum, so
+# every quantity matches to ~1 ULP *relative to its natural magnitude*; 1e-12 leaves a ~1000x
+# margin. Central moments cancel toward 0, so they are compared against the raw-moment magnitude
+# of the same order (the size of the summed terms) rather than their own near-zero value.
+RTOL = 1e-12
 
 
 def _generate_square_objects(size, n, gap_frac=0.7):
@@ -28,35 +32,36 @@ def _generate_square_objects(size, n, gap_frac=0.7):
     return masks
 
 
+def _generate_disk(size, cy, cx, r, label=1):
+    yy, xx = numpy.mgrid[0:size, 0:size]
+    masks = numpy.zeros((size, size), numpy.int32)
+    masks[(yy - cy) ** 2 + (xx - cx) ** 2 < r * r] = label
+    return masks
+
+
 def _assert_moments_match(masks):
     raw, central, normalized, hu = spatial_moments_2d(masks)
     ref = skimage.measure.regionprops_table(
         masks,
         properties=["moments", "moments_central", "moments_normalized", "moments_hu"],
     )
-    n = raw.shape[0]
     for p in range(4):
         for q in range(4):
-            scale = max(
-                numpy.nanmax(numpy.abs(ref[f"moments-{p}-{q}"])) if n else 0.0, 1.0
-            )
+            # Scale the absolute floor by the raw-moment magnitude: raw moments set the size of the
+            # terms summed for the central moments, so it bounds the cancellation round-off of the
+            # (structurally near-zero) central moments too. `initial=1.0` floors it and covers the
+            # empty-mask case.
+            scale = numpy.nanmax(numpy.abs(ref[f"moments-{p}-{q}"]), initial=1.0)
             numpy.testing.assert_allclose(
-                raw[:, p, q],
-                ref[f"moments-{p}-{q}"],
-                rtol=ATOL_REL,
-                atol=ATOL_REL * scale,
-            )
-            cscale = max(
-                numpy.nanmax(numpy.abs(ref[f"moments_central-{p}-{q}"])) if n else 0.0,
-                1.0,
+                raw[:, p, q], ref[f"moments-{p}-{q}"], rtol=RTOL, atol=RTOL * scale
             )
             numpy.testing.assert_allclose(
                 central[:, p, q],
                 ref[f"moments_central-{p}-{q}"],
-                rtol=ATOL_REL,
-                atol=ATOL_REL * cscale,
+                rtol=RTOL,
+                atol=RTOL * scale,
             )
-            # normalized: NaN where p+q<2 in both
+            # normalized moments are O(1); NaN where p+q<2 in both
             assert numpy.array_equal(
                 numpy.isnan(normalized[:, p, q]),
                 numpy.isnan(ref[f"moments_normalized-{p}-{q}"]),
@@ -64,14 +69,13 @@ def _assert_moments_match(masks):
             numpy.testing.assert_allclose(
                 normalized[:, p, q],
                 ref[f"moments_normalized-{p}-{q}"],
-                rtol=ATOL_REL,
-                atol=ATOL_REL,
+                rtol=RTOL,
+                atol=RTOL,
                 equal_nan=True,
             )
-    for k in range(7):
-        kscale = max(numpy.nanmax(numpy.abs(ref[f"moments_hu-{k}"])) if n else 0.0, 1.0)
+    for k in range(7):  # Hu invariants are O(1)
         numpy.testing.assert_allclose(
-            hu[:, k], ref[f"moments_hu-{k}"], rtol=ATOL_REL, atol=ATOL_REL * kscale
+            hu[:, k], ref[f"moments_hu-{k}"], rtol=RTOL, atol=RTOL
         )
 
     # inertia tensor + eigenvalues derived from the same central moments
@@ -87,10 +91,8 @@ def _assert_moments_match(masks):
         (eig_0, "inertia_tensor_eigvals-0"),
         (eig_1, "inertia_tensor_eigvals-1"),
     ]:
-        scale = max(numpy.nanmax(numpy.abs(iref[key])) if n else 0.0, 1.0)
-        numpy.testing.assert_allclose(
-            got, iref[key], rtol=ATOL_REL, atol=ATOL_REL * scale
-        )
+        scale = numpy.nanmax(numpy.abs(iref[key]), initial=1.0)
+        numpy.testing.assert_allclose(got, iref[key], rtol=RTOL, atol=RTOL * scale)
 
 
 def test_raw_moments_bit_exact():
@@ -110,6 +112,14 @@ def test_moments_match_multi_object():
 def test_moments_match_empty():
     # No objects -> (0, ...) arrays; the shared assert covers it against regionprops.
     _assert_moments_match(numpy.zeros((20, 20), numpy.int32))
+
+
+def test_moments_match_disk():
+    # Non-trivial fixture: a disk has an off-grid centroid, so its central moments are genuine
+    # near-total cancellations (many are structurally ~0). Axis-aligned rectangles hide this —
+    # their odd central moments are bit-exactly 0 — so this is the case that actually exercises
+    # the raw-magnitude-scaled tolerance in _assert_moments_match.
+    _assert_moments_match(_generate_disk(240, 119.3, 121.7, 80))
 
 
 def test_moments_match_edge_touching():
@@ -173,16 +183,16 @@ def _assert_axes_match(masks):
         ],
     )
     numpy.testing.assert_allclose(
-        out["MajorAxisLength"], ref["axis_major_length"], rtol=1e-9, atol=1e-9
+        out["MajorAxisLength"], ref["axis_major_length"], rtol=RTOL, atol=RTOL
     )
     numpy.testing.assert_allclose(
-        out["MinorAxisLength"], ref["axis_minor_length"], rtol=1e-9, atol=1e-9
+        out["MinorAxisLength"], ref["axis_minor_length"], rtol=RTOL, atol=RTOL
     )
     numpy.testing.assert_allclose(
-        out["Eccentricity"], ref["eccentricity"], rtol=1e-9, atol=1e-9
+        out["Eccentricity"], ref["eccentricity"], rtol=RTOL, atol=RTOL
     )
     numpy.testing.assert_allclose(
-        out["Orientation"], ref["orientation"] * (180 / numpy.pi), rtol=1e-9, atol=1e-9
+        out["Orientation"], ref["orientation"] * (180 / numpy.pi), rtol=RTOL, atol=RTOL
     )
 
 
@@ -192,10 +202,11 @@ def test_axes_match_single_object():
     _assert_axes_match(masks)
 
 
-# Exact output column order of the PyPI 0.1.19 release (2D, new_features + calculate_advanced on).
-# moment_feature_dict must keep this grouped order (all Spatial, then Central, then Normalized,
-# then Hu, then the inertia tensor); a reorder is a silent schema break.
-_RELEASE_KEY_ORDER = [
+# Output features of the PyPI 0.1.19 release (2D, new_features + calculate_advanced on). Order is
+# not part of the schema (downstream selects features by name), but the feature *set* is: a missing
+# feature and an accidental extra (typo/dup) are both silent schema breaks. A genuine new feature is
+# a deliberate one-line addition here.
+_RELEASE_KEYS = [
     "Area",
     "BoundingBoxArea",
     "ConvexArea",
@@ -234,17 +245,24 @@ _RELEASE_KEY_ORDER = [
 ]
 
 
-def test_sizeshape_key_order_matches_release():
+def test_sizeshape_feature_set_matches_release():
+    # The emitted feature set must equal the release set (order ignored): catches both a dropped
+    # feature and an accidental extra. A genuine new feature means adding it to _RELEASE_KEYS.
     masks = numpy.zeros((40, 40), numpy.int32)
     masks[5:25, 5:25] = 1
-    assert list(get_sizeshape(masks, masks.astype(float))) == _RELEASE_KEY_ORDER
+    keys = set(get_sizeshape(masks, masks.astype(float)))
+    expected = set(_RELEASE_KEYS)
+    assert keys == expected, {
+        "missing": sorted(expected - keys),
+        "unexpected": sorted(keys - expected),
+    }
 
 
 def test_axes_clip_thin_objects_match_skimage():
-    # Thin / oblique objects have a (near-)singular inertia tensor; float error can drive the minor
-    # eigenvalue slightly negative. inertia_2d clips to 0 like skimage, so axis lengths and
-    # eccentricity match regionprops and are never NaN. Pre-clip, ~4% of these gave NaN axis_minor
-    # / eccentricity > 1 — this loop guards that regression.
+    # A thin / 1px-wide object has almost no width, so the smaller eigenvalue of its inertia tensor
+    # is ~0; float round-off can push that value slightly below zero. inertia_2d clips it to 0 (as
+    # skimage does), so axis lengths and eccentricity match regionprops and are never NaN. Pre-clip,
+    # ~4% of these gave NaN axis_minor / eccentricity > 1 — this loop guards that regression.
     rng = numpy.random.default_rng(1)
     for _ in range(50):
         masks = numpy.zeros((40, 40), numpy.int32)
@@ -263,13 +281,14 @@ def test_axes_clip_thin_objects_match_skimage():
         ref = skimage.measure.regionprops_table(
             masks, properties=["axis_minor_length", "eccentricity"]
         )
-        # atol=1e-6: a 1px line's minor axis is float noise (~4e-8) in skimage vs exactly 0
-        # from our clip; both mean "zero width", so compare only above that floor.
+        # atol=1e-6 (looser than the global RTOL): a 1px line's minor axis is float noise (~1e-7)
+        # in skimage vs exactly 0 from our clip; both mean "zero width", so compare only above
+        # that floor.
         numpy.testing.assert_allclose(
-            out["MinorAxisLength"], ref["axis_minor_length"], rtol=1e-7, atol=1e-6
+            out["MinorAxisLength"], ref["axis_minor_length"], rtol=RTOL, atol=1e-6
         )
         numpy.testing.assert_allclose(
-            out["Eccentricity"], ref["eccentricity"], rtol=1e-7, atol=1e-6
+            out["Eccentricity"], ref["eccentricity"], rtol=RTOL, atol=1e-6
         )
 
 
