@@ -4,6 +4,11 @@
 # Usage: run_benchmark.sh <out-dir> <head-commit-sha>
 set -euo pipefail
 
+# Pin BLAS/OpenMP to one thread so timings reflect algorithmic cost, not incidental parallelism
+# (cp_measure keeps core functions single-threaded; the batch layer is what parallelises).
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+
 OUT="${1:-bench-out}"
 COMMIT="${2:-}"
 HEAD_DIR="$(pwd)"
