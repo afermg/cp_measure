@@ -51,6 +51,7 @@ References
    Statistics, Moskow, (in Russian)
 """
 
+from functools import partial
 from typing import Callable
 
 import numpy
@@ -71,9 +72,11 @@ def _make_fused_upsample_mean(
     Each granular-spectrum step restores the downsampled reconstruction ``rec`` to the original
     scale with a bilinear ``scipy.ndimage.map_coordinates`` (order=1) and then takes the
     per-object mean with ``scipy.ndimage.mean``. Both depend only on ``rec`` (the sampling
-    geometry and the labels are fixed across iterations), and both are linear in ``rec``: every
-    original pixel is a fixed convex combination of four downsampled pixels, and the per-object
-    mean sums those contributions. So the whole "upsample then average per object" is one sparse
+    geometry and the labels are fixed across iterations), and both are linear in ``rec``:
+    ``map_coordinates(order=1)`` is bilinear interpolation, so every original pixel is a fixed
+    weighted average of the four downsampled pixels surrounding its source location (the
+    interpolation weights are non-negative and sum to 1), and the per-object mean just adds up
+    those per-pixel averages. So the whole "upsample then average per object" is one sparse
     ``(n_labels x n_downsampled)`` operator, built once here and applied as a single mat-vec per
     step instead of a full-resolution interpolation + label reduction every iteration.
 
@@ -122,10 +125,17 @@ def _make_fused_upsample_mean(
     ).tocsr()
     counts = numpy.bincount(labels, minlength=max_label + 1)[objects].astype(float)
 
-    def fused(rec):
-        return (operator @ rec.ravel())[objects] / counts
+    return partial(_fused_upsample_mean, operator, objects, counts)
 
-    return fused
+
+def _fused_upsample_mean(operator, objects, counts, rec):
+    """Restore one reconstruction ``rec`` to the original scale and take its per-object mean.
+
+    ``operator``/``objects``/``counts`` are the prebuilt pieces from
+    :func:`_make_fused_upsample_mean`; row ``L`` of ``operator @ rec.ravel()`` sums the bilinear
+    contributions for object ``L``, and dividing by its pixel count gives the mean.
+    """
+    return (operator @ rec.ravel())[objects] / counts
 
 
 def get_granularity(
