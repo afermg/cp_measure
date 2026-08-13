@@ -2,7 +2,6 @@ import centrosome.cpmorphology
 import centrosome.propagate
 import numpy
 import numpy.ma
-import scipy.ndimage
 import scipy.sparse
 from centrosome import zernike
 from cp_measure.utils import _zernike_scores
@@ -89,6 +88,35 @@ MEASUREMENT_ALIASES = {
 }
 
 
+def _maximum_position_of_labels(
+    image: NDArray[numpy.floating],
+    labels: NDArray[numpy.integer],
+    nobjects: int,
+) -> tuple[NDArray[numpy.intp], NDArray[numpy.intp]]:
+    """Return the first C-order maximum position for each label ``1..N``.
+
+    SciPy versions through 1.16 use an unstable global sort for list-valued
+    ``index`` in ``ndimage.maximum_position``. Consequently, ties within one
+    label can be reordered by values under unrelated labels (SciPy gh-25279).
+    Linear reductions make the tie-break deterministic and label-independent.
+    """
+    if nobjects == 0:
+        empty = numpy.empty(0, dtype=numpy.intp)
+        return empty, empty
+
+    flat_labels = labels.ravel()
+    flat_image = image.ravel()
+    maxima = numpy.full(nobjects + 1, -numpy.inf, dtype=flat_image.dtype)
+    numpy.maximum.at(maxima, flat_labels, flat_image)
+
+    is_maximum = (flat_labels > 0) & (flat_image == maxima[flat_labels])
+    candidate_positions = numpy.flatnonzero(is_maximum)
+    first_positions = numpy.full(nobjects + 1, labels.size, dtype=numpy.intp)
+    numpy.minimum.at(first_positions, flat_labels[is_maximum], candidate_positions)
+    positions = numpy.unravel_index(first_positions[1:], labels.shape)
+    return positions[0], positions[1]
+
+
 def get_radial_distribution(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -100,6 +128,9 @@ def get_radial_distribution(
     Radial features (2D only)
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    When several pixels are tied for the greatest distance from an object's edge,
+    the first in C order is used as its center. This deterministic tie-break keeps
+    each object's measurements independent of other labels in the image.
 
     zernike_degree : int
         Maximum zernike moment.
@@ -143,7 +174,6 @@ def get_radial_distribution(
         labels = labels.astype(numpy.int64)
 
     nobjects = int(labels.max())
-    unique_labels = numpy.arange(1, nobjects + 1)
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
 
     # Find the point in each object farthest away from the edge.
@@ -152,15 +182,9 @@ def get_radial_distribution(
     # * The center tends to be an interesting point, like the
     #   center of the nucleus or the center of one or the other
     #   of two touching cells.
-    #
-    # MODIFICATION: Delegated label indices to maximum_position_of_labels
-    # This should not affect this one-mask/object function
-    i, j = centrosome.cpmorphology.maximum_position_of_labels(
-        # d_to_edge, labels, indices=[1]
-        d_to_edge,
-        labels,
-        indices=unique_labels,
-    )
+    # Tied maxima use the first position in C order so an object's center is
+    # independent of values under other labels (SciPy gh-25279 / Issue #22).
+    i, j = _maximum_position_of_labels(d_to_edge, labels, nobjects)
 
     center_labels = numpy.zeros(labels.shape, int)
 
