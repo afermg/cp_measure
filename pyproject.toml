@@ -1,6 +1,6 @@
 [project]
 name = "cp_measure"
-version = "0.1.19"
+version = "0.2.0"
 description = "cp_measure implements CellProfiler measurements in an accessible interface. "
 authors = [
     {name= "Alan Munoz"},
