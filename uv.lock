@@ -519,7 +519,7 @@ toml = [
 
 [[package]]
 name = "cp-measure"
-version = "0.1.19"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "centrosome" },
