@@ -32,8 +32,8 @@ def test_3d_is_single_volume_not_batch():
 def test_4d_is_batch():
     m, p = numpy.ones((2, 3, 4, 5), int), _img((2, 3, 4, 5), 2)
     masks, pixels, unwrap = to_bzyx(m, p)
-    assert len(masks) == len(pixels) == 2
-    assert all(a.shape == (3, 4, 5) for a in masks)
+    assert isinstance(masks, numpy.ndarray) and masks.shape == (2, 3, 4, 5)
+    assert isinstance(pixels, numpy.ndarray) and pixels.shape == (2, 3, 4, 5)
     out = unwrap([{"a": 1}, {"a": 2}])
     assert isinstance(out, list) and len(out) == 2  # batch -> list
 

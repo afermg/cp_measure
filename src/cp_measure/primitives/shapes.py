@@ -1,18 +1,18 @@
 """Canonical ``(B, Z, Y, X)`` input normalisation (numpy, backend-agnostic).
 
-Every optimised feature works on a batch of volumes, represented as a **list of
-B ``(Z, Y, X)`` arrays** — one per image, with a single image being just
-``B == 1``.
+Every optimised feature works on a batch of volumes, represented as a single
+``(B, Z, Y, X)`` array — one ``(Z, Y, X)`` volume per image, with a single image
+being just ``B == 1``.
 
 Normalisation rules (the only public entry, :func:`to_bzyx`):
 
 ================================ ============================ ========
 input                            yields                       batch?
 ================================ ============================ ========
-2D ``(H, W)`` ndarray            ``[(1, H, W)]``              no
-3D ``(Z, Y, X)`` ndarray         ``[(Z, Y, X)]`` (one volume) no
-4D ``(B, Z, Y, X)`` ndarray      ``[(Z, Y, X)] * B``          yes
-list/tuple of 2D/3D arrays       one ``(Z, Y, X)`` per item   yes
+2D ``(H, W)`` ndarray            ``(1, 1, H, W)``             no
+3D ``(Z, Y, X)`` ndarray         ``(1, Z, Y, X)``             no
+4D ``(B, Z, Y, X)`` ndarray      ``(B, Z, Y, X)``             yes
+list/tuple of 2D/3D arrays       ``(B, Z, Y, X)``             yes
 ================================ ============================ ========
 
 A 3D ndarray is therefore ALWAYS one volume, never a batch — this preserves the
@@ -62,10 +62,10 @@ def _stack(seq, what: str) -> NDArray:
 def to_bzyx(masks, pixels):
     """Normalise ``(masks, pixels)`` to the canonical batch-of-volumes form.
 
-    Returns ``(masks_zyx, pixels_zyx, unwrap)`` where ``masks_zyx`` and
-    ``pixels_zyx`` are length-``B`` lists of ``(Z, Y, X)`` arrays (one per image),
-    and ``unwrap(results)`` maps a length-``B`` list of per-image results back to
-    a single result (non-batch input) or the list itself (batch input).
+    Returns ``(masks_bzyx, pixels_bzyx, unwrap)`` where ``masks_bzyx`` and
+    ``pixels_bzyx`` are ``(B, Z, Y, X)`` arrays (one ``(Z, Y, X)`` volume per
+    image), and ``unwrap(results)`` maps a length-``B`` list of per-image results
+    back to a single result (non-batch input) or the list itself (batch input).
     """
     masks_is_seq = isinstance(masks, (list, tuple))
     pixels_is_seq = isinstance(pixels, (list, tuple))
@@ -82,17 +82,18 @@ def to_bzyx(masks, pixels):
         is_batch = m.ndim == 4
 
     if is_batch:
-        masks_zyx = [_to_zyx(x) for x in m]
-        pixels_zyx = [_to_zyx(x) for x in p]
+        masks_bzyx = numpy.stack([_to_zyx(x) for x in m])
+        pixels_bzyx = numpy.stack([_to_zyx(x) for x in p])
     else:
-        masks_zyx, pixels_zyx = [_to_zyx(m)], [_to_zyx(p)]
+        masks_bzyx = _to_zyx(m)[numpy.newaxis]
+        pixels_bzyx = _to_zyx(p)[numpy.newaxis]
 
-    if len(masks_zyx) != len(pixels_zyx):
+    if len(masks_bzyx) != len(pixels_bzyx):
         raise ValueError(
-            f"batch size mismatch: {len(masks_zyx)} masks vs {len(pixels_zyx)} images"
+            f"batch size mismatch: {len(masks_bzyx)} masks vs {len(pixels_bzyx)} images"
         )
 
     def unwrap(results):
         return results if is_batch else results[0]
 
-    return masks_zyx, pixels_zyx, unwrap
+    return masks_bzyx, pixels_bzyx, unwrap
