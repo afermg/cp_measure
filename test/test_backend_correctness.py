@@ -86,6 +86,7 @@ def test_set_accelerator_numba_composes_with_numpy():
         assert core["intensity"].__module__ == (
             "cp_measure.core.numba.measureobjectintensity"
         )
+        assert core["feret"].__module__ == "cp_measure.core.numba._feret"
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
         assert core["texture"].__module__ == "cp_measure.core.measuretexture"
@@ -94,6 +95,7 @@ def test_set_accelerator_numba_composes_with_numpy():
 
     restored = cp_measure.bulk.get_core_measurements()
     assert restored["intensity"].__module__ == "cp_measure.core.measureobjectintensity"
+    assert restored["feret"].__module__ == "cp_measure.core.measureobjectsizeshape"
 
 
 def test_set_accelerator_numba_absent_raises(monkeypatch):
