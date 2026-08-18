@@ -47,19 +47,18 @@ def test_list_of_2d_is_batch_unit_z():
     assert isinstance(unwrap([1, 2, 3]), list)
 
 
-def test_list_ragged_sizes_ok():
+def test_list_ragged_sizes_raise():
     imgs = [_img((4, 5), 0), _img((7, 3), 1)]
     masks = [numpy.ones((4, 5), int), numpy.ones((7, 3), int)]
-    m, p, _ = to_bzyx(masks, imgs)
-    assert m[0].shape == (1, 4, 5)
-    assert m[1].shape == (1, 7, 3)
+    with pytest.raises(ValueError, match="same shape"):
+        to_bzyx(masks, imgs)
 
 
 def test_list_of_3d_volumes_batch():
-    vols = [_img((2, 4, 5), 0), _img((3, 4, 5), 1)]
-    masks = [numpy.ones((2, 4, 5), int), numpy.ones((3, 4, 5), int)]
+    vols = [_img((2, 4, 5), 0), _img((2, 4, 5), 1)]
+    masks = [numpy.ones((2, 4, 5), int), numpy.ones((2, 4, 5), int)]
     m, _, _ = to_bzyx(masks, vols)
-    assert m[0].shape == (2, 4, 5) and m[1].shape == (3, 4, 5)
+    assert len(m) == 2 and all(a.shape == (2, 4, 5) for a in m)
 
 
 @pytest.mark.parametrize(

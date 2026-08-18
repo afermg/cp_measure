@@ -1,9 +1,8 @@
 """Canonical ``(B, Z, Y, X)`` input normalisation (numpy, backend-agnostic).
 
-Every optimised feature works on a batch of volumes. Rather than a single dense
-``(B, Z, Y, X)`` array (which cannot hold ragged, differently-sized images), the
-batch is represented as a **list of B ``(Z, Y, X)`` arrays** — equal-size and
-ragged batches share one code path, and a single image is just ``B == 1``.
+Every optimised feature works on a batch of volumes, represented as a **list of
+B ``(Z, Y, X)`` arrays** — one per image, with a single image being just
+``B == 1``.
 
 Normalisation rules (the only public entry, :func:`to_bzyx`):
 
@@ -18,8 +17,12 @@ list/tuple of 2D/3D arrays       one ``(Z, Y, X)`` per item   yes
 
 A 3D ndarray is therefore ALWAYS one volume, never a batch — this preserves the
 existing single-volume semantics. To pass a batch of 2D images as an array, use
-``(B, 1, H, W)``; for ragged sizes, pass a list. ``unwrap`` then re-shapes the
-per-image results back to a single dict (single input) or the list (batch).
+``(B, 1, H, W)``. ``unwrap`` then re-shapes the per-image results back to a
+single dict (single input) or the list (batch).
+
+All images in a batch must share one shape: a list is stacked into a single
+array, so ragged (differently-sized) batches are rejected with an informative
+error. Normalise your images to a common shape first.
 
 This is a pure batch normaliser: ``masks`` and ``pixels`` must share the same
 batch/ndim structure. It does NOT broadcast a lower-dimensional mask over a
@@ -41,6 +44,21 @@ def _to_zyx(arr: NDArray) -> NDArray:
     raise ValueError(f"expected a 2D or 3D image, got ndim={a.ndim}")
 
 
+def _stack(seq, what: str) -> NDArray:
+    """Stack a list/tuple of equal-shape images into one array; reject ragged."""
+    try:
+        arr = numpy.asarray(seq)
+    except ValueError:
+        arr = None
+    if arr is None or arr.dtype == object:
+        raise ValueError(
+            f"all {what} in a batch must have the same shape; got a ragged batch. "
+            "Normalise your images to a common shape first — ragged batches are "
+            "not supported."
+        )
+    return arr
+
+
 def to_bzyx(masks, pixels):
     """Normalise ``(masks, pixels)`` to the canonical batch-of-volumes form.
 
@@ -55,22 +73,19 @@ def to_bzyx(masks, pixels):
         raise ValueError("masks and pixels must both be sequences, or both arrays")
 
     if masks_is_seq:
-        masks_zyx = [_to_zyx(m) for m in masks]
-        pixels_zyx = [_to_zyx(p) for p in pixels]
+        m, p = _stack(masks, "masks"), _stack(pixels, "pixels")
         is_batch = True
     else:
-        m = numpy.asarray(masks)
-        p = numpy.asarray(pixels)
+        m, p = numpy.asarray(masks), numpy.asarray(pixels)
         if (m.ndim == 4) != (p.ndim == 4):
             raise ValueError("masks and pixels must both be 4D for a stacked batch")
-        if m.ndim == 4:
-            masks_zyx = list(m)
-            pixels_zyx = list(p)
-            is_batch = True
-        else:
-            masks_zyx = [_to_zyx(m)]
-            pixels_zyx = [_to_zyx(p)]
-            is_batch = False
+        is_batch = m.ndim == 4
+
+    if is_batch:
+        masks_zyx = [_to_zyx(x) for x in m]
+        pixels_zyx = [_to_zyx(x) for x in p]
+    else:
+        masks_zyx, pixels_zyx = [_to_zyx(m)], [_to_zyx(p)]
 
     if len(masks_zyx) != len(pixels_zyx):
         raise ValueError(
