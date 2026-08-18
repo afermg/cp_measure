@@ -23,7 +23,7 @@ trap 'git worktree remove --force "$WORK/main" 2>/dev/null || true; rm -rf "$WOR
 git fetch --no-tags origin main
 BASE="$(git merge-base HEAD origin/main || echo origin/main)"
 NUMBA=0
-if git diff --name-only "$BASE" HEAD | grep -qE '^src/cp_measure/(core/numba/|bulk\.py)$'; then
+if git diff --name-only "$BASE" HEAD | grep -qE '^src/cp_measure/core/numba/|^src/cp_measure/bulk\.py$'; then
   NUMBA=1
 fi
 echo "numba-targeting PR: $NUMBA"
