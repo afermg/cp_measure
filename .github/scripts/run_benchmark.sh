@@ -23,7 +23,10 @@ trap 'git worktree remove --force "$WORK/main" 2>/dev/null || true; rm -rf "$WOR
 git fetch --no-tags origin main
 BASE="$(git merge-base HEAD origin/main || echo origin/main)"
 NUMBA=0
-if git diff --name-only "$BASE" HEAD | grep -qE '^src/cp_measure/core/numba/|^src/cp_measure/bulk\.py$'; then
+# Capture the diff first, then grep the string: `git … | grep -q` under `pipefail` can report the
+# pipe's SIGPIPE (141) when grep exits early on a match, spuriously flipping detection to 0.
+CHANGED="$(git diff --name-only "$BASE" HEAD)"
+if grep -qE '^src/cp_measure/core/numba/|^src/cp_measure/bulk\.py$' <<< "$CHANGED"; then
   NUMBA=1
 fi
 echo "numba-targeting PR: $NUMBA"
@@ -52,14 +55,26 @@ echo "::endgroup::"
 # numba PRs: the numpy table above tracks the numpy backend head-vs-main; this one tracks the numba
 # backend head-vs-main (numba@main is the current baseline — un-ported features fall back to numpy —
 # so this measures how far this PR moves the numba backend forward).
+# The numba backend is optional: a failure to install or run it (e.g. main not yet carrying the
+# backend, or a wheel/arch gap) must NOT sink the numpy table — the sticky-comment step only runs
+# on success. Run the pass in a subshell so any failure is caught here, not propagated by `set -e`.
 if [ "$NUMBA" = 1 ]; then
   echo "::group::numba runs"
-  "$WORK/venv-head/bin/python" "$BENCH" run --accelerator numba --out "$OUT/head-numba.json"
-  "$WORK/venv-main/bin/python" "$BENCH" run --accelerator numba --out "$OUT/main-numba.json"
-  "$WORK/venv-head/bin/python" "$BENCH" compare \
-    --base "$OUT/main-numba.json" --head "$OUT/head-numba.json" --commit "$COMMIT" \
-    --base-name "numba main" --head-name "numba head" --md "$OUT/table-numba.md"
-  { printf '\n\n'; cat "$OUT/table-numba.md"; } >> "$OUT/table.md"
+  if (
+      "$WORK/venv-head/bin/python" "$BENCH" run --accelerator numba --out "$OUT/head-numba.json" &&
+      "$WORK/venv-main/bin/python" "$BENCH" run --accelerator numba --out "$OUT/main-numba.json" &&
+      "$WORK/venv-head/bin/python" "$BENCH" compare \
+        --base "$OUT/main-numba.json" --head "$OUT/head-numba.json" --commit "$COMMIT" \
+        --base-name "numba main" --head-name "numba head" --md "$OUT/table-numba.md"
+    ); then
+    # Append only when the numba backend actually moved something, to avoid a misleading
+    # "numba tested" section on PRs that touch bulk.py but not the numba path.
+    grep -q "No function moved" "$OUT/table-numba.md" ||
+      { printf '\n\n'; cat "$OUT/table-numba.md"; } >> "$OUT/table.md"
+  else
+    printf '\n\n_numba benchmark failed for this PR; the numpy results above are unaffected._\n' \
+      >> "$OUT/table.md"
+  fi
   echo "::endgroup::"
 fi
 
