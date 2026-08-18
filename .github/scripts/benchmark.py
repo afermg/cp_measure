@@ -117,7 +117,11 @@ def _time(fn, args) -> dict:
     return {"status": "ok", "reps": reps}
 
 
-def run(out_path: str):
+def run(out_path: str, accelerator: str | None = None):
+    if accelerator:
+        import cp_measure
+
+        cp_measure.set_accelerator(accelerator)
     funcs = _functions()
     cells, results = [], {name: {} for name, _, _ in funcs}
     for size in MATRIX["sizes"]:
@@ -149,7 +153,13 @@ def _median_ms(results_for_fn: dict, keys: list[str]):
     return statistics.median(times) * 1e3 if times else None
 
 
-def compare(base: dict, head: dict, commit: str = "") -> str:
+def compare(
+    base: dict,
+    head: dict,
+    commit: str = "",
+    base_name: str = "main",
+    head_name: str = "head",
+) -> str:
     groups: dict[tuple, list[str]] = {}
     for e in head["cells"]:
         groups.setdefault((e["size"], e["n_objects"]), []).append(e["key"])
@@ -159,9 +169,9 @@ def compare(base: dict, head: dict, commit: str = "") -> str:
 
     ref = f"`{commit[:7]}`" if commit else "PR head"
     out = [
-        f"### Benchmark — {ref} vs `main`",
+        f"### Benchmark — {ref}: `{head_name}` vs `{base_name}`",
         "",
-        f"`speedup = main/head` (>1 faster, <1 slower) · median per cell · "
+        f"`speedup = {base_name}/{head_name}` (>1 faster, <1 slower) · median per cell · "
         f"showing functions that moved ≥{AFFECTED:.2f}× either way",
     ]
 
@@ -205,19 +215,24 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--out", required=True)
+    r.add_argument("--accelerator", default=None)
     c = sub.add_parser("compare")
     c.add_argument("--base", required=True)
     c.add_argument("--head", required=True)
     c.add_argument("--commit", default="")
+    c.add_argument("--base-name", default="main")
+    c.add_argument("--head-name", default="head")
     c.add_argument("--md")
     a = p.parse_args(argv)
     if a.cmd == "run":
-        run(a.out)
+        run(a.out, a.accelerator)
     else:
         md = compare(
             json.loads(Path(a.base).read_text()),
             json.loads(Path(a.head).read_text()),
             a.commit,
+            a.base_name,
+            a.head_name,
         )
         (Path(a.md).write_text(md) if a.md else print(md))
     return 0
