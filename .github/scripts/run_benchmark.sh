@@ -52,9 +52,12 @@ echo "::endgroup::"
   --base "$OUT/main.json" --head "$OUT/head.json" --commit "$COMMIT" \
   --base-name main --head-name head --md "$OUT/table.md"
 
-# numba PRs: the numpy table above tracks the numpy backend head-vs-main; this one tracks the numba
-# backend head-vs-main (numba@main is the current baseline — un-ported features fall back to numpy —
-# so this measures how far this PR moves the numba backend forward).
+# numba PRs: the numpy table above tracks the numpy backend head-vs-main. This one times the numba
+# backend head-vs-main and reports the speedup vs numpy main for the features THIS PR changes in
+# numba. --filter-base picks those features (head-numba differs from numba@main), while --base makes
+# the printed speedup numpy@main/numba-head. numba@main falls back to numpy for un-ported features,
+# so for a greenfield feature this IS the whole story; the day a follow-up PR improves an existing
+# numba impl, add a second table with --base main-numba.json for the incremental gain.
 # The numba backend is optional: a failure to install or run it (e.g. main not yet carrying the
 # backend, or a wheel/arch gap) must NOT sink the numpy table — the sticky-comment step only runs
 # on success. Run the pass in a subshell so any failure is caught here, not propagated by `set -e`.
@@ -64,11 +67,12 @@ if [ "$NUMBA" = 1 ]; then
       "$WORK/venv-head/bin/python" "$BENCH" run --accelerator numba --out "$OUT/head-numba.json" &&
       "$WORK/venv-main/bin/python" "$BENCH" run --accelerator numba --out "$OUT/main-numba.json" &&
       "$WORK/venv-head/bin/python" "$BENCH" compare \
-        --base "$OUT/main-numba.json" --head "$OUT/head-numba.json" --commit "$COMMIT" \
-        --base-name "numba main" --head-name "numba head" --md "$OUT/table-numba.md"
+        --base "$OUT/main.json" --filter-base "$OUT/main-numba.json" --head "$OUT/head-numba.json" \
+        --commit "$COMMIT" --base-name "numpy main" --head-name "numba head" \
+        --md "$OUT/table-numba.md"
     ); then
-    # Append only when the numba backend actually moved something, to avoid a misleading
-    # "numba tested" section on PRs that touch bulk.py but not the numba path.
+    # Append when this PR moved a numba feature. A bulk.py-only PR that touches no numba path moves
+    # nothing here, so nothing misleading is appended.
     grep -q "No function moved" "$OUT/table-numba.md" ||
       { printf '\n\n'; cat "$OUT/table-numba.md"; } >> "$OUT/table.md"
   else
