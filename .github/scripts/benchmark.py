@@ -117,7 +117,11 @@ def _time(fn, args) -> dict:
     return {"status": "ok", "reps": reps}
 
 
-def run(out_path: str):
+def run(out_path: str, accelerator: str | None = None):
+    if accelerator:
+        import cp_measure
+
+        cp_measure.set_accelerator(accelerator)
     funcs = _functions()
     cells, results = [], {name: {} for name, _, _ in funcs}
     for size in MATRIX["sizes"]:
@@ -149,34 +153,47 @@ def _median_ms(results_for_fn: dict, keys: list[str]):
     return statistics.median(times) * 1e3 if times else None
 
 
-def compare(base: dict, head: dict, commit: str = "") -> str:
+def compare(
+    base: dict,
+    head: dict,
+    commit: str = "",
+    base_name: str = "main",
+    head_name: str = "head",
+    filter_base: dict | None = None,
+) -> str:
     groups: dict[tuple, list[str]] = {}
     for e in head["cells"]:
         groups.setdefault((e["size"], e["n_objects"]), []).append(e["key"])
     sizes = sorted({s for s, _ in groups})
     counts = sorted({n for _, n in groups})
     br, hr = base["results"], head["results"]
+    # A function is *shown* when it moved vs filter_base (default: the displayed base), but the
+    # printed speedup is always base/head. This lets the numba table pick which functions THIS PR
+    # changed (filter on numba@main) while displaying the total speedup over numpy (base=numpy@main).
+    fr = filter_base["results"] if filter_base else br
 
     ref = f"`{commit[:7]}`" if commit else "PR head"
     out = [
-        f"### Benchmark — {ref} vs `main`",
+        f"### Benchmark — {ref}: `{head_name}` vs `{base_name}`",
         "",
-        f"`speedup = main/head` (>1 faster, <1 slower) · median per cell · "
+        f"`speedup = {base_name}/{head_name}` (>1 faster, <1 slower) · median per cell · "
         f"showing functions that moved ≥{AFFECTED:.2f}× either way",
     ]
 
     lo = 1.0 / AFFECTED  # a cell at or below this is a regression worth reporting
     affected = []  # (function, {(size, count): speedup})
     for fn in sorted(hr):
-        grid, speedups = {}, []
+        grid, moves = {}, []
         for size in sizes:
             for n in counts:
-                m = _median_ms(br.get(fn, {}), groups.get((size, n), []))
-                h = _median_ms(hr[fn], groups.get((size, n), []))
+                keys = groups.get((size, n), [])
+                m = _median_ms(br.get(fn, {}), keys)
+                h = _median_ms(hr[fn], keys)
                 grid[(size, n)] = (m / h) if (m and h) else None
-                if grid[(size, n)]:
-                    speedups.append(grid[(size, n)])
-        if speedups and (max(speedups) >= AFFECTED or min(speedups) <= lo):
+                f = _median_ms(fr.get(fn, {}), keys)
+                if f and h:
+                    moves.append(f / h)  # movement vs filter_base decides inclusion
+        if moves and (max(moves) >= AFFECTED or min(moves) <= lo):
             affected.append((fn, grid))
 
     if not affected:
@@ -205,19 +222,26 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--out", required=True)
+    r.add_argument("--accelerator", default=None)
     c = sub.add_parser("compare")
     c.add_argument("--base", required=True)
     c.add_argument("--head", required=True)
     c.add_argument("--commit", default="")
+    c.add_argument("--base-name", default="main")
+    c.add_argument("--head-name", default="head")
+    c.add_argument("--filter-base", default=None)
     c.add_argument("--md")
     a = p.parse_args(argv)
     if a.cmd == "run":
-        run(a.out)
+        run(a.out, a.accelerator)
     else:
         md = compare(
             json.loads(Path(a.base).read_text()),
             json.loads(Path(a.head).read_text()),
             a.commit,
+            a.base_name,
+            a.head_name,
+            json.loads(Path(a.filter_base).read_text()) if a.filter_base else None,
         )
         (Path(a.md).write_text(md) if a.md else print(md))
     return 0
