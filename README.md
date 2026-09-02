@@ -201,6 +201,7 @@ measurecolocalization.get_correlation_overlap
 
 - [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
 - [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
+- [CharmFeatures](https://gitlab.com/iggman/charm-features): Library, Python module, and command-line utility for extracting Wnd-Charm image features from large TIFF collections.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 
 <details>
