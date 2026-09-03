@@ -94,8 +94,6 @@
               pwp = (
                 python313.withPackages (
                   p: with p; [
-                    python-lsp-server
-                    python-lsp-ruff
                     venvShellHook
                   ]
                 )
