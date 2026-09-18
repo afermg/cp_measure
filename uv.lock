@@ -172,7 +172,7 @@ css = [
 
 [[package]]
 name = "centrosome"
-version = "1.3.3"
+version = "1.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deprecation" },
@@ -183,24 +183,24 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/98/ea/ae6cd66b100b9ce1c8107230ac211b7de529dc15153f7c03e37e274ba47c/centrosome-1.3.3.tar.gz", hash = "sha256:bf808f3f339d9bf88c85c0f32b9039419080fe73991d90b814ddea9fc7e94658", size = 1220305, upload-time = "2026-01-14T18:57:58.934Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/82/66760622339251859a60f555b9e8c7a396a9030fd73b726111f25280876a/centrosome-1.3.4.tar.gz", hash = "sha256:c18ce6958197710ebce48584efc9a49fbdad44ff40ea89ed77f3a0cb602a1f3c", size = 1253710, upload-time = "2026-09-03T17:48:19.56Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d8/88/ed2a246a0b146b8aecabc8bc73a8124ebcd3cc5367e6ec8ad14123236836/centrosome-1.3.3-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:b5c4a712214ce5b9317f89309975bb92c6bdf2084cfb8f81eb10de767e7e45bf", size = 374345, upload-time = "2026-01-14T18:57:33.77Z" },
-    { url = "https://files.pythonhosted.org/packages/b1/7f/9070d81ab098eea3eb119a84301915257d834aac23d2e85b948d4eb9791b/centrosome-1.3.3-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:57625118787e1e2687559fb236ff2e40bad404cd281979c513ec5774955cfb6b", size = 357368, upload-time = "2026-01-14T18:57:35.043Z" },
-    { url = "https://files.pythonhosted.org/packages/59/3a/f66dc1ae0f55eeb1da27c59694e7746811bc5786c0006e69d107886f865d/centrosome-1.3.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:adddfa95f8179c773b32bbcfec672ee25574d322078c34d84b6715920dad453e", size = 1795760, upload-time = "2026-01-14T18:57:36.432Z" },
-    { url = "https://files.pythonhosted.org/packages/28/a5/90cba574372a3cf99201e12fd936cd48db78467a60af8c570e0171085689/centrosome-1.3.3-cp310-cp310-win_amd64.whl", hash = "sha256:a1612c3177a716b9a48a8d0ef2568fb905b74061ec1d98b771d0793cea403309", size = 363518, upload-time = "2026-01-14T18:57:37.833Z" },
-    { url = "https://files.pythonhosted.org/packages/55/b1/6db81df724fe9becb39f56b7d30a854161737467560a938e01743c0c2ab6/centrosome-1.3.3-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:ab2741b126adfa1fc92f13cd345bf8d73c22ae058d54a81ae9ea237eee028834", size = 373354, upload-time = "2026-01-14T18:57:38.861Z" },
-    { url = "https://files.pythonhosted.org/packages/c5/30/895d4d2255e803e76ca20b592ca370d22d4369581dd77a41e01dbd95acac/centrosome-1.3.3-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:b0f6161fe55bf90ea0c0565863a727f5a159b503343736ed74bf1c97b2352ee3", size = 356649, upload-time = "2026-01-14T18:57:39.935Z" },
-    { url = "https://files.pythonhosted.org/packages/3b/64/c0372c8e17d94f388577aec47725e8c77c82eb1f4996dc361b7b4f03bd78/centrosome-1.3.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7f455523759e8d0392af1b0f5bf0dfb5fdacd3f67da195fb941210d6aad84343", size = 1858657, upload-time = "2026-01-14T18:57:41.323Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/b8/83b53ab1d61b65c5bc200fa6f9b827381e9a68a13ab37675912c6b64661b/centrosome-1.3.3-cp311-cp311-win_amd64.whl", hash = "sha256:0968bb2599905d7245994257fe6d53da38d22a740f68a46da0661b34a9662db4", size = 364554, upload-time = "2026-01-14T18:57:42.408Z" },
-    { url = "https://files.pythonhosted.org/packages/41/20/3c330627a566fbf93f33ce4cbe2e34946b4eff4f175c668e836db1a8d16f/centrosome-1.3.3-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:61dca02511a174546c629770cda26fc8d4d1153a763b9f58596ce17c0b9ae583", size = 369182, upload-time = "2026-01-14T18:57:43.327Z" },
-    { url = "https://files.pythonhosted.org/packages/5f/95/5f97fdb2d768a7d2fd87dd33db844ec12c9ed6cd4d5a3c6e82f3d7ec9c00/centrosome-1.3.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:f485bfab877b92a3e2e70f21de37d1d72303062a8a54866b7dccc7de96ec1a08", size = 354590, upload-time = "2026-01-14T18:57:44.337Z" },
-    { url = "https://files.pythonhosted.org/packages/38/59/e0e6ef4f4c37751e54849c74f9418754e6fb0a8e828b2afb75591d916f41/centrosome-1.3.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0ed8ab8747819efae45c90ee345ab509ee89b1257016cc5421b0aff12202b979", size = 1979184, upload-time = "2026-01-14T18:57:45.303Z" },
-    { url = "https://files.pythonhosted.org/packages/9f/80/45186f9ea0a696a9c86c9e73d665260bd4a3e20affc14d9bd9bb25922eac/centrosome-1.3.3-cp312-cp312-win_amd64.whl", hash = "sha256:6eb7094fc8eb7b0ed7afc36c22cd88ac6b417ead4014944e79275d971fdaabf1", size = 362267, upload-time = "2026-01-14T18:57:46.404Z" },
-    { url = "https://files.pythonhosted.org/packages/6b/7e/2ee69d6b4902f1a5c11b05848eac1d9e919ee25409a75fc7bad589070dba/centrosome-1.3.3-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:a106b7f715183a28df84f81dc2421ef857cc4cf20661a63c5766ce5d8dc49895", size = 367545, upload-time = "2026-01-14T18:57:47.342Z" },
-    { url = "https://files.pythonhosted.org/packages/c6/b6/dda351d1d96d6eb4520b31da5eac244727f9966b92889ca90f4a6ca8a671/centrosome-1.3.3-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:bd6e53f7bea13a7adc03afabf608cf5015190367f75e81eb2372d040acbb3048", size = 352763, upload-time = "2026-01-14T18:57:48.45Z" },
-    { url = "https://files.pythonhosted.org/packages/04/45/47c16d8538d2c2f5e8dacb56c867ec80290e8bbb444066470f1c29a57415/centrosome-1.3.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:f217ee70795069af225228449a71b7db06f5adf59ab98ecc3648836705a20969", size = 1884830, upload-time = "2026-01-14T18:57:49.415Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/f3/dfaca58986c665bd5a3a8af26c51bda8be63c412cde89217059387f58b05/centrosome-1.3.3-cp313-cp313-win_amd64.whl", hash = "sha256:9b8d87ffa40b0c92b5eeabcbdb1abfdbe89f7a974e38a3a9a98667916500d319", size = 361063, upload-time = "2026-01-14T18:57:50.597Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/7b/48544f7cb594fda94a461a6ce3a2bc12af96d6270b7321c8d9ce4b05c5fd/centrosome-1.3.4-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:8099e4e8854e663ca7504e2fd9079fbe2275cf1490495f7c3b13f44cc91b6b9a", size = 392258, upload-time = "2026-09-03T17:47:56.162Z" },
+    { url = "https://files.pythonhosted.org/packages/70/b8/626362ac8fdf0e2affca55fcaff59e18ac093c0e349a0eb67f44a4a2b2c6/centrosome-1.3.4-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:659560e4d5b6925801c7460ee4ecbd83f6901c38720ef3a388423f09ed342c8c", size = 372797, upload-time = "2026-09-03T17:47:57.363Z" },
+    { url = "https://files.pythonhosted.org/packages/25/a1/c2152127749e6fc5c8167651ec78dc701632c2f05bf77ca115553ca6f8c1/centrosome-1.3.4-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1d3c240ca7eec0d4954bdd4aa216f30bdf9e922210fe1dc11f3396cca2522b1a", size = 1866351, upload-time = "2026-09-03T17:47:58.723Z" },
+    { url = "https://files.pythonhosted.org/packages/31/12/e5bf73db3c521932d3b8fbc318d8e01e5f5ae39932fa1876b7ee84b94543/centrosome-1.3.4-cp310-cp310-win_amd64.whl", hash = "sha256:48477b4e32e79326b525bc43be2bfcac42e5733cfe0e315addef2be125e48550", size = 367167, upload-time = "2026-09-03T17:48:00.124Z" },
+    { url = "https://files.pythonhosted.org/packages/91/80/1e85ba5039215650c66738759893e83157668594df51ae0ce42664e95716/centrosome-1.3.4-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:e6f302f2b981e65b1654c0270afe423a0e19d5fff5f038cf8e99f684bfee92d6", size = 388981, upload-time = "2026-09-03T17:48:01.018Z" },
+    { url = "https://files.pythonhosted.org/packages/39/46/7337a5e351588fac106cb45dc46e012d671718f9cc7bf64b41436f9ff4a7/centrosome-1.3.4-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:a9a6719c29a2e0b63104b29d17748f1a8ade1d42269922612bbcbadb31664855", size = 369667, upload-time = "2026-09-03T17:48:01.891Z" },
+    { url = "https://files.pythonhosted.org/packages/06/31/101ff5153a4176d58d118ad75ae3ba3d356b18d6f1271aa5aa57358f567b/centrosome-1.3.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6d6e00ad8e2cc84813b287c7c928c3c39790302a4c4ad63d3e2fc626244d4c7e", size = 1921103, upload-time = "2026-09-03T17:48:02.971Z" },
+    { url = "https://files.pythonhosted.org/packages/48/b1/9fc3287749b5b077aba0d77fbd7675a4f302e2edef44968da0f6c5cef31e/centrosome-1.3.4-cp311-cp311-win_amd64.whl", hash = "sha256:0e0140191a00591890fc6078a2b59a910df8ef76768b3a00b84703cbcaba4d78", size = 365204, upload-time = "2026-09-03T17:48:04.419Z" },
+    { url = "https://files.pythonhosted.org/packages/56/66/5e47052e30a71905e8cd820d480cdd4d872697ba93d16dc273507e25b39b/centrosome-1.3.4-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:b43e878fd0916b8a40b10294ee366a809a4c81e73eae9bec15684e6291368b0b", size = 382993, upload-time = "2026-09-03T17:48:05.391Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/86/4e6bdc6bef1a236d2a992e668a3d07c8506db189608501a24547c0f5a068/centrosome-1.3.4-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:ee9190b8514e329972cfaa601a3ed66ec1a4f1968fed310dedb70d8a9236d667", size = 366735, upload-time = "2026-09-03T17:48:06.641Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/1b/66186c542c6e003d4beb1262f21c80e7f3091860bfe6203a60e1e3375af2/centrosome-1.3.4-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5ab2774e9cdfe5df063f68fdbd44512979226903591895662a5c83023fd957ed", size = 2074603, upload-time = "2026-09-03T17:48:07.782Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/f7/e3f4d1371d63ac6c5a25ad0b8648b25b1f88c6005bdef3d701940e62df16/centrosome-1.3.4-cp312-cp312-win_amd64.whl", hash = "sha256:e3b937665ca810ec8fe4b54fd84601a7226a827e446241ef262c53c8dc3f452e", size = 360555, upload-time = "2026-09-03T17:48:09.11Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/3f/32d237f566ace649b1999b0db0ad34cb60787942ff2b93996629dbb682c9/centrosome-1.3.4-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:70f624b74456543d7c14acce3d014d2d3604a9f0f629ee4808263f446fab007a", size = 385731, upload-time = "2026-09-03T17:48:10.1Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/35/14352c588e44c2b8e4a0866bced758d817b47331b83053b31a3b1137db34/centrosome-1.3.4-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:abb44ab83ea836cae6e326b781ba53d03d08cc6d8cfd1c81c4524d74bae7d345", size = 367336, upload-time = "2026-09-03T17:48:11.083Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/fe/69d4c2c578b13d5ed56ff79f3c4c3276fae27ee2d8a7eec0f8b90a56f30f/centrosome-1.3.4-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:531c2f836882788206b04623ce4db91b6ef874b49bfab7b90f2cbb63b124b738", size = 2029241, upload-time = "2026-09-03T17:48:12.224Z" },
+    { url = "https://files.pythonhosted.org/packages/35/36/f53643572c8f1a94e952675283d0b64fa93393f4e6850d3c8ad68479f98d/centrosome-1.3.4-cp313-cp313-win_amd64.whl", hash = "sha256:6c18910fd13c36f7abc2833d19df0568772c6167183ec2592189a11d31cbaf43", size = 358274, upload-time = "2026-09-03T17:48:13.476Z" },
 ]
 
 [[package]]
@@ -559,7 +559,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "centrosome", specifier = ">=1.3.3" },
+    { name = "centrosome", specifier = ">=1.3.4" },
     { name = "mahotas", specifier = ">=1.4.13,<2.0.0" },
     { name = "numba", marker = "extra == 'numba'", specifier = ">=0.59" },
     { name = "numpy", specifier = ">=1.22.1" },

@@ -34,17 +34,16 @@ echo "numba-targeting PR: $NUMBA"
 EXTRA=""
 [ "$NUMBA" = 1 ] && EXTRA="[numba]"
 
-# six is a centrosome runtime dep not declared in its metadata; install it into the bench venvs only.
 echo "::group::PR head env"
 uv venv "$WORK/venv-head"
-uv pip install --python "$WORK/venv-head/bin/python" -e "${HEAD_DIR}${EXTRA}" six
+uv pip install --python "$WORK/venv-head/bin/python" -e "${HEAD_DIR}${EXTRA}"
 "$WORK/venv-head/bin/python" "$BENCH" run --out "$OUT/head.json"
 echo "::endgroup::"
 
 echo "::group::main env"
 git worktree add --detach "$WORK/main" origin/main
 uv venv "$WORK/venv-main"
-uv pip install --python "$WORK/venv-main/bin/python" -e "${WORK}/main${EXTRA}" six
+uv pip install --python "$WORK/venv-main/bin/python" -e "${WORK}/main${EXTRA}"
 "$WORK/venv-main/bin/python" "$BENCH" run --out "$OUT/main.json"
 echo "::endgroup::"
 

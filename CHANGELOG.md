@@ -2,6 +2,13 @@
 
 Notable user-facing changes are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Require centrosome 1.3.4 or newer, which removes its undeclared `six` dependency;
+  test and benchmark environments no longer install `six` as a workaround.
+
 ## [0.2.0] - 2026-08-13
 
 ### Added

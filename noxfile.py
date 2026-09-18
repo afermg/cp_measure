@@ -13,7 +13,6 @@ def tests(session: nox.Session) -> None:
             "pytest",
             "pytest-cov",
             "pytest-markdown-docs",
-            "six",  # centrosome runtime dep, not declared in its metadata
             ".[numba]",  # exercise the numba backend + correctness harness in CI
         )
     except Exception:
