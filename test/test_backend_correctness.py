@@ -1,12 +1,12 @@
-"""Backend correctness harness: numba `intensity` must match the numpy backend.
+"""Backend correctness harness: a numba backend must match its numpy counterpart.
 
-Compares ``cp_measure.core.numba.get_intensity`` against the reference
-``cp_measure.core.get_intensity`` key-by-key on continuous random pixels (no
-exact ties, so ``Location_MaxIntensity_*`` is unambiguous), for 2D and 3D input
-with edge measurements on and off. Also checks the dispatch wiring: under
-``set_accelerator("numba")`` the core registry composes the numba intensity with
-the numpy implementations of every other feature, and an absent numba backend
-raises rather than silently falling back.
+Compares ``intensity`` key-by-key on continuous random pixels (no exact ties, so
+``Location_MaxIntensity_*`` is unambiguous), for 2D and 3D input with edge
+measurements on and off; per-feature value comparisons for the other backends
+live in their own ``test_<feature>_backend`` modules. Also checks the dispatch
+wiring for every ported feature: under ``set_accelerator("numba")`` the core
+registry composes the numba implementations with the numpy ones for everything
+else, and an absent numba backend raises rather than silently falling back.
 """
 
 import numpy as np
@@ -54,7 +54,9 @@ def _assert_dicts_match(ref, got):
 @pytest.mark.parametrize("edge", [True, False], ids=["edge", "noedge"])
 @pytest.mark.parametrize("dim", ["2d", "3d"])
 def test_numba_intensity_matches_numpy(dim, edge, legacy):
-    from cp_measure.core.numba import get_intensity as intensity_numba
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as intensity_numba,
+    )
 
     mask, pixels = _mask_pixels_2d() if dim == "2d" else _mask_pixels_3d()
     ref = intensity_numpy(mask, pixels, edge_measurements=edge, legacy=legacy)

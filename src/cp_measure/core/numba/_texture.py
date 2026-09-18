@@ -1,19 +1,26 @@
 """Numba Haralick texture kernel (single-threaded, cached).
 
-Reimplements ``mahotas.features.haralick(crop, distance, ignore_zeros=True)`` — the
-~99% cost of ``measuretexture.get_texture`` — as one fused per-object kernel:
+Replaces ``mahotas.features.haralick(crop, distance, ignore_zeros=True)`` — nearly
+all of ``measuretexture.get_texture``'s cost — with one fused per-object kernel:
+count pixel pairs into a grey-level co-occurrence matrix (GLCM) per direction,
+drop the pairs touching background (``ignore_zeros``), reduce each GLCM to the 13
+Haralick features. See :func:`cp_measure.core.measuretexture.get_texture` for what
+those features mean.
 
-- build the symmetric grey-level co-occurrence matrix (GLCM) for each direction
-  (BIT-EXACT to ``mahotas.features.texture.cooccurence(symmetric=True)`` — an
-  integer histogram of pixel pairs at the direction offset, counted both ways),
-- apply ``ignore_zeros`` (drop pairs touching background 0),
-- compute the 13 Haralick features per direction from the GLCM.
+The GLCM counts are integers and match ``mahotas`` exactly. The features are
+float reductions of them and agree to ~1e-5 relative, with two deliberate
+differences from ``mahotas/features/texture.py::haralick_features``
+(``preserve_haralick_bug=False``, ``use_x_minus_y_variance=False``):
 
-One kernel covers 2D (4 directions) and 3D (13 directions): the crop is always
-``(Z, Y, X)`` and ``offsets`` are ``distance * (dz, dy, dx)`` deltas. The exact
-formulas + edge cases mirror ``mahotas/features/texture.py::haralick_features``
-(``preserve_haralick_bug=False``, ``use_x_minus_y_variance=False``). The GLCM is
-sized to ``crop.max() + 1`` (NOT a fixed 256) because feature 9
+- Variance (and Correlation, through it) uses the centred ``sum((k - ux)**2 * px)``
+  where mahotas uses the algebraically equal ``dot(px, k**2) - ux**2``. Against a
+  high-precision reference the centred form is the accurate one; mahotas loses up
+  to ~1e-6 relative to cancellation on low-contrast objects.
+- ``HXY1`` and ``HXY2`` are collapsed to ``2 * HX``, exact for a symmetric GLCM,
+  turning two O(fm1^2) loops into O(fm1). This is worth ~2.2x on the backend; see
+  ``_haralick_13`` for the one regime where the residual would matter.
+
+The GLCM is sized to ``crop.max() + 1``, not a fixed 256, because feature 9
 (``px_minus_y.var()``) is taken over a length-``fm1`` array.
 
 ``img_as_ubyte`` / ``regionprops`` stay host-side (scipy/skimage). Serial; no
@@ -60,6 +67,12 @@ def _entropy(a):
 @njit(cache=True, error_model="numpy")
 def haralick_object(crop, offsets):
     """The 13 Haralick features per direction for one ``(Z, Y, X)`` object crop.
+
+    ``crop`` is a contiguous ``(Z, Y, X)`` integer array of grey levels in
+    ``0..gray_levels - 1`` (0 is background); a 2D crop arrives as ``Z == 1``.
+    ``offsets`` is a contiguous ``(n_dir, 3)`` int64 array of ``distance * (dz, dy,
+    dx)`` steps, one row per direction, each component signed and no larger than
+    the crop.
 
     Returns ``(n_dir, 13)`` float64. If ANY direction's GLCM is empty after
     ``ignore_zeros`` (no non-background pairs), the whole object's block is NaN —
@@ -111,7 +124,6 @@ def haralick_object(crop, offsets):
 @njit(cache=True, error_model="numpy")
 def _haralick_13(cmat, fm1, T, out, d):
     """Fill ``out[d, :]`` with the 13 Haralick features of GLCM ``cmat`` (size fm1)."""
-    invT = 1.0 / T
     px = np.zeros(fm1)  # marginal (== row & col marginal; GLCM is symmetric)
     px_plus_y = np.zeros(2 * fm1)  # P(i+j)
     px_minus_y = np.zeros(fm1)  # P(|i-j|)
@@ -125,7 +137,10 @@ def _haralick_13(cmat, fm1, T, out, d):
             c = cmat[i, j]
             if c == 0:
                 continue
-            p = c * invT
+            # c / T, never c * (1/T): the reciprocal is a ulp off for most T, which
+            # leaves a uniform-intensity object with a tiny non-zero variance and so
+            # slips past the sx == 0 guard below (Correlation ~1e15 instead of 1).
+            p = c / T
             asm += p * p
             entropy -= p * np.log2(p)
             ij_sum += i * j * p
@@ -165,9 +180,18 @@ def _haralick_13(cmat, fm1, T, out, d):
     diff_var /= fm1
 
     # Info measures of correlation. For a SYMMETRIC GLCM both cross-entropies
-    # collapse to the marginals: HXY1 = HXY2 = 2*HX (verified vs mahotas to ~1e-15),
-    # so the two O(fm1^2) double-loops become O(fm1) here. (HXY1 = -sum p*log2(px*py)
-    # = -sum_i py[i]log2 px[i] - sum_j px[j]log2 py[j] = 2*HX when px==py; likewise HXY2.)
+    # collapse to the marginals: HXY1 = HXY2 = 2*HX (verified vs mahotas to ~1e-15).
+    # (HXY1 = -sum p*log2(px*py) = -sum_i py[i]log2 px[i] - sum_j px[j]log2 py[j]
+    # = 2*HX when px == py; likewise HXY2.)
+    #
+    # Feature 11 divides by HX, so the collapse is harmless there. Feature 12 feeds
+    # HXY2 - entropy through sqrt(1 - exp(-2*diff)), which amplifies any residual as
+    # diff goes to zero. Measured against mahotas on uniform, two-level, noise and
+    # gradient crops, the worst InfoMeas2 error is 2.6e-13 -- the amplification only
+    # bites on an exactly independent GLCM (p == outer(px, py) to the ulp), where
+    # mahotas cancels to 0 and this gives ~1e-7. Integer counts over a ubyte image
+    # do not produce that, and evaluating HXY2 over the outer product instead costs
+    # 2.2x the runtime of the whole backend, so the collapse stays.
     hx = _entropy(px)
     hxy1 = 2.0 * hx
     hxy2 = 2.0 * hx

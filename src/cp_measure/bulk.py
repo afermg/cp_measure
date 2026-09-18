@@ -56,10 +56,10 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     numba backend exists. This is explicit per-function composition, NOT an
     error-driven fallback.
     """
-    from cp_measure.core.numba import (
+    from cp_measure.core.numba.measureobjectintensity import (
         get_intensity as _numba_intensity,
-        get_texture as _numba_texture,
     )
+    from cp_measure.core.numba.measuretexture import get_texture as _numba_texture
 
     return {
         "core": {**_CORE, "intensity": _numba_intensity, "texture": _numba_texture},

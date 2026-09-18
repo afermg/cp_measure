@@ -154,6 +154,51 @@ InverseDifferenceMoment SumAverage SumVariance SumEntropy Entropy
 DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
 
 
+def _prep(
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
+    scale: int,
+    gray_levels: int,
+) -> tuple[list, int]:
+    """Host preparation shared by every texture backend.
+
+    Returns ``(props, n_directions)``: the per-object crops, and how many
+    directions this image has (4 in 2D, 13 in 3D). Resolving the dimensionality
+    here keeps that rule in one place — a backend must not re-derive it from an
+    array it has already normalised, or a 2D image and a single-slice volume
+    become indistinguishable.
+    """
+    if scale < 1:
+        raise ValueError(f"scale must be at least 1 pixel, got {scale}")
+    if masks.shape != pixels.shape:
+        raise ValueError(
+            f"masks and pixels must have the same shape, got {masks.shape} "
+            f"and {pixels.shape}"
+        )
+    n_directions = 13 if pixels.ndim > 2 else 4
+
+    # mahotas.features.haralick bricks itself when provided a
+    # dtype larger than uint8 (version 1.4.3)
+    pixels = skimage.util.img_as_ubyte(pixels, force_copy=True)
+    pixels[~masks.astype(bool)] = 0
+    if gray_levels != 256:
+        pixels = skimage.exposure.rescale_intensity(
+            pixels, in_range=(0, 255), out_range=(0, gray_levels - 1)
+        ).astype(numpy.uint8)
+    return skimage.measure.regionprops(masks, pixels), n_directions
+
+
+def _pack(
+    features: NDArray[numpy.floating], scale: int, gray_levels: int
+) -> dict[str, NDArray[numpy.floating]]:
+    """``(n_directions, 13, n_objects)`` -> ``{Feature_scale_direction_levels: values}``."""
+    return {
+        "{}_{:d}_{:02d}_{:d}".format(name, scale, direction_i, gray_levels): values
+        for direction_i, direction_features in enumerate(features)
+        for name, values in zip(F_HARALICK, direction_features)
+    }
+
+
 def get_texture(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -162,10 +207,27 @@ def get_texture(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object Haralick texture features.
 
+    Haralick features measure how often brightness values appear next to one
+    another inside each object:
+
+    1. Crop the object from the image.
+    2. Choose a direction and distance — for example, "3 pixels to the right".
+    3. For every valid pixel pair, record the brightness of the first pixel and
+       the brightness of the neighbouring pixel.
+    4. Store those counts in a table, the gray-level co-occurrence matrix (GLCM).
+    5. Turn that table into 13 summary measurements describing properties such as
+       contrast, uniformity, randomness/entropy and correlation.
+    6. Repeat for 4 directions in 2D, 13 directions in 3D.
+
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
 
     Parameters
     ----------
+    masks : integer array, 2D ``(Y, X)`` or 3D ``(Z, Y, X)``
+        Label image, contiguous ``1..N``, same shape as ``pixels``.
+    pixels : float array, same shape as ``masks``
+        Intensity image. Its dimensionality selects the directions measured:
+        4 in 2D, 13 in 3D.
     gray_levels : int, optional (default is 256)
         Number of gray levels. Measuring at more levels gives you _potentially_
         more detailed information about your image, but at the cost of somewhat
@@ -194,45 +256,19 @@ def get_texture(
     CellProfiler 3 versions it was fixed at 256.  The minimum number of levels is
     2, the maximum is 256.
     """
-    # Modified to use the number of dimensions in pixels to determine the number of directions
-    n_directions = 13 if pixels.ndim > 2 else 4
-
     # MODIFIED: We assume that the mask provided has the same shape
     # as pixels, thus no cropping is performed
-
-    # mahotas.features.haralick bricks itself when provided a
-    # dtype larger than uint8 (version 1.4.3)
-    pixels = skimage.util.img_as_ubyte(pixels, force_copy=True)
-    pixels[~masks.astype(bool)] = 0
-    if gray_levels != 256:
-        pixels = skimage.exposure.rescale_intensity(
-            pixels, in_range=(0, 255), out_range=(0, gray_levels - 1)
-        ).astype(numpy.uint8)
-    props = skimage.measure.regionprops(masks, pixels)
+    props, n_directions = _prep(masks, pixels, scale, gray_levels)
 
     features = numpy.empty((n_directions, 13, len(props)))
-
     for index, prop in enumerate(props):
-        label_data = prop["intensity_image"]
         try:
             features[:, :, index] = mahotas.features.haralick(
-                label_data, distance=scale, ignore_zeros=True
+                prop.image_intensity, distance=scale, ignore_zeros=True
             )
         except ValueError:
             features[:, :, index] = numpy.nan
 
     # MODIFIED: Reconstructed name:
     # Texture_{X}_{scale}_{direction_id}_{graylevels}
-    results = {}
-    for direction_i, direction_features in enumerate(features):
-        for feature_name, values in zip(F_HARALICK, direction_features):
-            results[
-                "{}_{:d}_{:02d}_{:d}".format(
-                    feature_name,
-                    scale,
-                    direction_i,
-                    gray_levels,
-                )
-            ] = values
-
-    return results
+    return _pack(features, scale, gray_levels)
