@@ -43,9 +43,32 @@ def sanitize_masks(masks: NDArray) -> tuple[NDArray, NDArray[numpy.int64]]:
     return clean, ids
 
 
+def _sanitize_arg(masks):
+    """Relabel one image, or every image of a batch.
+
+    A batch is a list/tuple of images or a 4D ``(B, Z, Y, X)`` array (3D is a
+    single volume — the convention :func:`cp_measure.primitives.shapes.to_bzyx`
+    uses). Each image is relabelled on its own, because results are per image:
+    relabelling a batch as a whole would leave an image whose labels start above
+    1, and the measurements index their output by label. Dense input is returned
+    unchanged, so an already-clean batch costs one ``bincount`` per image and no
+    copy.
+    """
+    if isinstance(masks, (list, tuple)):
+        return [sanitize_masks(m)[0] for m in masks]
+    if numpy.ndim(masks) == 4:
+        images = list(masks)  # views, no copy
+        clean = [sanitize_masks(m)[0] for m in images]
+        if all(c is m for c, m in zip(clean, images)):
+            return masks
+        return numpy.stack(clean)
+    return sanitize_masks(masks)[0]
+
+
 def sanitize(func: Callable) -> Callable:
     """Wrap a ``get_*`` function to relabel its label argument (named in
-    :data:`_MASK_PARAMS`) to ``1..N`` before the call; functions with no such
+    :data:`_MASK_PARAMS`) to ``1..N`` before the call — per image when the
+    argument is a batch (see :func:`_sanitize_arg`); functions with no such
     argument are returned unchanged. Use this only to call a raw measurement
     function directly with gapped IDs — the entry points already sanitize.
     """
@@ -57,7 +80,7 @@ def sanitize(func: Callable) -> Callable:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         bound = sig.bind(*args, **kwargs)
-        bound.arguments[param], _ids = sanitize_masks(bound.arguments[param])
+        bound.arguments[param] = _sanitize_arg(bound.arguments[param])
         return func(*bound.args, **bound.kwargs)
 
     return wrapper
