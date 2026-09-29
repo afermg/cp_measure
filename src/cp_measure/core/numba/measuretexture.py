@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 
 from cp_measure.core.measuretexture import _pack, _prep
 from cp_measure.core.numba._texture import DELTAS_2D, DELTAS_3D, haralick_object
+from cp_measure.primitives.shapes import _stack
 
 
 def get_texture(
@@ -42,6 +43,12 @@ def get_texture(
         raise ValueError("masks and pixels must both be batches, or both single images")
     if not masks_batched:
         return _texture_image(masks, pixels, scale, gray_levels)
+    # A list/tuple batch must be equal-shape, as ``to_bzyx`` requires; ``_stack``
+    # rejects a ragged one without normalising 2D images to volumes.
+    if isinstance(masks, (list, tuple)):
+        masks = _stack(masks, "masks")
+    if isinstance(pixels, (list, tuple)):
+        pixels = _stack(pixels, "pixels")
     if len(masks) != len(pixels):
         raise ValueError(
             f"batch size mismatch: {len(masks)} masks vs {len(pixels)} images"

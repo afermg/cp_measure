@@ -89,6 +89,16 @@ def test_batch_list_matches_per_image():
 
 
 @requires_numba
+def test_ragged_batch_raises():
+    # Batches must be equal-shape (the to_bzyx contract); a ragged one is rejected
+    # rather than measured image by image.
+    small = np.ones((SIZE_2D, SIZE_2D), np.int32)
+    large = np.ones((SIZE_2D + 2, SIZE_2D), np.int32)
+    with pytest.raises(ValueError, match="ragged"):
+        _numba()([small, large], [small, large], scale=1)
+
+
+@requires_numba
 def test_empty_image_empty_arrays():
     mask = np.zeros((SIZE_2D, SIZE_2D), np.int32)
     pixels = get_rng().random((SIZE_2D, SIZE_2D))
