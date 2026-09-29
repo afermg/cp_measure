@@ -43,7 +43,8 @@ def _data_3d():
 def _assert_close(got, exp):
     # Variance and Correlation use the centred form where mahotas uses the raw
     # dot(px, k**2) - ux**2; they differ by up to ~1e-6 relative on low-contrast
-    # objects, in our favour. Everything else tracks mahotas far more tightly.
+    # objects, in our favour. InfoMeas2 amplifies round-off near zero, so allow
+    # a small absolute error for it without changing the computation.
     assert set(got) == set(exp), set(got).symmetric_difference(exp)
     for key in exp:
         loose = key.startswith(("Variance", "Correlation"))
@@ -51,7 +52,7 @@ def _assert_close(got, exp):
             got[key],
             exp[key],
             rtol=1e-5 if loose else 1e-6,
-            atol=1e-8,
+            atol=1e-7 if key.startswith("InfoMeas2_") else 1e-8,
             equal_nan=True,
             err_msg=key,
         )
@@ -94,6 +95,21 @@ def test_empty_image_empty_arrays():
     got = _numba()(mask, pixels)
     assert set(got) == set(ref.get_texture(mask, pixels))
     assert all(v.shape == (0,) for v in got.values())
+
+
+@requires_numba
+def test_infomeas2_independent_glcm_rounding():
+    """Independent pixel pairs expose small near-zero InfoMeas2 round-off."""
+    # The horizontal GLCM is proportional to [[4, 2], [2, 1]], the outer
+    # product of its marginals after normalization, so InfoMeas2 is zero.
+    row = np.array([1, 1, 1, 1, 1, 2, 1, 2, 2, 1], dtype=np.uint8)
+    pixels = np.tile(row, (4, 1))
+    masks = np.ones(pixels.shape, dtype=np.int32)
+
+    _assert_close(
+        _numba()(masks, pixels, scale=1),
+        ref.get_texture(masks, pixels, scale=1),
+    )
 
 
 @requires_numba

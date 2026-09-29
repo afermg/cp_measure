@@ -10,7 +10,8 @@ requires_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
 # Variance and Correlation use the centred form where mahotas uses the raw
 # dot(px, k**2) - ux**2, which loses up to ~1e-6 relative to cancellation on
-# low-contrast objects; the rest agree far more tightly. See ``_texture``.
+# low-contrast objects. InfoMeas2 (index 12) needs a small absolute tolerance
+# for round-off near zero; the rest agree far more tightly. See ``_texture``.
 _LOOSE = {2: 1e-5, 3: 1e-5}
 
 
@@ -21,7 +22,7 @@ def _assert_features_close(got, exp):
             got[:, index],
             exp[:, index],
             rtol=_LOOSE.get(index, 1e-6),
-            atol=1e-8,
+            atol=1e-7 if index == 12 else 1e-8,
             equal_nan=True,
             err_msg=f"feature {index}",
         )

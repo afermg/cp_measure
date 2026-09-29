@@ -186,12 +186,11 @@ def _haralick_13(cmat, fm1, T, out, d):
     #
     # Feature 11 divides by HX, so the collapse is harmless there. Feature 12 feeds
     # HXY2 - entropy through sqrt(1 - exp(-2*diff)), which amplifies any residual as
-    # diff goes to zero. Measured against mahotas on uniform, two-level, noise and
-    # gradient crops, the worst InfoMeas2 error is 2.6e-13 -- the amplification only
-    # bites on an exactly independent GLCM (p == outer(px, py) to the ulp), where
-    # mahotas cancels to 0 and this gives ~1e-7. Integer counts over a ubyte image
-    # do not produce that, and evaluating HXY2 over the outer product instead costs
-    # 2.2x the runtime of the whole backend, so the collapse stays.
+    # diff goes to zero. An independent GLCM is possible even for a two-level
+    # uint8 image: mahotas can return 0 while this gives ~2.1e-8. Tests allow
+    # atol=1e-7 for InfoMeas2 only, accepting this negligible rounding residual
+    # without changing the computation. Evaluating HXY2 over the outer product
+    # instead costs 2.2x the runtime of the whole backend, so the collapse stays.
     hx = _entropy(px)
     hxy1 = 2.0 * hx
     hxy2 = 2.0 * hx
