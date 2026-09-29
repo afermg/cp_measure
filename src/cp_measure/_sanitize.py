@@ -43,7 +43,7 @@ def sanitize_masks(masks: NDArray) -> tuple[NDArray, NDArray[numpy.int64]]:
     return clean, ids
 
 
-def _sanitize_arg(masks):
+def _sanitize_arg(masks: NDArray | list | tuple) -> list[NDArray] | NDArray:
     """Relabel one image, or every image of a batch.
 
     A batch is a list/tuple of images or a 4D ``(B, Z, Y, X)`` array (3D is a
@@ -53,6 +53,10 @@ def _sanitize_arg(masks):
     1, and the measurements index their output by label. Dense input is returned
     unchanged, so an already-clean batch costs one ``bincount`` per image and no
     copy.
+
+    The return mirrors the input shape rather than a single type: a ``list`` for
+    a list/tuple batch, a stacked 4D array for a 4D batch (the input untouched
+    when already clean), and a single array otherwise.
     """
     if isinstance(masks, (list, tuple)):
         return [sanitize_masks(m)[0] for m in masks]
