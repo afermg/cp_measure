@@ -101,3 +101,35 @@ def test_featurizer_uses_original_ids_and_sanitizes_once(monkeypatch):
     # original IDs in the rows, and identical geometry -> identical values
     assert rows_g == [(None, "object", 1), (None, "object", 5), (None, "object", 17)]
     np.testing.assert_allclose(data_g, data_c, equal_nan=True)
+
+
+def _batch_pair():
+    """Two same-shape masks whose label sets are independently gapped."""
+    a = np.zeros((8, 8), np.int32)
+    a[1:3, 1:3], a[5:7, 5:7] = 1, 17
+    b = np.zeros((8, 8), np.int32)
+    b[2:5, 2:5] = 5
+    return a, b
+
+
+def _labels_per_image(masks, pixels=None):
+    """Stand-in measurement reporting the label set each image arrived with."""
+    return [sorted(set(np.unique(m)) - {0}) for m in masks]
+
+
+@pytest.mark.parametrize("stacked", [False, True], ids=["list", "4d"])
+def test_sanitize_relabels_each_image_of_a_batch(stacked):
+    # A batch (list, or a 4D (B, Z, Y, X) array) is sanitized per image: every
+    # image must arrive as 1..N on its own, since results are per image.
+    a, b = _batch_pair()
+    batch = np.stack([a[np.newaxis], b[np.newaxis]]) if stacked else [a, b]
+    assert sanitize(_labels_per_image)(batch) == [[1, 2], [1]]
+
+
+def test_sanitize_dense_batch_is_not_copied():
+    # Already 1..N: sanitation must not restack or copy the batch.
+    a, b = _batch_pair()
+    a[a == 17], b[b == 5] = 2, 1
+    dense = np.stack([a[np.newaxis], b[np.newaxis]])
+    assert sanitize(lambda masks, pixels=None: masks)(dense) is dense
+    assert sanitize(lambda masks, pixels=None: masks)([a, b])[0] is a
