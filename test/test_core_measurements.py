@@ -3,6 +3,8 @@ from itertools import product
 import numpy
 import pytest
 
+import cp_measure
+from cp_measure._detect import HAS_NUMBA
 from cp_measure.bulk import get_core_measurements, get_core_measurements_3d
 from cp_measure.core.measurecolocalization import get_correlation_overlap
 from cp_measure.core.measureobjectintensity import (
@@ -17,9 +19,28 @@ from cp_measure.core.measureobjectintensity import (
 from cp_measure.examples import get_masks, get_pixels
 
 
+@pytest.fixture(params=[None, "numba"], ids=["numpy", "numba"])
+def accelerator(request):
+    """Run a contract test against each installed backend.
+
+    The contracts below (output length, 2D-only features) hold for every
+    accelerator, so an accelerated implementation that changes the shape or the
+    dimensionality rule of a result fails here rather than in a backend-specific
+    test that only compares values.
+    """
+    if request.param == "numba" and not HAS_NUMBA:
+        pytest.skip("numba not installed")
+    previous = cp_measure._ACCELERATOR
+    cp_measure.set_accelerator(request.param)
+    yield request.param
+    cp_measure.set_accelerator(previous)
+
+
 @pytest.mark.parametrize("named_mask", get_masks().items())
 @pytest.mark.parametrize("pixels", [get_pixels()])
-def test_measurements(named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarray):
+def test_measurements(
+    named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarray, accelerator
+):
     exceptions = (
         ("one", "feret"),
         ("one", "zernike"),
@@ -48,7 +69,7 @@ def test_measurements(named_mask: tuple[str, numpy.ndarray], pixels: numpy.ndarr
                 assert result != 0 and not numpy.isnan(result), text
 
 
-def test_3d_measurements():
+def test_3d_measurements(accelerator):
     """Test 3D support: 2D-only measurements return empty, 3D ones produce valid output."""
     size = 240
     rng = numpy.random.default_rng(42)
