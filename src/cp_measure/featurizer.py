@@ -6,11 +6,16 @@ Provides two stateless functions:
 - :func:`featurize` takes that configuration together with image and mask
   arrays and returns a numpy feature matrix with column and row metadata.
 
+``featurize`` is the single public entry point and takes a batch in the canonical
+shape ``(B, C, *spatial)`` (image) and ``(B, M, *spatial)`` (masks); a single image
+is ``B == 1``. Dimensionality is declared with ``is_3d``, never inferred from shape.
+
 Example
 -------
 >>> from cp_measure.featurizer import make_featurizer_config, featurize
 >>> config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
->>> data, columns, rows = featurize(image, masks, config)
+>>> # image: (B, 2, Y, X)   masks: (B, 2, Y, X)
+>>> data, columns, rows = featurize(image, masks, config)  # is_3d=False (2-D)
 """
 
 from __future__ import annotations
@@ -170,69 +175,24 @@ def make_featurizer_config(
     }
 
 
-def featurize(
+def _featurize_one(
     image: np.ndarray,
     masks: np.ndarray,
-    config: dict | None = None,
+    channels: list[str],
+    objects: list[str],
+    shape_feats: list[tuple],
+    channel_feats: list[tuple],
+    corr_feats: list[tuple],
     *,
     image_id: str | int | None = None,
 ) -> tuple[np.ndarray, list[str], list[tuple]]:
-    """Compute all configured features for the given image and masks.
+    """Measure one image ``(C, *spatial)`` with pre-resolved names and feature lists.
 
-    Parameters
-    ----------
-    image : numpy.ndarray
-        Multichannel image with shape ``(C, H, W)`` or ``(C, Z, H, W)``.
-    masks : numpy.ndarray
-        Integer-labeled masks with shape ``(M, H, W)`` or
-        ``(M, Z, H, W)``.  Must have the same ``ndim`` as *image*.
-        Background is 0; any positive integer labels (non-contiguous IDs are
-        relabelled internally, array untouched, original IDs reported in the
-        rows; see :mod:`cp_measure._sanitize`).
-    config : dict, optional
-        Configuration dictionary produced by :func:`make_featurizer_config`.
-        If ``None``, all features are enabled with default parameters.
-    image_id : str | int | None, optional
-        Identifier for this image, stored in each row tuple.
-
-    Returns
-    -------
-    data : numpy.ndarray
-        2-D float array of shape ``(n_rows, n_features)``.
-    columns : list[str]
-        Feature column names.  Shape features are bare names (e.g.
-        ``"Area"``), per-channel features are ``"{feature}__{channel}"``,
-        and correlation features are ``"{feature}__{ch1}__{ch2}"``.
-    rows : list[tuple]
-        One ``(image_id, object_name, label)`` tuple per row.
+    Internal per-item worker: all setup (config/name resolution, feature collection,
+    user-facing warnings) is done once by the public batcher :func:`featurize`, so this
+    runs only the per-object measurement loop. Returns ``(data, columns, rows)`` as
+    described on :func:`featurize`.
     """
-    if config is None:
-        config = make_featurizer_config()
-    channels, objects = _resolve_names(config, image.shape[0])
-    _validate(image, masks, channels, objects)
-
-    from cp_measure.bulk import (
-        get_core_measurements,
-        get_core_measurements_3d,
-        get_correlation_measurements,
-    )
-
-    is_3d = image.ndim == 4
-    legacy = config.get("legacy", False)
-    # Sanitize each mask once in the loop below, so fetch raw (unsanitized) funcs.
-    core_funcs = (
-        get_core_measurements_3d(legacy=legacy, sanitize=False)
-        if is_3d
-        else get_core_measurements(legacy=legacy, sanitize=False)
-    )
-    corr_funcs = get_correlation_measurements(sanitize=False)
-
-    if is_3d:
-        _warn_2d_only_in_3d(config)
-    channel_feats = _collect_channel_features(config, core_funcs)
-    shape_feats = _collect_shape_features(config, core_funcs)
-    corr_feats = _collect_correlation_features(config, corr_funcs, len(channels))
-
     # Shape features are purely geometric and ignore pixel values.
     dummy_pixels = None
 
@@ -288,11 +248,159 @@ def featurize(
 
         all_rows.extend((image_id, object_name, label) for label in ids)
 
-    if not all_blocks:
-        raise ValueError("all masks have no labels (all zeros)")
+    return np.vstack(all_blocks), columns, all_rows
 
-    data = np.vstack(all_blocks)
-    return data, columns, all_rows
+
+def featurize(
+    image: np.ndarray,
+    masks: np.ndarray,
+    config: dict | None = None,
+    *,
+    is_3d: bool = False,
+    image_ids: list[str | int] | None = None,
+) -> tuple[np.ndarray, list[str], list[tuple]]:
+    """Compute all configured features for a batch of images.
+
+    The single public entry point. Input is strictly ``(B, C, *spatial)``:
+    ``(B, C, Y, X)`` when ``is_3d=False`` and ``(B, C, Z, Y, X)`` when ``is_3d=True``;
+    masks are ``(B, M, *spatial)`` with matching rank. A single image is ``B == 1``.
+
+    Dimensionality is *declared* via ``is_3d``, never inferred from shape, so a
+    single-channel volume ``(1, 1, Z, Y, X)`` is never mistaken for a multichannel
+    2-D image. Rank is validated against ``is_3d`` and any deviation is a hard error.
+
+    Images whose mask stack has no labelled objects are skipped before any
+    measurement runs; the number skipped is reported via a warning.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        ``(B, C, Y, X)`` or ``(B, C, Z, Y, X)`` (see ``is_3d``).
+    masks : numpy.ndarray
+        ``(B, M, Y, X)`` or ``(B, M, Z, Y, X)``; integer labels, background 0.
+    config : dict, optional
+        As :func:`make_featurizer_config`; defaults to all features enabled.
+    is_3d : bool, default False
+        Declare 3-D input (adds the ``Z`` axis). Rank is validated against this.
+    image_ids : list, optional
+        One identifier per batch item, stored in each row. Defaults to the batch
+        index; pass caller-unique ids to keep provenance across multiple calls.
+
+    Returns
+    -------
+    data : numpy.ndarray
+        2-D float array ``(n_rows, n_features)`` stacked over all non-empty images.
+    columns : list[str]
+        Feature column names (identical across batch items).
+    rows : list[tuple]
+        One ``(image_id, object_name, label)`` per row.
+    """
+    _validate_canonical(image, masks, is_3d)
+    batch_size = image.shape[0]
+    if image_ids is not None and len(image_ids) != batch_size:
+        raise ValueError(
+            f"image_ids has {len(image_ids)} entries but batch has {batch_size} images"
+        )
+
+    # Resolve config, names and feature lists ONCE — they are constant across the batch,
+    # so user-facing warnings fire a single time and setup is not repeated per item.
+    if config is None:
+        config = make_featurizer_config()
+    channels, objects = _resolve_names(config, image.shape[1])
+    _validate_names(image, masks, channels, objects)
+
+    from cp_measure.bulk import (
+        get_core_measurements,
+        get_core_measurements_3d,
+        get_correlation_measurements,
+    )
+
+    legacy = config.get("legacy", False)
+    # Sanitize each mask once per item below, so fetch raw (unsanitized) funcs.
+    core_funcs = (
+        get_core_measurements_3d(legacy=legacy, sanitize=False)
+        if is_3d
+        else get_core_measurements(legacy=legacy, sanitize=False)
+    )
+    corr_funcs = get_correlation_measurements(sanitize=False)
+    if is_3d:
+        _warn_2d_only_in_3d(config)
+    shape_feats = _collect_shape_features(config, core_funcs)
+    channel_feats = _collect_channel_features(config, core_funcs)
+    corr_feats = _collect_correlation_features(config, corr_funcs, len(channels))
+
+    all_blocks: list[np.ndarray] = []
+    all_rows: list[tuple] = []
+    columns: list[str] | None = None
+    skipped: list[int] = []
+
+    for b in range(batch_size):
+        if not masks[b].any():  # empty mask stack: skip before the hot path
+            skipped.append(b)
+            continue
+        image_id = image_ids[b] if image_ids is not None else b
+        data, cols, rows = _featurize_one(
+            image[b],
+            masks[b],
+            channels,
+            objects,
+            shape_feats,
+            channel_feats,
+            corr_feats,
+            image_id=image_id,
+        )
+        # Every item is measured with the same feature lists, so columns are
+        # identical by construction (per-object consistency is guarded in
+        # _featurize_one); just capture them from the first non-empty item.
+        if columns is None:
+            columns = cols
+        all_blocks.append(data)
+        all_rows.extend(rows)
+
+    if not all_blocks:
+        raise ValueError("no images had labelled objects (all batch items were empty)")
+    if skipped:
+        warnings.warn(
+            f"{len(skipped)} of {batch_size} image(s) had no labelled objects and were "
+            f"skipped (batch indices {skipped}).",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return np.vstack(all_blocks), columns, all_rows
+
+
+def _validate_canonical(image: np.ndarray, masks: np.ndarray, is_3d: bool) -> None:
+    """Enforce the strict ``(B, C, *spatial)`` contract; raise on any deviation."""
+    expected_ndim = 5 if is_3d else 4
+    img_shape = "(B, C, Z, Y, X)" if is_3d else "(B, C, Y, X)"
+    mask_shape = "(B, M, Z, Y, X)" if is_3d else "(B, M, Y, X)"
+    if image.ndim != expected_ndim:
+        hint = ""
+        if image.ndim == 4:
+            hint = " Pass is_3d=False for 2-D data."
+        elif image.ndim == 5:
+            hint = " Pass is_3d=True for a 3-D volume."
+        raise ValueError(
+            f"image must be {img_shape} for is_3d={is_3d} (ndim {expected_ndim}), "
+            f"got ndim {image.ndim} with shape {image.shape}.{hint}"
+        )
+    if masks.ndim != expected_ndim:
+        raise ValueError(
+            f"masks must be {mask_shape} for is_3d={is_3d} (ndim {expected_ndim}), "
+            f"got ndim {masks.ndim} with shape {masks.shape}"
+        )
+    if image.shape[0] != masks.shape[0]:
+        raise ValueError(
+            f"batch size mismatch: image has {image.shape[0]} items, "
+            f"masks has {masks.shape[0]}"
+        )
+    if image.shape[2:] != masks.shape[2:]:
+        raise ValueError(
+            f"spatial dims mismatch: image {image.shape[2:]}, masks {masks.shape[2:]}"
+        )
+    if not np.issubdtype(masks.dtype, np.integer):
+        raise TypeError(f"masks must be integer dtype, got {masks.dtype}")
 
 
 # ---------------------------------------------------------------------------
@@ -322,42 +430,28 @@ def _resolve_names(config: dict, n_image_channels: int) -> tuple[list[str], list
     return channels, objects
 
 
-def _validate(
+def _validate_names(
     image: np.ndarray,
     masks: np.ndarray,
     channels: list[str],
     objects: list[str],
 ) -> None:
-    """Validate image and mask inputs."""
-    if image.ndim not in (3, 4):
+    """Check channel/object counts against the provided names.
+
+    Rank, spatial dims, batch size and dtype are already enforced by
+    :func:`_validate_canonical`; this only checks the name counts (``C`` and ``M``,
+    the axis-1 sizes of the canonical ``(B, C|M, *spatial)`` arrays).
+    """
+    if channels and image.shape[1] != len(channels):
         raise ValueError(
-            f"image must be 3D (C, H, W) or 4D (C, Z, H, W), got shape {image.shape}"
-        )
-    if masks.ndim not in (3, 4):
-        raise ValueError(
-            f"masks must be 3D (M, H, W) or 4D (M, Z, H, W), got shape {masks.shape}"
-        )
-    if image.ndim != masks.ndim:
-        raise ValueError(
-            f"image and masks must have the same number of dimensions, "
-            f"got image.ndim={image.ndim} and masks.ndim={masks.ndim}"
-        )
-    if channels and image.shape[0] != len(channels):
-        raise ValueError(
-            f"image has {image.shape[0]} channels but "
+            f"image has {image.shape[1]} channels but "
             f"{len(channels)} channel names were provided"
         )
-    if masks.shape[0] != len(objects):
+    if masks.shape[1] != len(objects):
         raise ValueError(
-            f"masks has {masks.shape[0]} object masks but "
+            f"masks has {masks.shape[1]} object masks but "
             f"{len(objects)} object names were provided"
         )
-    if image.shape[1:] != masks.shape[1:]:
-        raise ValueError(
-            f"spatial dims mismatch: image {image.shape[1:]}, masks {masks.shape[1:]}"
-        )
-    if not np.issubdtype(masks.dtype, np.integer):
-        raise TypeError(f"masks must be integer dtype, got {masks.dtype}")
 
 
 def _collect_channel_features(config: dict, core_funcs: dict) -> list[tuple]:

@@ -46,16 +46,18 @@ The simplest way to extract all features from an image and its masks:
 import numpy as np
 from cp_measure.featurizer import featurize
 
-# image: (C, H, W) float array, masks: (N_masks, H, W) integer labels
-image = np.random.default_rng(42).random((2, 240, 240))
-masks = np.zeros((1, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1
-masks[0, 150:200, 150:200] = 2
+# Canonical input: image (B, C, Y, X), masks (B, N_masks, Y, X). A single image is B=1.
+# Dimensionality is declared with is_3d (default False), never inferred from shape.
+image = np.random.default_rng(42).random((1, 2, 240, 240))
+masks = np.zeros((1, 1, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1
+masks[0, 0, 150:200, 150:200] = 2
 
-data, columns, rows = featurize(image, masks)
+data, columns, rows = featurize(image, masks)  # is_3d=False
 # data:    np.ndarray of shape (n_objects, n_features)
 # columns: feature names (e.g. "Area", "Intensity_MeanIntensity__ch0", ...)
-# rows:    [(None, "object", 1), (None, "object", 2)]  — (image_id, object_name, label) per row
+# rows:    [(0, "object", 1), (0, "object", 2)]  — (image_id, object_name, label) per row
+#          image_id defaults to the batch index; pass image_ids=[...] for your own ids
 ```
 
 To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's first axis and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
@@ -65,10 +67,10 @@ import numpy as np
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 # Recreate variables from previous examples for this block to run in isolation
-image = np.random.default_rng(42).random((2, 240, 240))
-masks = np.zeros((1, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1
-masks[0, 150:200, 150:200] = 2
+image = np.random.default_rng(42).random((1, 2, 240, 240))
+masks = np.zeros((1, 1, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1
+masks[0, 0, 150:200, 150:200] = 2
 
 # Disable texture features, name channels explicitly
 config = make_featurizer_config(["DNA", "ER"], texture=False)
@@ -82,21 +84,21 @@ import numpy as np
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 # Recreate variables from previous examples for this block to run in isolation
-image = np.random.default_rng(42).random((2, 240, 240))
+image = np.random.default_rng(42).random((1, 2, 240, 240))
 
 config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
 
-masks = np.zeros((2, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1    # nucleus 1
-masks[1, 40:110, 40:110] = 1    # cell 1
-masks[1, 150:200, 150:200] = 2  # cell 2
-masks[1, 175:180, 180:210] = 2  # Minor asymmetries on bottom right edge of cells
+masks = np.zeros((1, 2, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1    # nucleus 1
+masks[0, 1, 40:110, 40:110] = 1    # cell 1
+masks[0, 1, 150:200, 150:200] = 2  # cell 2
+masks[0, 1, 175:180, 180:210] = 2  # Minor asymmetries on bottom right edge of cells
 
 data, columns, rows = featurize(image, masks, config)
-# rows: [(None, "nuclei", 1), (None, "cells", 1), (None, "cells", 2)]
+# rows: [(0, "nuclei", 1), (0, "cells", 1), (0, "cells", 2)]
 ```
 
-Volumetric `(C, Z, H, W)` data is supported. The featurizer automatically skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`). All other features (`intensity`, `sizeshape`, `texture`, `granularity`, correlations) work for both 2D and 3D.
+Volumetric data is supported: pass `(B, C, Z, Y, X)` image / `(B, M, Z, Y, X)` masks together with `is_3d=True` (dimensionality is declared, not inferred — so a single-channel volume is never mistaken for a multichannel 2D image). The featurizer automatically skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`). All other features (`intensity`, `sizeshape`, `texture`, `granularity`, correlations) work for both 2D and 3D.
 
 The output is plain numpy + lists, so converting to a DataFrame is straightforward:
 
@@ -190,7 +192,7 @@ measurecolocalization.get_correlation_overlap
 ### Important notes
 
 - **Labels**: Any positive integer labels work — non-contiguous IDs (e.g. `[1, 3, 4]`) are relabelled to `1..N` internally without modifying your array, and results are reported against your original IDs. `featurize` and the bulk `get_*` registries sanitize by default (`sanitize=False` to opt out); raw measurement functions assume contiguous `1..N`, so wrap them with `cp_measure._sanitize.sanitize` if you call them directly with gapped IDs.
-- **Image shapes**: All images processed together must share one shape — pass a single array or a list/tuple of equal-shape images. Ragged (differently-sized) batches are not supported and raise an error; normalise your images to a common shape first.
+- **Image shapes**: `featurize` takes a single dense array in the canonical shape `(B, C, *spatial)` (image) / `(B, M, *spatial)` (masks) — one batch, all items sharing one shape. A single image is `B=1`. Ragged (differently-sized) batches are not supported; normalise to a common shape and stack first. (The low-level `get_*` functions and numba backends additionally accept a list/tuple of equal-shape arrays.)
 - **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements. For the four intensity quantile features (`LowerQuartileIntensity`, `MedianIntensity`, `UpperQuartileIntensity`, `MADIntensity`) you additionally need `legacy=True` — see below.
 - **Speed**: v0.2.0 substantially speeds up the default NumPy/SciPy implementation without adding required runtime dependencies; see the [v0.2.0 performance report](benchmarks/releases/v0.2.0.md) for release-wide and incremental CI benchmarks. Future performance work will pursue two optional acceleration paths, Numba and JAX; both are still under development and are not yet supported backends.
 - **Legacy percentile convention**: `get_intensity`, `get_core_measurements`, `get_core_measurements_3d`, and `make_featurizer_config` accept `legacy: bool = False`. The default uses `numpy.percentile` 'linear' (`(n-1)*q`) quartiles and the textbook `median(|x - median(x)|)` MAD. Pass `legacy=True` to reproduce the original cp_measure / CellProfiler behavior: `n*q` quartiles and the `(1/ndim)`-quantile MAD (which returns the 33rd percentile in 3D rather than the median). The experimental Numba intensity path mirrors this flag but remains unsupported; all other intensity features are identical either way.
