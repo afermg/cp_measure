@@ -60,7 +60,7 @@ data, columns, rows = featurize(image, masks)  # is_3d=False
 #          image_id defaults to the batch index; pass image_ids=[...] for your own ids
 ```
 
-To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's first axis and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
+To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's channel axis (axis 1) and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
 
 ```python
 import numpy as np
@@ -77,7 +77,7 @@ config = make_featurizer_config(["DNA", "ER"], texture=False)
 data, columns, rows = featurize(image, masks, config)
 ```
 
-Multiple mask types (e.g. nuclei and cells) are supported by stacking them along the first axis:
+Multiple mask types (e.g. nuclei and cells) are supported by stacking them along the mask-type axis (axis 1):
 
 ```python
 import numpy as np
@@ -191,13 +191,12 @@ measurecolocalization.get_correlation_overlap
 
 ### Important notes
 
-- **Labels**: Any positive integer labels work — non-contiguous IDs (e.g. `[1, 3, 4]`) are relabelled to `1..N` internally without modifying your array, and results are reported against your original IDs. `featurize` and the bulk `get_*` registries sanitize by default (`sanitize=False` to opt out); raw measurement functions assume contiguous `1..N`, so wrap them with `cp_measure._sanitize.sanitize` if you call them directly with gapped IDs.
-- **Image shapes**: `featurize` takes a single dense array in the canonical shape `(B, C, *spatial)` (image) / `(B, M, *spatial)` (masks) — one batch, all items sharing one shape. A single image is `B=1`. Ragged (differently-sized) batches are not supported; normalise to a common shape and stack first. (The low-level `get_*` functions and numba backends additionally accept a list/tuple of equal-shape arrays.)
-- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements. For the four intensity quantile features (`LowerQuartileIntensity`, `MedianIntensity`, `UpperQuartileIntensity`, `MADIntensity`) you additionally need `legacy=True` — see below.
-- **Speed**: v0.2.0 substantially speeds up the default NumPy/SciPy implementation without adding required runtime dependencies; see the [v0.2.0 performance report](benchmarks/releases/v0.2.0.md) for release-wide and incremental CI benchmarks. Future performance work will pursue two optional acceleration paths, Numba and JAX; both are still under development and are not yet supported backends.
-- **Legacy percentile convention**: `get_intensity`, `get_core_measurements`, `get_core_measurements_3d`, and `make_featurizer_config` accept `legacy: bool = False`. The default uses `numpy.percentile` 'linear' (`(n-1)*q`) quartiles and the textbook `median(|x - median(x)|)` MAD. Pass `legacy=True` to reproduce the original cp_measure / CellProfiler behavior: `n*q` quartiles and the `(1/ndim)`-quantile MAD (which returns the 33rd percentile in 3D rather than the median). The experimental Numba intensity path mirrors this flag but remains unsupported; all other intensity features are identical either way.
-- **Radial-distribution centers**: If several pixels are tied for the greatest distance from an object's edge, cp_measure uses the first in C order. This fixes label-dependent results from SciPy's previous unstable tie-break ([issue #22](https://github.com/afermg/cp_measure/issues/22)); symmetric objects may therefore differ from older cp_measure releases.
-- **Minor floating-point discrepancy**: Some features produce a minor (1e-16) discrepancy when using one vs multiple masks. The issue lies upstream in [centrosome](https://github.com/afermg/cp_measure/issues/18#issuecomment-4593709963) and does not significantly impact my use-cases.
+- **Labels**: Use positive integers for objects and `0` for background. `featurize` and the bulk registries relabel non-contiguous IDs internally without modifying your array; `featurize` reports the original IDs. Raw measurement functions require contiguous `1..N` labels; wrap them with `cp_measure._sanitize.sanitize` when needed.
+- **Image shapes**: `featurize` requires dense `(B, C, *spatial)` images and `(B, M, *spatial)` masks. A single image still needs `B=1`. Ragged (differently-sized) batches are not supported; normalise to a common shape and stack first.
+- **Fidelity**: Use float intensities in `[0, 1]` to match CellProfiler's input convention (e.g. divide uint16 values by `65535`). Matching the original intensity quantile measurements also requires `legacy=True`; see the [legacy percentile convention](docs/measurement-notes.md#legacy-percentile-convention).
+- **Speed**: v0.2.0 speeds up the default NumPy/SciPy implementation without adding required runtime dependencies; see the [performance report](benchmarks/releases/v0.2.0.md). Optional Numba and JAX backends remain under development and are not yet supported.
+
+See [Measurement notes](docs/measurement-notes.md) for texture quantization, percentile formulas, radial-distribution centers, and floating-point caveats.
 
 ## Similar projects
 

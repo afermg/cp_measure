@@ -122,12 +122,20 @@ images represent two views of the same vectors. Images made in `GeoGebra`_.
 Technical notes
 ^^^^^^^^^^^^^^^
 
-To calculate the Haralick features, **MeasureTexture** normalizes the
-co-occurrence matrix at the per-object level by basing the intensity
-levels of the matrix on the maximum and minimum intensity observed
-within each object. This is beneficial for images in which the maximum
-intensities of the objects vary substantially because each object will
-have the full complement of levels.
+**MeasureTexture** quantizes intensities before extracting objects, using
+one fixed mapping for the whole image. It does not stretch the observed
+image or per-object minimum and maximum to fill the available gray levels.
+This follows the intensity-quantization convention in
+`CellProfiler 4.2.8 <https://github.com/CellProfiler/CellProfiler/blob/v4.2.8/cellprofiler/modules/measuretexture.py#L589-L607>`_.
+Each object's co-occurrence counts are normalized to probabilities, but
+that is distinct from rescaling its intensity range.
+
+Dim or low-contrast objects can therefore lose intensity variation during
+quantization. Zero-valued pixels, including foreground pixels quantized
+to zero, are excluded from co-occurrence pairs. A single retained nonzero
+level can yield finite features with zero contrast; a direction with no
+valid pairs makes all texture features for that object NaN. The requested
+number of gray levels does not guarantee that every object occupies them.
 
 References
 ^^^^^^^^^^
@@ -210,7 +218,7 @@ def get_texture(
     Haralick features measure how often brightness values appear next to one
     another inside each object:
 
-    1. Crop the object from the image.
+    1. Quantize the whole intensity image (see Notes), then crop the object.
     2. Choose a direction and distance — for example, "3 pixels to the right".
     3. For every valid pixel pair, record the brightness of the first pixel and
        the brightness of the neighbouring pixel.
@@ -229,10 +237,10 @@ def get_texture(
         Intensity image. Its dimensionality selects the directions measured:
         4 in 2D, 13 in 3D.
     gray_levels : int, optional (default is 256)
-        Number of gray levels. Measuring at more levels gives you _potentially_
-        more detailed information about your image, but at the cost of somewhat
-        decreased processing speed (default is 256).
-    texture_scale : int, optional (default is 3)
+        Number of possible quantized levels, including zero, which is excluded
+        from co-occurrence pairs. Objects may occupy fewer levels. More levels
+        can retain finer intensity differences, at increased computational cost.
+    scale : int, optional (default is 3)
         You can specify the scale of texture to be measured, in pixel units; the
         texture scale is the distance between correlated intensities in the
         image. A higher number for the scale of texture measures larger patterns
@@ -249,8 +257,21 @@ def get_texture(
 
     Notes
     -----
-    Before processing, your image will be rescaled from its current pixel values
-    to 0 - [gray levels - 1]. The texture features will then be calculated.
+    Intensities are converted to uint8 with ``skimage.util.img_as_ubyte``
+    before objects are extracted. Nonnegative float values in ``[0, 1]`` are
+    mapped to ``[0, 255]``; other dtypes follow scikit-image's conversion rules.
+    For ``gray_levels != 256``, these uint8 values are then rescaled from the
+    fixed input range ``[0, 255]`` to ``[0, gray_levels - 1]`` and cast to uint8.
+    Neither step uses the observed image or per-object minimum and maximum.
+
+    Co-occurrence pairs containing zero are excluded, including foreground
+    pixels whose intensities quantize to zero. Dim or low-contrast objects can
+    collapse to a single nonzero level and return finite but uninformative
+    texture features (e.g. zero contrast). If any measured direction has no
+    valid pairs at the requested scale, all texture features for that object
+    are NaN. A genuinely uniform object with a nonzero quantized intensity
+    and valid pairs in every direction instead returns finite features,
+    including zero contrast and an angular second moment of one.
 
     In all CellProfiler 2 versions, this value was fixed at 8; in all
     CellProfiler 3 versions it was fixed at 256.  The minimum number of levels is
