@@ -1,4 +1,9 @@
-"""Tests for the featurizer wrapper."""
+"""Tests for the featurizer wrapper.
+
+All inputs use the canonical batch contract ``(B, C, *spatial)`` / ``(B, M, *spatial)``.
+These single-image cases use ``B == 1``; batch-specific behaviour (stacking, empty-image
+skipping, ``is_3d`` rank validation) lives in ``test_featurizer_batch.py``.
+"""
 
 import numpy as np
 import pytest
@@ -6,6 +11,11 @@ import pytest
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 from conftest import ALL_OFF, CELL_PAINTING_CHANNELS, SIZE_2D, get_rng
+
+
+def _b(*arrays):
+    """Add a unit batch axis to each array (single-image -> B=1 batch)."""
+    return tuple(a[None] for a in arrays)
 
 
 # ---------------------------------------------------------------------------
@@ -18,21 +28,21 @@ class TestSmoke:
 
     def test_default_config(self, image_2d_2ch, mask_2d):
         with pytest.warns(UserWarning, match="No channel names"):
-            data, columns, rows = featurize(image_2d_2ch, mask_2d)
+            data, columns, rows = featurize(*_b(image_2d_2ch, mask_2d))
 
         assert isinstance(data, np.ndarray)
         assert data.ndim == 2
         assert data.shape[0] == 2
         assert data.shape[1] == len(columns)
         assert len(rows) == 2
-        assert rows[0] == (None, "object", 1)
-        assert rows[1] == (None, "object", 2)
+        assert rows[0] == (0, "object", 1)
+        assert rows[1] == (0, "object", 2)
 
     def test_custom_config(self, image_2d_2ch, mask_2d):
         config = make_featurizer_config(
             ["DNA", "ER"], **{**ALL_OFF, "intensity": True, "sizeshape": True}
         )
-        data, columns, rows = featurize(image_2d_2ch, mask_2d, config)
+        data, columns, rows = featurize(*_b(image_2d_2ch, mask_2d), config)
 
         assert data.shape[0] == 2
         assert data.shape[1] == len(columns)
@@ -41,12 +51,14 @@ class TestSmoke:
 
     def test_image_id_propagated(self, image_2d_1ch, mask_2d):
         config = make_featurizer_config(["DNA"], **{**ALL_OFF, "intensity": True})
-        _, _, rows = featurize(image_2d_1ch, mask_2d, config, image_id="plate1_A01")
+        _, _, rows = featurize(
+            *_b(image_2d_1ch, mask_2d), config, image_ids=["plate1_A01"]
+        )
         assert all(r[0] == "plate1_A01" for r in rows)
 
     def test_values_finite_and_nontrivial(self, image_2d_2ch, mask_2d):
         with pytest.warns(UserWarning, match="No channel names"):
-            data, columns, _ = featurize(image_2d_2ch, mask_2d)
+            data, columns, _ = featurize(*_b(image_2d_2ch, mask_2d))
 
         nonzero_frac = np.mean(np.any(data != 0, axis=0))
         assert nonzero_frac > 0.5
@@ -57,7 +69,7 @@ class TestSmoke:
             ["DNA", "ER"],
             **{**ALL_OFF, "intensity": True, "correlation_pearson": True},
         )
-        data, columns, rows = featurize(image_2d_2ch, mask_2d, config)
+        data, columns, rows = featurize(*_b(image_2d_2ch, mask_2d), config)
         corr_cols = [c for c in columns if "Correlation" in c or "Slope" in c]
         assert len(corr_cols) > 0, "Expected correlation columns"
         assert data.shape[0] == 2
@@ -66,7 +78,7 @@ class TestSmoke:
         config = make_featurizer_config(
             ["DNA"], **{**ALL_OFF, "intensity": True, "sizeshape": True}
         )
-        data, columns, rows = featurize(image_3d_1ch, mask_3d, config)
+        data, columns, rows = featurize(*_b(image_3d_1ch, mask_3d), config, is_3d=True)
         assert data.shape[0] == 2
         assert any("Intensity" in c for c in columns)
         assert any("Area" in c for c in columns)
@@ -81,7 +93,7 @@ class TestSmoke:
                 "correlation_pearson": True,
             },
         )
-        data, columns, rows = featurize(image_3d_2ch, mask_3d, config)
+        data, columns, rows = featurize(*_b(image_3d_2ch, mask_3d), config, is_3d=True)
         assert data.shape[0] == 2
         assert data.shape[1] == len(columns)
         assert any("__DNA" in c for c in columns)
@@ -93,7 +105,7 @@ class TestSmoke:
             ["DNA", "ER"],
             **{**ALL_OFF, "intensity": True, "sizeshape": True, "zernike": True},
         )
-        data, columns, rows = featurize(image_3d_2ch, mask_3d, config)
+        data, columns, rows = featurize(*_b(image_3d_2ch, mask_3d), config, is_3d=True)
 
         assert data.shape[0] == 2
         assert not any("Zernike" in c for c in columns)
@@ -110,7 +122,7 @@ class TestChannelAutoNaming:
     def test_warns_when_no_channels(self, image_2d_2ch, mask_2d):
         config = make_featurizer_config(**{**ALL_OFF, "intensity": True})
         with pytest.warns(UserWarning, match="No channel names"):
-            data, columns, rows = featurize(image_2d_2ch, mask_2d, config)
+            data, columns, rows = featurize(*_b(image_2d_2ch, mask_2d), config)
         assert any("__ch0" in c for c in columns)
         assert any("__ch1" in c for c in columns)
 
@@ -118,7 +130,7 @@ class TestChannelAutoNaming:
         image = get_rng().random((12, SIZE_2D, SIZE_2D))
         config = make_featurizer_config(**{**ALL_OFF, "intensity": True})
         with pytest.warns(UserWarning, match="No channel names"):
-            _, columns, _ = featurize(image, mask_2d, config)
+            _, columns, _ = featurize(*_b(image, mask_2d), config)
         assert any("__ch00" in c for c in columns)
         assert any("__ch11" in c for c in columns)
 
@@ -140,64 +152,40 @@ class TestParamsForwarding:
             **{**ALL_OFF, "granularity": True},
             granularity_params={"granular_spectrum_length": 8},
         )
-        _, cols4, _ = featurize(image_2d_1ch, mask_2d, c4)
-        _, cols8, _ = featurize(image_2d_1ch, mask_2d, c8)
+        _, cols4, _ = featurize(*_b(image_2d_1ch, mask_2d), c4)
+        _, cols8, _ = featurize(*_b(image_2d_1ch, mask_2d), c8)
 
         assert len(cols8) > len(cols4)
 
 
 # ---------------------------------------------------------------------------
-# Validation
+# Per-image validation (routed through the per-item worker)
 # ---------------------------------------------------------------------------
 
 
 class TestValidation:
-    def test_image_2d_raises(self):
-        config = make_featurizer_config(["DNA"], **{**ALL_OFF, "intensity": True})
-        with pytest.raises(ValueError, match="3D.*4D"):
-            featurize(np.ones((10, 10)), np.ones((1, 10, 10), dtype=np.int32), config)
-
-    def test_ndim_mismatch(self):
-        config = make_featurizer_config(["DNA"], **{**ALL_OFF, "intensity": True})
-        with pytest.raises(ValueError, match="same number of dimensions"):
-            featurize(
-                np.ones((1, 10, 10)), np.ones((1, 2, 10, 10), dtype=np.int32), config
-            )
-
-    def test_channel_count_mismatch(self):
-        config = make_featurizer_config(["DNA", "ER"], **{**ALL_OFF, "intensity": True})
-        with pytest.raises(ValueError, match="channels"):
-            featurize(
-                np.ones((3, 10, 10)), np.ones((1, 10, 10), dtype=np.int32), config
-            )
-
-    def test_mask_count_mismatch(self):
-        config = make_featurizer_config(
-            ["DNA"], objects=["nuclei"], **{**ALL_OFF, "intensity": True}
-        )
-        with pytest.raises(ValueError, match="object names"):
-            featurize(
-                np.ones((1, 10, 10)), np.ones((2, 10, 10), dtype=np.int32), config
-            )
-
-    def test_spatial_dims_mismatch(self):
-        config = make_featurizer_config(["DNA"], **{**ALL_OFF, "intensity": True})
-        with pytest.raises(ValueError, match="spatial dims"):
-            featurize(np.ones((1, 10, 10)), np.ones((1, 8, 8), dtype=np.int32), config)
-
-    def test_mask_not_integer(self):
-        config = make_featurizer_config(["DNA"], **{**ALL_OFF, "intensity": True})
-        with pytest.raises(TypeError, match="integer dtype"):
-            featurize(
-                np.ones((1, 10, 10)), np.ones((1, 10, 10), dtype=np.float64), config
-            )
-
-    def test_all_masks_empty(self):
-        config = make_featurizer_config(["DNA"], **{**ALL_OFF, "intensity": True})
-        with pytest.raises(ValueError, match="no labels"):
-            featurize(
-                np.ones((1, 10, 10)), np.zeros((1, 10, 10), dtype=np.int32), config
-            )
+    @pytest.mark.parametrize(
+        "config, image, masks, match",
+        [
+            (
+                make_featurizer_config(["DNA", "ER"], **{**ALL_OFF, "intensity": True}),
+                np.ones((1, 3, 10, 10)),
+                np.ones((1, 1, 10, 10), dtype=np.int32),
+                "channels",
+            ),
+            (
+                make_featurizer_config(
+                    ["DNA"], objects=["nuclei"], **{**ALL_OFF, "intensity": True}
+                ),
+                np.ones((1, 1, 10, 10)),
+                np.ones((1, 2, 10, 10), dtype=np.int32),
+                "object names",
+            ),
+        ],
+    )
+    def test_name_count_mismatch(self, config, image, masks, match):
+        with pytest.raises(ValueError, match=match):
+            featurize(image, masks, config)
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +228,7 @@ class TestMakeFeaturizer:
             ["DNA"], **{**ALL_OFF, "intensity": True, "correlation_pearson": True}
         )
         with pytest.warns(UserWarning, match="at least 2 channels"):
-            data, columns, _ = featurize(image_2d_1ch, mask_2d, config)
+            data, columns, _ = featurize(*_b(image_2d_1ch, mask_2d), config)
         assert not any("Correlation" in c for c in columns)
 
 
@@ -256,15 +244,15 @@ class TestMultiMask:
             objects=["nuclei", "cells"],
             **{**ALL_OFF, "intensity": True, "sizeshape": True},
         )
-        data, columns, rows = featurize(image_2d_2ch, masks_2d_multi, config)
+        data, columns, rows = featurize(*_b(image_2d_2ch, masks_2d_multi), config)
 
         assert data.shape[0] == 5
         assert len(rows) == 5
-        assert rows[0] == (None, "nuclei", 1)
-        assert rows[1] == (None, "nuclei", 2)
-        assert rows[2] == (None, "cells", 1)
-        assert rows[3] == (None, "cells", 2)
-        assert rows[4] == (None, "cells", 3)
+        assert rows[0] == (0, "nuclei", 1)
+        assert rows[1] == (0, "nuclei", 2)
+        assert rows[2] == (0, "cells", 1)
+        assert rows[3] == (0, "cells", 2)
+        assert rows[4] == (0, "cells", 3)
         assert data.shape[1] == len(columns)
 
     @pytest.mark.parametrize(
@@ -281,16 +269,17 @@ class TestMultiMask:
             objects=["nuclei", "cells"],
             **{**ALL_OFF, "intensity": True, "sizeshape": True},
         )
-        data, columns, rows = featurize(image, masks_3d_multi, config)
+        data, columns, rows = featurize(*_b(image, masks_3d_multi), config, is_3d=True)
 
         assert data.shape[0] == 3
         assert len(rows) == 3
-        assert rows[0] == (None, "nuclei", 1)
-        assert rows[1] == (None, "cells", 1)
-        assert rows[2] == (None, "cells", 2)
+        assert rows[0] == (0, "nuclei", 1)
+        assert rows[1] == (0, "cells", 1)
+        assert rows[2] == (0, "cells", 2)
         assert data.shape[1] == len(columns)
 
-    def test_empty_mask_skipped(self, image_2d_1ch):
+    def test_empty_object_mask_skipped(self, image_2d_1ch):
+        """One empty object-mask among several is skipped (within a non-empty image)."""
         mask1 = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
         mask1[5:15, 5:15] = 1
         mask2 = np.zeros((SIZE_2D, SIZE_2D), dtype=np.int32)
@@ -301,7 +290,7 @@ class TestMultiMask:
             objects=["nuclei", "cells"],
             **{**ALL_OFF, "intensity": True},
         )
-        data, columns, rows = featurize(image_2d_1ch, masks, config)
+        data, columns, rows = featurize(*_b(image_2d_1ch, masks), config)
 
         assert data.shape[0] == 1
-        assert rows == [(None, "nuclei", 1)]
+        assert rows == [(0, "nuclei", 1)]

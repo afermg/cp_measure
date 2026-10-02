@@ -46,57 +46,59 @@ The simplest way to extract all features from an image and its masks:
 import numpy as np
 from cp_measure.featurizer import featurize
 
-# image: (C, H, W) float array, masks: (N_masks, H, W) integer labels
-image = np.random.default_rng(42).random((2, 240, 240))
-masks = np.zeros((1, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1
-masks[0, 150:200, 150:200] = 2
+# Canonical input: image (B, C, Y, X), masks (B, N_masks, Y, X). A single image is B=1.
+# Dimensionality is declared with is_3d (default False), never inferred from shape.
+image = np.random.default_rng(42).random((1, 2, 240, 240))
+masks = np.zeros((1, 1, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1
+masks[0, 0, 150:200, 150:200] = 2
 
-data, columns, rows = featurize(image, masks)
+data, columns, rows = featurize(image, masks)  # is_3d=False
 # data:    np.ndarray of shape (n_objects, n_features)
 # columns: feature names (e.g. "Area", "Intensity_MeanIntensity__ch0", ...)
-# rows:    [(None, "object", 1), (None, "object", 2)]  — (image_id, object_name, label) per row
+# rows:    [(0, "object", 1), (0, "object", 2)]  — (image_id, object_name, label) per row
+#          image_id defaults to the batch index; pass image_ids=[...] for your own ids
 ```
 
-To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's first axis and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
+To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's channel axis (axis 1) and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
 
 ```python
 import numpy as np
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 # Recreate variables from previous examples for this block to run in isolation
-image = np.random.default_rng(42).random((2, 240, 240))
-masks = np.zeros((1, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1
-masks[0, 150:200, 150:200] = 2
+image = np.random.default_rng(42).random((1, 2, 240, 240))
+masks = np.zeros((1, 1, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1
+masks[0, 0, 150:200, 150:200] = 2
 
 # Disable texture features, name channels explicitly
 config = make_featurizer_config(["DNA", "ER"], texture=False)
 data, columns, rows = featurize(image, masks, config)
 ```
 
-Multiple mask types (e.g. nuclei and cells) are supported by stacking them along the first axis:
+Multiple mask types (e.g. nuclei and cells) are supported by stacking them along the mask-type axis (axis 1):
 
 ```python
 import numpy as np
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 # Recreate variables from previous examples for this block to run in isolation
-image = np.random.default_rng(42).random((2, 240, 240))
+image = np.random.default_rng(42).random((1, 2, 240, 240))
 
 config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
 
-masks = np.zeros((2, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1    # nucleus 1
-masks[1, 40:110, 40:110] = 1    # cell 1
-masks[1, 150:200, 150:200] = 2  # cell 2
-masks[1, 175:180, 180:210] = 2  # Minor asymmetries on bottom right edge of cells
+masks = np.zeros((1, 2, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1    # nucleus 1
+masks[0, 1, 40:110, 40:110] = 1    # cell 1
+masks[0, 1, 150:200, 150:200] = 2  # cell 2
+masks[0, 1, 175:180, 180:210] = 2  # Minor asymmetries on bottom right edge of cells
 
 data, columns, rows = featurize(image, masks, config)
-# rows: [(None, "nuclei", 1), (None, "cells", 1), (None, "cells", 2)]
+# rows: [(0, "nuclei", 1), (0, "cells", 1), (0, "cells", 2)]
 ```
 
-Volumetric `(C, Z, H, W)` data is supported. The featurizer automatically skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`). All other features (`intensity`, `sizeshape`, `texture`, `granularity`, correlations) work for both 2D and 3D.
+Volumetric data is supported: pass `(B, C, Z, Y, X)` image / `(B, M, Z, Y, X)` masks together with `is_3d=True` (dimensionality is declared, not inferred — so a single-channel volume is never mistaken for a multichannel 2D image). The featurizer automatically skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`). All other features (`intensity`, `sizeshape`, `texture`, `granularity`, correlations) work for both 2D and 3D.
 
 The output is plain numpy + lists, so converting to a DataFrame is straightforward:
 
@@ -190,7 +192,7 @@ measurecolocalization.get_correlation_overlap
 ### Important notes
 
 - **Labels**: Use positive integers for objects and `0` for background. `featurize` and the bulk registries relabel non-contiguous IDs internally without modifying your array; `featurize` reports the original IDs. Raw measurement functions require contiguous `1..N` labels; wrap them with `cp_measure._sanitize.sanitize` when needed.
-- **Image shapes**: Images in a batch must share one shape. Ragged (differently-sized) batches are not supported; normalise your images to a common shape first.
+- **Image shapes**: `featurize` requires dense `(B, C, *spatial)` images and `(B, M, *spatial)` masks. A single image still needs `B=1`. Ragged (differently-sized) batches are not supported; normalise to a common shape and stack first.
 - **Fidelity**: Use float intensities in `[0, 1]` to match CellProfiler's input convention (e.g. divide uint16 values by `65535`). Matching the original intensity quantile measurements also requires `legacy=True`; see the [legacy percentile convention](docs/measurement-notes.md#legacy-percentile-convention).
 - **Speed**: v0.2.0 speeds up the default NumPy/SciPy implementation without adding required runtime dependencies; see the [performance report](benchmarks/releases/v0.2.0.md). Optional Numba and JAX backends remain under development and are not yet supported.
 

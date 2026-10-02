@@ -92,14 +92,17 @@ def test_featurizer_uses_original_ids_and_sanitizes_once(monkeypatch):
     calls = []
     real = fz.sanitize_masks
     monkeypatch.setattr(fz, "sanitize_masks", lambda m: (calls.append(1), real(m))[1])
-    img = np.random.default_rng(0).random((2, 64, 64))
+    img = np.random.default_rng(0).random((1, 2, 64, 64))  # (B=1, C=2, H, W)
     config = make_featurizer_config(["DNA", "ER"])
 
-    data_g, _, rows_g = featurize(img, _three_objects((1, 17, 5))[np.newaxis], config)
+    # (B=1, M=1, H, W): one object-type mask per image
+    masks_g = _three_objects((1, 17, 5))[np.newaxis, np.newaxis]
+    masks_c = _three_objects((1, 3, 2))[np.newaxis, np.newaxis]
+    data_g, _, rows_g = featurize(img, masks_g, config)
     assert len(calls) == 1  # cost paid once per object-type mask
-    data_c, _, _ = featurize(img, _three_objects((1, 3, 2))[np.newaxis], config)
+    data_c, _, _ = featurize(img, masks_c, config)
     # original IDs in the rows, and identical geometry -> identical values
-    assert rows_g == [(None, "object", 1), (None, "object", 5), (None, "object", 17)]
+    assert rows_g == [(0, "object", 1), (0, "object", 5), (0, "object", 17)]
     np.testing.assert_allclose(data_g, data_c, equal_nan=True)
 
 
