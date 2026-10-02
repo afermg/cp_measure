@@ -283,6 +283,14 @@ def featurize(
                 f"the first object — this is a bug in cp_measure"
             )
 
+        if not results:
+            raise ValueError(
+                "no features were computed for this config — "
+                "check that at least one feature group is enabled "
+                "and that the image has enough channels for the "
+                "requested correlation features"
+            )
+
         block = np.column_stack([results[c] for c in columns])
         all_blocks.append(block)
 
@@ -342,7 +350,7 @@ def _validate(
             f"image and masks must have the same number of dimensions, "
             f"got image.ndim={image.ndim} and masks.ndim={masks.ndim}"
         )
-    if channels and image.shape[0] != len(channels):
+    if channels is not None and image.shape[0] != len(channels):
         raise ValueError(
             f"image has {image.shape[0]} channels but "
             f"{len(channels)} channel names were provided"
