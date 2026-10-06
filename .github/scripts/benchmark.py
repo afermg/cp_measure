@@ -23,10 +23,12 @@ for _v in (
     os.environ.setdefault(_v, "1")
 
 import argparse  # noqa: E402
+import inspect  # noqa: E402
 import json  # noqa: E402
 import signal  # noqa: E402
 import statistics  # noqa: E402
 from contextlib import contextmanager  # noqa: E402
+from functools import partial  # noqa: E402
 from pathlib import Path  # noqa: E402
 from time import perf_counter  # noqa: E402
 
@@ -96,6 +98,10 @@ def _functions():
         (2, bulk.get_correlation_measurements()),
     ):
         for name, fn in reg.items():
+            # This driver also runs against main/older releases. Synthetic
+            # normalized floats use an explicit 16-bit grid where supported.
+            if name == "costes" and "scale_max" in inspect.signature(fn).parameters:
+                fn = partial(fn, scale_max=65535)
             out.append((name, fn, arity))
     return out
 
@@ -136,8 +142,12 @@ def run(out_path: str, accelerator: str | None = None):
                         (labels, imgs[0]) if arity == 1 else (imgs[0], imgs[1], labels)
                     )
                     results[name][key] = _time(fn, args)
+    costes = next(fn for name, fn, _ in funcs if name == "costes")
+    scale = getattr(costes, "keywords", {}).get("scale_max", 1)
     Path(out_path).write_text(
-        json.dumps({"cells": cells, "results": results}, indent=2)
+        json.dumps(
+            {"cells": cells, "results": results, "costes_scale_max": scale}, indent=2
+        )
     )
 
 
@@ -180,9 +190,28 @@ def compare(
         f"showing functions that moved ≥{AFFECTED:.2f}× either way",
     ]
 
+    # Historical benchmark JSONs used normalized floats with inferred scale 1.
+    # Do not describe the correctness fix as a like-for-like speed regression.
+    incompatible_costes = (
+        len(
+            {
+                run.get("costes_scale_max", 1)
+                for run in (base, head, filter_base or base)
+            }
+        )
+        > 1
+    )
+    if incompatible_costes and "costes" in hr:
+        out += [
+            "",
+            "_Costes timing comparison omitted because the threshold grids differ._",
+        ]
+
     lo = 1.0 / AFFECTED  # a cell at or below this is a regression worth reporting
     affected = []  # (function, {(size, count): speedup})
     for fn in sorted(hr):
+        if fn == "costes" and incompatible_costes:
+            continue
         grid, moves = {}, []
         for size in sizes:
             for n in counts:
