@@ -78,7 +78,9 @@ References
 .. _here: https://jcs.biologists.org/content/joces/131/3/jcs211847.full.pdf
 """
 
+from numbers import Integral
 from typing import Iterator
+import warnings
 
 import numpy
 from numpy.typing import NDArray
@@ -231,6 +233,90 @@ def _rwc_pair(
     return RWC1, RWC2
 
 
+class CostesThresholdWarning(RuntimeWarning):
+    """No numerically defined Costes threshold/measurement for an object."""
+
+
+def _undefined_costes(reason: str) -> tuple[float, float]:
+    warnings.warn(
+        f"Undefined Costes result: {reason}", CostesThresholdWarning, stacklevel=3
+    )
+    return numpy.nan, numpy.nan
+
+
+def _validate_costes_scale(scale_max: int) -> int:
+    # A one-step grid silently collapses the search. Limit grids to the integer
+    # precisions historically supported here and representable by float64.
+    if isinstance(scale_max, (bool, numpy.bool_)) or not isinstance(
+        scale_max, Integral
+    ):
+        raise ValueError("scale_max must be an integer between 2 and 2**32 - 1")
+    if not 2 <= scale_max <= 2**32 - 1:
+        raise ValueError("scale_max must be an integer between 2 and 2**32 - 1")
+    return int(scale_max)
+
+
+def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
+    """Keep acquisition scale independent of the normalized array dtype."""
+    first, second = numpy.asarray(pixels_1), numpy.asarray(pixels_2)
+    if first.shape != second.shape:
+        raise ValueError("Costes images must have the same shape")
+    if scale_max is None:
+        if first.dtype == second.dtype and first.dtype.kind == "u":
+            scale_max = numpy.iinfo(first.dtype).max
+        else:
+            raise ValueError(
+                "Costes requires explicit scale_max for float, signed, or mixed-dtype "
+                "inputs (e.g. scale_max=65535 for normalized 16-bit images)"
+            )
+    scale = _validate_costes_scale(scale_max)
+    converted = []
+    for image in (first, second):
+        if image.dtype.kind not in "uif":
+            raise ValueError(
+                "Costes pixels must be real integer or floating-point arrays"
+            )
+        values = image.astype(numpy.float64, copy=False)
+        if image.dtype.kind in "ui":
+            values = values / scale
+        converted.append(values)
+    return converted[0], converted[1], scale
+
+
+def _valid_costes_pixels(fi, si) -> bool:
+    if fi.shape != si.shape or fi.ndim != 1:
+        raise ValueError("Costes threshold helpers require equal-shape 1D pixel arrays")
+    if fi.size < 3 or not (numpy.isfinite(fi).all() and numpy.isfinite(si).all()):
+        _undefined_costes("fewer than three paired pixels or non-finite signal")
+        return False
+    if fi.min() < 0 or si.min() < 0 or fi.max() > 1 or si.max() > 1:
+        raise ValueError("Costes expects normalized pixels in [0, 1]; check scale_max")
+    non_zero = (fi > 0) | (si > 0)
+    if numpy.count_nonzero(non_zero) < 3:
+        _undefined_costes("fewer than three nonzero paired pixels")
+        return False
+    if numpy.ptp(fi[non_zero]) == 0 or numpy.ptp(si[non_zero]) == 0:
+        _undefined_costes("constant channel in the regression subset")
+        return False
+    return True
+
+
+def _costes_background_correlation(fi, si, selected) -> float:
+    if numpy.count_nonzero(selected) < 3:
+        return numpy.nan
+    first, second = fi[selected], si[selected]
+    if numpy.ptp(first) == 0 or numpy.ptp(second) == 0:
+        return numpy.nan
+    return float(scipy.stats.pearsonr(first, second)[0])
+
+
+def _finish_costes_thresholds(fi, si, first_threshold, second_threshold):
+    selected = (fi < first_threshold) | (si < second_threshold)
+    if not numpy.isfinite(_costes_background_correlation(fi, si, selected)):
+        return _undefined_costes("chosen background subset has undefined correlation")
+    return float(first_threshold), float(second_threshold)
+
+
 def _costes_pair(
     fi: NDArray[numpy.floating],
     si: NDArray[numpy.floating],
@@ -241,17 +327,16 @@ def _costes_pair(
         thr_fi, thr_si = bisection_costes(None, None, fi, si, scale, fast_costes)
     else:
         thr_fi, thr_si = linear_costes(None, None, fi, si, scale, fast_costes)
+    if not (numpy.isfinite(thr_fi) and numpy.isfinite(thr_si)):
+        return numpy.nan, numpy.nan
     fi_above = fi > thr_fi
     si_above = si > thr_si
     combined = fi_above & si_above
-    if not combined.any():
-        return 0.0, 0.0
     tot_fi = fi[fi >= thr_fi].sum()
     tot_si = si[si >= thr_si].sum()
-    with numpy.errstate(invalid="ignore", divide="ignore"):
-        C1 = float(fi[combined].sum() / tot_fi)
-        C2 = float(si[combined].sum() / tot_si)
-    return C1, C2
+    if tot_fi <= 0 or tot_si <= 0:
+        return _undefined_costes("zero above-threshold intensity denominator")
+    return float(fi[combined].sum() / tot_fi), float(si[combined].sum() / tot_si)
 
 
 # ---------------------------------------------------------------------------
@@ -333,16 +418,26 @@ def get_correlation_rwc_ind(
 
 
 def get_correlation_costes_ind(
-    pixels_1: NDArray[numpy.floating],
-    pixels_2: NDArray[numpy.floating],
-    mask: NDArray[numpy.integer],
+    pixels_1: NDArray[numpy.number],
+    pixels_2: NDArray[numpy.number],
+    mask: NDArray[numpy.bool_],
     fast_costes: str = M_FASTER,
     thr: int = 15,
+    *,
+    scale_max: int | None = None,
 ) -> dict[str, float]:
-    fi = pixels_1[mask]
-    si = pixels_2[mask]
-    scale = infer_scale(pixels_1)
-    C1, C2 = _costes_pair(fi, si, scale, fast_costes)
+    """Single boolean-mask Costes measurement; see get_correlation_costes.
+
+    ``thr`` is retained for API compatibility and is not used by Costes.
+    """
+    first, second, scale = _prepare_costes_inputs(pixels_1, pixels_2, scale_max)
+    if mask.shape != first.shape or mask.dtype != bool:
+        raise ValueError(
+            "Costes single-object mask must be boolean and match the images"
+        )
+    if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
+        raise ValueError("Unknown Costes threshold-search mode")
+    C1, C2 = _costes_pair(first[mask], second[mask], scale, fast_costes)
     return {f"{F_COSTES_FORMAT}_1": C1, f"{F_COSTES_FORMAT}_2": C2}
 
 
@@ -363,8 +458,8 @@ def get_correlation_overlap_ind(
 
 
 # ---------------------------------------------------------------------------
-# Costes' automated threshold (unchanged algorithms; first_pixels/second_pixels
-# arguments are unused historically but kept for API compatibility).
+# Costes' automated threshold (CellProfiler searches with explicit scale and
+# undefined-subset guards). first_pixels/second_pixels are compatibility args.
 # ---------------------------------------------------------------------------
 
 
@@ -380,8 +475,13 @@ def linear_costes(
     Finds the Costes Automatic Threshold for colocalization using a linear algorithm.
     Candiate thresholds are gradually decreased until Pearson R falls below 0.
     If "Fast" mode is enabled the "steps" between tested thresholds will be increased
-    when Pearson R is much greater than 0.
+    when Pearson R is much greater than 0. Inputs must be normalized 1D arrays.
+    Undefined subsets return NaN thresholds with CostesThresholdWarning.
     """
+    scale_max = _validate_costes_scale(scale_max)
+    fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
+    if not _valid_costes_pixels(fi, si):
+        return numpy.nan, numpy.nan
     i_step = 1 / scale_max
     non_zero = (fi > 0) | (si > 0)
     fz = fi[non_zero]
@@ -401,8 +501,12 @@ def linear_costes(
     num = (yvar - xvar) + numpy.sqrt(
         (yvar - xvar) * (yvar - xvar) + 4 * (covar * covar)
     )
+    if abs(covar) <= 8 * numpy.finfo(float).eps * max(xvar, yvar):
+        return _undefined_costes("zero or ill-conditioned covariance")
     a = num / denom
     b = ymean - a * xmean
+    if not (numpy.isfinite(a) and numpy.isfinite(b)):
+        return _undefined_costes("non-finite regression")
 
     # Start at 1 step above the maximum value
     img_max = max(fi.max(), si.max())
@@ -422,30 +526,27 @@ def linear_costes(
         thr_fi_c = i
         thr_si_c = (a * i) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
-        try:
-            # Only run pearson if the input has changed.
-            if (positives := numpy.count_nonzero(combt)) != num_true:
-                costReg, _ = scipy.stats.pearsonr(fi[combt], si[combt])
-                num_true = positives
-
-            if costReg <= 0:
-                break
-            elif fast_costes == M_ACCURATE or i < i_step * 10:
-                i -= i_step
-            elif costReg > 0.45:
-                # We're way off, step down 10x
-                i -= i_step * 10
-            elif costReg > 0.35:
-                # Still far from 0, step 5x
-                i -= i_step * 5
-            elif costReg > 0.25:
-                # Step 2x
-                i -= i_step * 2
-            else:
-                i -= i_step
-        except ValueError:
+        # Only run Pearson if the input has changed.
+        if (positives := numpy.count_nonzero(combt)) != num_true:
+            costReg = _costes_background_correlation(fi, si, combt)
+            num_true = positives
+        if not numpy.isfinite(costReg):
+            return _undefined_costes(
+                "background correlation became undefined during linear search"
+            )
+        if costReg <= 0:
             break
-    return float(thr_fi_c), float(thr_si_c)
+        elif fast_costes == M_ACCURATE or i < i_step * 10:
+            i -= i_step
+        elif costReg > 0.45:
+            i -= i_step * 10
+        elif costReg > 0.35:
+            i -= i_step * 5
+        elif costReg > 0.25:
+            i -= i_step * 2
+        else:
+            i -= i_step
+    return _finish_costes_thresholds(fi, si, thr_fi_c, thr_si_c)
 
 
 def bisection_costes(
@@ -463,7 +564,13 @@ def bisection_costes(
     We're looking for the first point below 0, and R value can become highly variable
     at lower thresholds in some samples. Therefore the candidate tested in each
     loop is 1/6th of the window size below the maximum value (as opposed to the midpoint).
+    Inputs must be normalized 1D arrays. Undefined results return NaN thresholds
+    with CostesThresholdWarning; constant candidates are treated as insufficient.
     """
+    scale_max = _validate_costes_scale(scale_max)
+    fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
+    if not _valid_costes_pixels(fi, si):
+        return numpy.nan, numpy.nan
 
     non_zero = (fi > 0) | (si > 0)
     fz = fi[non_zero]
@@ -483,45 +590,47 @@ def bisection_costes(
     num = (yvar - xvar) + numpy.sqrt(
         (yvar - xvar) * (yvar - xvar) + 4 * (covar * covar)
     )
+    if abs(covar) <= 8 * numpy.finfo(float).eps * max(xvar, yvar):
+        return _undefined_costes("zero or ill-conditioned covariance")
     a = num / denom
     b = ymean - a * xmean
+    if not (numpy.isfinite(a) and numpy.isfinite(b)):
+        return _undefined_costes("non-finite regression")
 
     # Initialise variables
     left: float = 1
     right: float = scale_max
     mid: float = ((right - left) // (6 / 5)) + left
     lastmid: float = 0
-    # Marks the value with the last positive R value.
-    valid: float = 1
-
+    # None distinguishes an undefined search from a real threshold at zero.
+    valid: float | None = None
+    iterations = 0
     while lastmid != mid:
+        iterations += 1
+        if iterations > 256:
+            return _undefined_costes("bisection did not converge")
         thr_fi_c = mid / scale_max
         thr_si_c = (a * thr_fi_c) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
-        if numpy.count_nonzero(combt) <= 2:
-            # Can't run pearson with only 2 values.
+        costReg = _costes_background_correlation(fi, si, combt)
+        if not numpy.isfinite(costReg) or costReg < 0:
+            # Move above insufficient/constant candidates, never treat NaN as
+            # an implicit convergence event (which formerly left stale bounds).
             left = mid - 1
         else:
-            try:
-                costReg, _ = scipy.stats.pearsonr(fi[combt], si[combt])
-                if costReg < 0:
-                    left = mid - 1
-                elif costReg >= 0:
-                    right = mid + 1
-                    valid = mid
-            except ValueError:
-                # Catch misc Pearson errors with low sample numbers
-                left = mid - 1
+            right = mid + 1
+            valid = mid
         lastmid = mid
         if right - left > 6:
             mid = ((right - left) // (6 / 5)) + left
         else:
             mid = ((right - left) // 2) + left
 
+    if valid is None:
+        return _undefined_costes("no finite nonnegative background correlation found")
     thr_fi_c = (valid - 1) / scale_max
     thr_si_c = (a * thr_fi_c) + b
-
-    return float(thr_fi_c), float(thr_si_c)
+    return _finish_costes_thresholds(fi, si, thr_fi_c, thr_si_c)
 
 
 # MODIFIED: This reproduces the behaviour of the block at
@@ -617,25 +726,41 @@ def get_correlation_rwc(
 
 
 def get_correlation_costes(
-    pixels_1: NDArray[numpy.floating],
-    pixels_2: NDArray[numpy.floating],
+    pixels_1: NDArray[numpy.number],
+    pixels_2: NDArray[numpy.number],
     masks: NDArray[numpy.integer],
     fast_costes: str = M_FASTER,
     thr: int = 15,
+    *,
+    scale_max: int | None = None,
 ) -> dict[str, list[float]]:
-    """Per-object Costes colocalization coefficients between two channels.
+    """Per-object Costes coefficients with an explicit acquisition grid.
 
-    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    Float pixels must already be in [0, 1] and require ``scale_max`` (e.g.
+    65535 for normalized 16-bit data). Integer pixels are divided by this
+    scale internally. If both images have the same unsigned integer dtype,
+    its storage maximum is inferred when ``scale_max`` is omitted. Supply
+    the acquisition maximum for lower-bit-depth data in a larger container.
+    Signed or mixed-dtype inputs always require an explicit common scale.
+
+    Undefined regressions/background subsets or zero signal denominators
+    return NaN and emit :class:`CostesThresholdWarning`, rather than plausible
+    zero/one coefficients. ``thr`` is retained but unused. Input arrays are
+    never modified. Labels must be contiguous ``1..N``; use the bulk API or
+    :func:`cp_measure._sanitize.sanitize` for arbitrary IDs.
     """
-    scale = infer_scale(pixels_1)
+    first, second, scale = _prepare_costes_inputs(pixels_1, pixels_2, scale_max)
+    if masks.shape != first.shape or not numpy.issubdtype(masks.dtype, numpy.integer):
+        raise ValueError("Costes labels must be an integer array matching the images")
+    if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
+        raise ValueError("Unknown Costes threshold-search mode")
     c1: list[float] = []
     c2: list[float] = []
-    for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
+    for fi, si in _iter_label_pixels(first, second, masks):
         if fi is None or si is None or fi.size == 0:
-            c1.append(0.0)
-            c2.append(0.0)
-            continue
-        C1, C2 = _costes_pair(fi, si, scale, fast_costes)
+            C1, C2 = _undefined_costes("missing or empty object label")
+        else:
+            C1, C2 = _costes_pair(fi, si, scale, fast_costes)
         c1.append(C1)
         c2.append(C2)
     return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}

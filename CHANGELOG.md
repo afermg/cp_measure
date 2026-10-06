@@ -9,6 +9,27 @@ Notable user-facing changes are documented here.
 - Require centrosome 1.3.4 or newer, which removes its undeclared `six` dependency;
   test and benchmark environments no longer install `six` as a workaround.
 
+### Fixed
+
+- Costes now separates acquisition scale from normalized float dtype. Both public
+  APIs accept keyword-only `scale_max`, normalize integer pixels internally, and
+  reject float inputs without an explicit scale instead of silently searching a
+  one-step grid. Matching unsigned integer dtypes infer their storage maximum;
+  lower-bit-depth data in larger containers need an explicit override.
+- Undefined Costes regressions/background subsets and zero signal denominators
+  now warn with `CostesThresholdWarning` and return NaN. Constant bisection
+  candidates no longer cause silent convergence on stale bounds.
+- Added integer/float, 2D/3D, bulk/featurizer and degenerate-input regressions,
+  plus 18 fixtures from pinned CellProfiler threshold methods. This does not
+  establish full CellProfiler pipeline equivalence.
+
+### Migration
+
+- Normalized float callers must supply `scale_max` to Costes, or set
+  `correlation_costes_params={"scale_max": ...}` in the featurizer. Use the
+  acquisition maximum (e.g. 65535 for 16-bit), not an observed image maximum.
+  Missing scale raises ValueError; other correlation families are unchanged.
+
 ## [0.2.0] - 2026-08-13
 
 ### Added
