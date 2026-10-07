@@ -9,6 +9,8 @@ One module per numpy module it accelerates, same name:
 
 - ``measureobjectintensity`` -> ``get_intensity``
 - ``measuretexture`` -> ``get_texture``
+- ``measurecolocalization`` -> ``get_correlation_pearson`` / ``get_correlation_manders_fold`` /
+  ``get_correlation_rwc`` / ``get_correlation_overlap``
 
 The global "numba" accelerator composes these with the numpy implementations of
 every other feature (see ``cp_measure.bulk``). Nothing is re-exported here: each
