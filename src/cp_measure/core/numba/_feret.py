@@ -5,29 +5,19 @@ lines wrapped around an object, over every orientation. We find the object's
 convex hull — like a rubber band stretched around its outside — then read the
 smallest and largest gap between opposite sides of that hull.
 
-Drop-in for :func:`cp_measure.core.measureobjectsizeshape.get_feret`. On current
-main the numpy baseline is dominated by ``centrosome.cpmorphology.convex_hull_ijv``
-(~75% of ``get_feret`` at 1080²/144 obj), which is fed *every* object pixel;
-``utils.masks_to_ijv`` is already a fast vectorised ``nonzero`` + stable
-``argsort``. So the win here is shrinking the hull input, in one numba pass:
+Replaces :func:`cp_measure.core.measureobjectsizeshape.get_feret` when the Numba
+accelerator is selected. The NumPy implementation sends every object pixel to
+centrosome's convex-hull routine. This implementation sends only boundary pixels:
+removing interior pixels cannot change the convex hull.
 
-1. **Reconstruct the ijv order.** A single row-major scatter into per-label
-   offsets produces the SAME ``(i, j, label)`` rows in the SAME order as
-   ``masks_to_ijv`` (label ascending, row-major within a label). This matches the
-   numpy path bit-for-bit — it is not itself a speedup, it just emits the boundary
-   pixels in the order ``convex_hull_ijv`` expects.
-2. **Feed the hull only boundary pixels.** The convex hull of an object equals
-   the hull of its boundary: an interior pixel (all 8 neighbours share its label)
-   can never be a hull vertex. Emitting only boundary pixels leaves
-   ``convex_hull_ijv`` and ``feret_diameter`` bit-identical while shrinking the
-   hull input ~17x (≈6% of pixels on typical masks) — this is the actual speedup.
-   Boundary detection is a mechanical neighbour test, not numerically-sensitive
-   geometry, so it stays on the reimplement side of the boundary rule.
+The Numba kernel marks pixels touching a different label or the image edge,
+then emits their ``(row, column, label)`` coordinates in label order and row-major
+order within each label. Centrosome still computes the hull and diameters; only
+the input preparation changes. Larger solid objects usually benefit most because
+a smaller fraction of their pixels lie on the boundary.
 
-``convex_hull_ijv`` / ``feret_diameter`` stay in centrosome (computational
-geometry — imported). Serial kernel; no ``prange``/``nogil``. A batch is a
-list/tuple of images or a 4D ``(B, Z, Y, X)`` array; 3D volumes return ``{}``
-like the baseline.
+The kernel is serial. A batch is a list/tuple of images or a 4D ``(B, Z, Y, X)``
+array. Like raw NumPy Feret, 3D volumes return ``{}``.
 """
 
 import centrosome.cpmorphology
@@ -100,15 +90,13 @@ def _feret_2d(masks_2d: NDArray[numpy.integer]) -> dict[str, NDArray[numpy.float
         masks_2d.dtype == numpy.bool_
     ):  # baseline accepts a bool mask; numba can't index on it
         masks_2d = masks_2d.view(numpy.uint8)
-    # numba reads the raw buffer, so force native byte order: a non-native dtype
-    # (e.g. ">i4") is valid in numpy but numba would misread it. This also makes
-    # the array contiguous, as the kernel requires.
+    # Numba rejects non-native-endian arrays. Convert here so raw and bulk callers
+    # accept the same byte orders as NumPy, and give the kernel contiguous storage.
     masks_2d = numpy.ascontiguousarray(masks_2d, dtype=masks_2d.dtype.newbyteorder("="))
     max_label = int(masks_2d.max()) if masks_2d.size else 0
     ijv = _boundary_ijv(masks_2d, max_label)
-    # Labels are contiguous 1..N by contract (sanitized at the entry points), so the
-    # hull indices are exactly the baseline's ``arange`` — bit-for-bit, and the
-    # backend doesn't quietly diverge on gapped labels it was never meant to accept.
+    # The featurizer and bulk wrapper relabel objects to 1..N before this call.
+    # Raw callers must supply contiguous labels too.
     indices = numpy.arange(1, max_label + 1)
     chulls, chull_counts = centrosome.cpmorphology.convex_hull_ijv(ijv, indices)
     min_feret_diameter, max_feret_diameter = centrosome.cpmorphology.feret_diameter(
@@ -123,9 +111,11 @@ def _feret_2d(masks_2d: NDArray[numpy.integer]) -> dict[str, NDArray[numpy.float
 def _feret_image(
     masks: NDArray[numpy.integer],
 ) -> dict[str, NDArray[numpy.floating]]:
-    """One image: 2D -> Feret; any 3D volume (incl. single-slice ``(1, Y, X)``) ->
-    ``{}``, keyed on ``ndim`` exactly as the baseline, which never normalises a 2D
-    image to a volume."""
+    """Measure a 2D mask; return {} for a 3D volume, matching raw NumPy Feret.
+
+    A single-slice (1, Y, X) volume is still 3D. Keep this compatibility behavior
+    here; the featurizer already excludes Feret when measuring volumes.
+    """
     return {} if numpy.ndim(masks) == 3 else _feret_2d(masks)
 
 

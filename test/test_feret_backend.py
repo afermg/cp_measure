@@ -1,15 +1,20 @@
-"""Golden tests: numba ``get_feret`` must match the numpy backend.
+"""Equivalence and dispatch tests for NumPy and Numba Feret measurements.
 
-feret is 2D-only and ``pixels``-independent. The numba backend dispatches by
-``ndim`` (single image -> dict, list/4D batch -> list of dicts); a 3D volume,
-including a single-slice ``(1, Y, X)``, yields ``{}`` like the baseline.
+``feret_numpy`` is the raw ``core.measureobjectsizeshape.get_feret`` function,
+not the featurizer or the sanitized bulk wrapper. Tests distinguish raw backend
+math, Numba list-batch dispatch, and the public bulk wrapper's label cleanup.
+Feret ignores pixel values and supports only 2D masks. Both raw backends retain
+the existing ``{}`` result for 3D volumes, including single-slice volumes.
 """
 
 import numpy as np
 import pytest
 from conftest import get_rng
 
+import cp_measure
 from cp_measure._detect import HAS_NUMBA
+from cp_measure._sanitize import sanitize_masks
+from cp_measure.bulk import get_core_measurements
 from cp_measure.core.measureobjectsizeshape import get_feret as feret_numpy
 
 requires_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
@@ -45,9 +50,7 @@ def test_feret_matches_numpy_2d():
 
 @requires_numba
 def test_feret_pixels_none_matches_numpy():
-    """feret is shape-only: the accelerator dispatch calls it with ``pixels=None`` (the
-    baseline convention). The numba backend must accept None — it ignores ``pixels``
-    entirely rather than feeding it to a shape-checker."""
+    """The featurizer passes None for pixels to shape-only measurements."""
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
     masks = _rich_mask()
@@ -56,8 +59,10 @@ def test_feret_pixels_none_matches_numpy():
 
 @requires_numba
 def test_feret_bool_mask_matches_numpy():
-    """The baseline accepts a single-object bool mask; the numba backend must too
-    (numba cannot index an int array with a bool, so it casts internally)."""
+    """Raw NumPy Feret accepts a bool mask; its Numba replacement must too.
+
+    This tests the raw functions, not the bulk wrapper, which requires integers.
+    """
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
     m = np.zeros((20, 20), dtype=bool)
@@ -68,6 +73,7 @@ def test_feret_bool_mask_matches_numpy():
 
 @requires_numba
 def test_feret_3d_returns_empty():
+    """Preserve raw NumPy behavior; the featurizer filters 2D-only features earlier."""
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
     masks = np.zeros((4, 16, 16), np.int32)
@@ -79,9 +85,10 @@ def test_feret_3d_returns_empty():
 
 @requires_numba
 def test_feret_empty_mask_matches_numpy_raises():
-    """An all-background mask is unsupported by the baseline (convex_hull_ijv does
-    np.max on empty input). The numba backend is a drop-in, so it raises the same
-    ValueError rather than silently diverging."""
+    """Raw NumPy Feret raises on an empty convex hull; Numba must match.
+
+    Empty-image skipping belongs to the featurizer, not this raw-function test.
+    """
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
     masks = np.zeros((16, 16), np.int32)
@@ -93,7 +100,12 @@ def test_feret_empty_mask_matches_numpy_raises():
 
 
 @requires_numba
-def test_feret_batch_matches_per_image_numpy():
+@pytest.mark.parametrize("batch_type", [list, tuple], ids=["list", "tuple"])
+def test_feret_numba_batch_matches_individual_numba_calls(batch_type):
+    """The Numba backend's list/tuple loop must preserve single-image results.
+
+    This does not call the featurizer. NumPy-versus-Numba math is checked separately.
+    """
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
     rng = get_rng(3)
@@ -112,17 +124,15 @@ def test_feret_batch_matches_per_image_numpy():
         masks_list.append(m)
         pixels_list.append(rng.random((side, side)))
 
-    got = feret_nb(masks_list, pixels_list)
+    got = feret_nb(batch_type(masks_list), batch_type(pixels_list))
     assert isinstance(got, list) and len(got) == 3
     for m, p, g in zip(masks_list, pixels_list, got):
-        _assert_match(feret_numpy(m, p), g)
+        _assert_match(feret_nb(m, p), g)
 
 
 @requires_numba
 def test_feret_single_slice_volume_returns_empty():
-    """A ``(1, Y, X)`` array is a single-slice volume (ndim 3), not a 2D image, so
-    both backends return ``{}``. Dispatching by ``ndim`` (not by normalising to
-    ``(Z, Y, X)`` first) is what keeps numba from measuring it as 2D."""
+    """A Z axis of length 1 still denotes a volume, not a 2D image."""
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
     masks = _rich_mask()[np.newaxis]  # (1, 80, 80)
@@ -133,30 +143,57 @@ def test_feret_single_slice_volume_returns_empty():
 
 @requires_numba
 def test_feret_non_native_byteorder_matches_numpy():
-    """A non-native-endian integer mask (e.g. ``>i4``) is valid in numpy; numba
-    reads the raw buffer, so the backend normalises byte order to stay a drop-in."""
+    """Numba rejects non-native byte order, although raw NumPy Feret accepts it.
+
+    Conversion stays at the Numba boundary so bulk and raw callers benefit too.
+    """
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
-    masks = _rich_mask().astype(">i4")
+    masks = _rich_mask().astype(np.dtype(np.int32).newbyteorder("S"))
     pixels = get_rng().random(masks.shape)
     _assert_match(feret_numpy(masks, pixels), feret_nb(masks, pixels))
 
 
 @requires_numba
-def test_feret_through_accelerator_sanitizes_batch():
-    """The real seam: ``set_accelerator("numba")`` wraps feret in ``sanitize``, which
-    relabels each image of a list batch (PR #99) before the backend sees it. Exercises
-    the full path a user hits, not the bare backend call."""
-    import cp_measure.bulk  # binds cp_measure.bulk; not implied by `import cp_measure`
+def test_feret_through_bulk_wrapper_sanitizes_each_image():
+    """The bulk wrapper must relabel each mask separately before calling Numba.
 
-    masks_list = [_rich_mask(), _rich_mask()]
+    Images have different object counts and disjoint, gapped label IDs. Relabeling
+    the whole batch at once would leave gaps in each image and produce extra rows.
+    This tests get_core_measurements(), not featurize(). Inputs must stay unchanged.
+    """
+    first = _rich_mask() * 10
+    second = _rich_mask()
+    second[second > 3] = 0
+    second = np.where(second > 0, second * 100 + 7, 0).astype(np.int32)
+    masks_list = [first, second]
+    originals = [m.copy() for m in masks_list]
     pixels_list = [get_rng().random(m.shape) for m in masks_list]
+    previous_accelerator = cp_measure._ACCELERATOR
     cp_measure.set_accelerator("numba")
     try:
-        feret = cp_measure.bulk.get_core_measurements()["feret"]
+        feret = get_core_measurements()["feret"]
         got = feret(masks_list, pixels_list)
+        individual = [feret(m, p) for m, p in zip(masks_list, pixels_list)]
     finally:
-        cp_measure.set_accelerator(None)
+        cp_measure.set_accelerator(previous_accelerator)
     assert isinstance(got, list) and len(got) == 2
-    for m, p, g in zip(masks_list, pixels_list, got):
-        _assert_match(feret_numpy(m, p), g)
+    for m, p, g, single, original in zip(
+        masks_list, pixels_list, got, individual, originals
+    ):
+        clean, labels = sanitize_masks(m)
+        _assert_match(feret_numpy(clean, p), g)
+        _assert_match(single, g)
+        assert all(values.shape == (len(labels),) for values in g.values())
+        np.testing.assert_array_equal(m, original)
+
+
+@requires_numba
+@pytest.mark.parametrize("depth", [1, 3])
+def test_feret_4d_batch_contains_volumes_not_2d_images(depth):
+    """(B, Z, Y, X) returns one empty dictionary per unsupported 3D volume."""
+    from cp_measure.core.numba._feret import get_feret as feret_nb
+
+    masks = np.repeat(_rich_mask()[None, None], 2, axis=0)
+    masks = np.repeat(masks, depth, axis=1)
+    assert feret_nb(masks, None) == [{}, {}]
