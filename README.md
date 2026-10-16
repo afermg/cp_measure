@@ -42,11 +42,13 @@ We provide three entry points: (Featurizer) We orchestrate the images x combinat
 
 The simplest way to extract all features from an image and its masks:
 
+Image axes are **(Batch, Channel, Y, X)**; mask axes are **(Batch, Mask type, Y, X)**. Keep the batch axis even for one image (`Batch=1`).
+
 ```python
 import numpy as np
 from cp_measure.featurizer import featurize
 
-# Canonical input: image (B, C, Y, X), masks (B, N_masks, Y, X). A single image is B=1.
+# B = batch size, C = channels; a single image has B=1.
 # Dimensionality is declared with is_3d (default False), never inferred from shape.
 image = np.random.default_rng(42).random((1, 2, 240, 240))
 masks = np.zeros((1, 1, 240, 240), dtype=np.int32)
@@ -98,7 +100,9 @@ data, columns, rows = featurize(image, masks, config)
 # rows: [(0, "nuclei", 1), (0, "cells", 1), (0, "cells", 2)]
 ```
 
-Volumetric data is supported: pass `(B, C, Z, Y, X)` image / `(B, M, Z, Y, X)` masks together with `is_3d=True` (dimensionality is declared, not inferred — so a single-channel volume is never mistaken for a multichannel 2D image). The featurizer automatically skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`). All other features (`intensity`, `sizeshape`, `texture`, `granularity`, correlations) work for both 2D and 3D.
+Single- and multichannel volumes are supported: pass images shaped `(B, C, Z, Y, X)` and masks shaped `(B, M, Z, Y, X)` with `is_3d=True`. Image and mask spatial dimensions must match; 2D masks are not automatically repeated along Z. The featurizer skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`) with a warning. The remaining features support 3D, subject to the [single-slice size/shape limitation](docs/measurement-notes.md#3d-size-and-shape).
+
+**Migrating from the single-image API:** add a batch axis to both arrays: `featurize(image[None], masks[None], config)`. For volumes, also pass `is_3d=True`. Replace `image_id="sample"` with `image_ids=["sample"]`. Previously, omitting `image_id` produced `None` in row metadata; now `image_ids=None` produces zero-based batch indices, so a single-image batch produces `0`.
 
 The output is plain numpy + lists, so converting to a DataFrame is straightforward:
 

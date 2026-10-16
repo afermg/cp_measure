@@ -1,6 +1,6 @@
 """Tests for the featurizer wrapper.
 
-All inputs use the canonical batch contract ``(B, C, *spatial)`` / ``(B, M, *spatial)``.
+All inputs include explicit batch and channel/mask-type axes: ``(B, C, *spatial)`` / ``(B, M, *spatial)``.
 These single-image cases use ``B == 1``; batch-specific behaviour (stacking, empty-image
 skipping, ``is_3d`` rank validation) lives in ``test_featurizer_batch.py``.
 """
@@ -13,9 +13,21 @@ from cp_measure.featurizer import featurize, make_featurizer_config
 from conftest import ALL_OFF, CELL_PAINTING_CHANNELS, SIZE_2D, get_rng
 
 
-def _b(*arrays):
+def _as_single_image_batch(*arrays):
     """Add a unit batch axis to each array (single-image -> B=1 batch)."""
     return tuple(a[None] for a in arrays)
+
+
+def _assert_finite_and_nontrivial(data):
+    """Most columns must contain a finite nonzero value; NaNs do not count."""
+    finite_nonzero = np.isfinite(data) & (data != 0)
+    assert np.mean(np.any(finite_nonzero, axis=0)) > 0.5
+    assert not np.any(np.isinf(data))
+
+
+def test_nontrivial_check_rejects_all_nan():
+    with pytest.raises(AssertionError):
+        _assert_finite_and_nontrivial(np.full((2, 10), np.nan))
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +40,9 @@ class TestSmoke:
 
     def test_default_config(self, image_2d_2ch, mask_2d):
         with pytest.warns(UserWarning, match="No channel names"):
-            data, columns, rows = featurize(*_b(image_2d_2ch, mask_2d))
+            data, columns, rows = featurize(
+                *_as_single_image_batch(image_2d_2ch, mask_2d)
+            )
 
         assert isinstance(data, np.ndarray)
         assert data.ndim == 2
@@ -42,7 +56,9 @@ class TestSmoke:
         config = make_featurizer_config(
             ["DNA", "ER"], **{**ALL_OFF, "intensity": True, "sizeshape": True}
         )
-        data, columns, rows = featurize(*_b(image_2d_2ch, mask_2d), config)
+        data, columns, rows = featurize(
+            *_as_single_image_batch(image_2d_2ch, mask_2d), config
+        )
 
         assert data.shape[0] == 2
         assert data.shape[1] == len(columns)
@@ -52,24 +68,26 @@ class TestSmoke:
     def test_image_id_propagated(self, image_2d_1ch, mask_2d):
         config = make_featurizer_config(["DNA"], **{**ALL_OFF, "intensity": True})
         _, _, rows = featurize(
-            *_b(image_2d_1ch, mask_2d), config, image_ids=["plate1_A01"]
+            *_as_single_image_batch(image_2d_1ch, mask_2d),
+            config,
+            image_ids=["plate1_A01"],
         )
         assert all(r[0] == "plate1_A01" for r in rows)
 
     def test_values_finite_and_nontrivial(self, image_2d_2ch, mask_2d):
         with pytest.warns(UserWarning, match="No channel names"):
-            data, columns, _ = featurize(*_b(image_2d_2ch, mask_2d))
+            data, columns, _ = featurize(*_as_single_image_batch(image_2d_2ch, mask_2d))
 
-        nonzero_frac = np.mean(np.any(data != 0, axis=0))
-        assert nonzero_frac > 0.5
-        assert not np.any(np.isinf(data))
+        _assert_finite_and_nontrivial(data)
 
     def test_correlation_features(self, image_2d_2ch, mask_2d):
         config = make_featurizer_config(
             ["DNA", "ER"],
             **{**ALL_OFF, "intensity": True, "correlation_pearson": True},
         )
-        data, columns, rows = featurize(*_b(image_2d_2ch, mask_2d), config)
+        data, columns, rows = featurize(
+            *_as_single_image_batch(image_2d_2ch, mask_2d), config
+        )
         corr_cols = [c for c in columns if "Correlation" in c or "Slope" in c]
         assert len(corr_cols) > 0, "Expected correlation columns"
         assert data.shape[0] == 2
@@ -78,7 +96,9 @@ class TestSmoke:
         config = make_featurizer_config(
             ["DNA"], **{**ALL_OFF, "intensity": True, "sizeshape": True}
         )
-        data, columns, rows = featurize(*_b(image_3d_1ch, mask_3d), config, is_3d=True)
+        data, columns, rows = featurize(
+            *_as_single_image_batch(image_3d_1ch, mask_3d), config, is_3d=True
+        )
         assert data.shape[0] == 2
         assert any("Intensity" in c for c in columns)
         assert any("Area" in c for c in columns)
@@ -93,7 +113,9 @@ class TestSmoke:
                 "correlation_pearson": True,
             },
         )
-        data, columns, rows = featurize(*_b(image_3d_2ch, mask_3d), config, is_3d=True)
+        data, columns, rows = featurize(
+            *_as_single_image_batch(image_3d_2ch, mask_3d), config, is_3d=True
+        )
         assert data.shape[0] == 2
         assert data.shape[1] == len(columns)
         assert any("__DNA" in c for c in columns)
@@ -105,7 +127,9 @@ class TestSmoke:
             ["DNA", "ER"],
             **{**ALL_OFF, "intensity": True, "sizeshape": True, "zernike": True},
         )
-        data, columns, rows = featurize(*_b(image_3d_2ch, mask_3d), config, is_3d=True)
+        data, columns, rows = featurize(
+            *_as_single_image_batch(image_3d_2ch, mask_3d), config, is_3d=True
+        )
 
         assert data.shape[0] == 2
         assert not any("Zernike" in c for c in columns)
@@ -122,7 +146,9 @@ class TestChannelAutoNaming:
     def test_warns_when_no_channels(self, image_2d_2ch, mask_2d):
         config = make_featurizer_config(**{**ALL_OFF, "intensity": True})
         with pytest.warns(UserWarning, match="No channel names"):
-            data, columns, rows = featurize(*_b(image_2d_2ch, mask_2d), config)
+            data, columns, rows = featurize(
+                *_as_single_image_batch(image_2d_2ch, mask_2d), config
+            )
         assert any("__ch0" in c for c in columns)
         assert any("__ch1" in c for c in columns)
 
@@ -130,7 +156,7 @@ class TestChannelAutoNaming:
         image = get_rng().random((12, SIZE_2D, SIZE_2D))
         config = make_featurizer_config(**{**ALL_OFF, "intensity": True})
         with pytest.warns(UserWarning, match="No channel names"):
-            _, columns, _ = featurize(*_b(image, mask_2d), config)
+            _, columns, _ = featurize(*_as_single_image_batch(image, mask_2d), config)
         assert any("__ch00" in c for c in columns)
         assert any("__ch11" in c for c in columns)
 
@@ -152,8 +178,8 @@ class TestParamsForwarding:
             **{**ALL_OFF, "granularity": True},
             granularity_params={"granular_spectrum_length": 8},
         )
-        _, cols4, _ = featurize(*_b(image_2d_1ch, mask_2d), c4)
-        _, cols8, _ = featurize(*_b(image_2d_1ch, mask_2d), c8)
+        _, cols4, _ = featurize(*_as_single_image_batch(image_2d_1ch, mask_2d), c4)
+        _, cols8, _ = featurize(*_as_single_image_batch(image_2d_1ch, mask_2d), c8)
 
         assert len(cols8) > len(cols4)
 
@@ -228,7 +254,9 @@ class TestMakeFeaturizer:
             ["DNA"], **{**ALL_OFF, "intensity": True, "correlation_pearson": True}
         )
         with pytest.warns(UserWarning, match="at least 2 channels"):
-            data, columns, _ = featurize(*_b(image_2d_1ch, mask_2d), config)
+            data, columns, _ = featurize(
+                *_as_single_image_batch(image_2d_1ch, mask_2d), config
+            )
         assert not any("Correlation" in c for c in columns)
 
 
@@ -244,7 +272,9 @@ class TestMultiMask:
             objects=["nuclei", "cells"],
             **{**ALL_OFF, "intensity": True, "sizeshape": True},
         )
-        data, columns, rows = featurize(*_b(image_2d_2ch, masks_2d_multi), config)
+        data, columns, rows = featurize(
+            *_as_single_image_batch(image_2d_2ch, masks_2d_multi), config
+        )
 
         assert data.shape[0] == 5
         assert len(rows) == 5
@@ -269,7 +299,9 @@ class TestMultiMask:
             objects=["nuclei", "cells"],
             **{**ALL_OFF, "intensity": True, "sizeshape": True},
         )
-        data, columns, rows = featurize(*_b(image, masks_3d_multi), config, is_3d=True)
+        data, columns, rows = featurize(
+            *_as_single_image_batch(image, masks_3d_multi), config, is_3d=True
+        )
 
         assert data.shape[0] == 3
         assert len(rows) == 3
@@ -290,7 +322,9 @@ class TestMultiMask:
             objects=["nuclei", "cells"],
             **{**ALL_OFF, "intensity": True},
         )
-        data, columns, rows = featurize(*_b(image_2d_1ch, masks), config)
+        data, columns, rows = featurize(
+            *_as_single_image_batch(image_2d_1ch, masks), config
+        )
 
         assert data.shape[0] == 1
         assert rows == [(0, "nuclei", 1)]

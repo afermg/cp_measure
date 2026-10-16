@@ -4,8 +4,13 @@ The public ``featurize`` enforces ``(B, C, *spatial)`` with ``is_3d`` declaring
 dimensionality. These tests use only the public API.
 """
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
+
+from make_featurizer_reference import make_reference_case
 
 from cp_measure.featurizer import featurize, make_featurizer_config
 
@@ -32,13 +37,68 @@ def test_batch_equals_stacked_individual(image_2d_2ch, mask_2d):
     batch_img = np.concatenate([img_a, img_b])
     batch_masks = np.concatenate([mask, mask])
 
-    data, _, rows = featurize(batch_img, batch_masks, CONFIG_2CH)
-    data_a, _, _ = featurize(img_a, mask, CONFIG_2CH)
-    data_b, _, _ = featurize(img_b, mask, CONFIG_2CH)
+    data, columns, rows = featurize(batch_img, batch_masks, CONFIG_2CH)
+    data_a, columns_a, rows_a = featurize(img_a, mask, CONFIG_2CH, image_ids=[0])
+    data_b, columns_b, rows_b = featurize(img_b, mask, CONFIG_2CH, image_ids=[1])
 
     np.testing.assert_array_equal(data, np.vstack([data_a, data_b]))
-    # batch index lands in image_id; 2 objects per image
-    assert [r[0] for r in rows] == [0, 0, 1, 1]
+    assert columns == columns_a == columns_b
+    assert (
+        rows
+        == rows_a + rows_b
+        == [(0, "object", 1), (0, "object", 2), (1, "object", 1), (1, "object", 2)]
+    )
+
+
+@pytest.mark.parametrize("is_3d", [False, True], ids=["2d", "3d"])
+@pytest.mark.parametrize("legacy", [False, True], ids=["modern", "legacy"])
+def test_varied_batch_matches_singletons_and_pre_refactor_reference(is_3d, legacy):
+    """Compare values, column order, and row IDs to both old and new single calls.
+
+    Two channels and two mask types exercise all three feature loops. The second
+    image has different object counts and IDs; its nuclei mask is empty. The 3D
+    case has multiple Z slices and two distinct volumes, not a repeated 2D image.
+    """
+    image, masks, config = make_reference_case(is_3d, legacy)
+    image_before, masks_before = image.copy(), masks.copy()
+    image_ids = ["A01", "A02"]
+    data, columns, rows = featurize(
+        image, masks, config, is_3d=is_3d, image_ids=image_ids
+    )
+    singletons = [
+        featurize(
+            image[b : b + 1],
+            masks[b : b + 1],
+            config,
+            is_3d=is_3d,
+            image_ids=[image_id],
+        )
+        for b, image_id in enumerate(image_ids)
+    ]
+    assert all(single_columns == columns for _, single_columns, _ in singletons)
+    assert rows == [row for _, _, single_rows in singletons for row in single_rows]
+    assert rows == [
+        ("A01", "nuclei", 3),
+        ("A01", "nuclei", 17),
+        ("A01", "cells", 5),
+        ("A02", "cells", 9),
+        ("A02", "cells", 42),
+        ("A02", "cells", 100),
+    ]
+    np.testing.assert_array_equal(data, np.vstack([part[0] for part in singletons]))
+
+    reference_path = Path(__file__).parent / "data" / "featurizer_pre_batch.json"
+    reference = json.loads(reference_path.read_text())
+    key = f"{'3d' if is_3d else '2d'}-{'legacy' if legacy else 'modern'}"
+    expected = reference["cases"][key]
+    assert columns == expected["columns"]
+    assert rows == [tuple(row) for row in expected["rows"]]
+    expected_data = np.asarray(expected["data"], dtype=float)  # JSON null -> NaN
+    np.testing.assert_allclose(
+        data, expected_data, rtol=1e-10, atol=1e-10, equal_nan=True
+    )
+    np.testing.assert_array_equal(image, image_before)
+    np.testing.assert_array_equal(masks, masks_before)
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +122,8 @@ def test_is_3d_true_runs(image_3d_1ch, mask_3d):
 @pytest.mark.parametrize(
     "image, masks, is_3d, match",
     [
-        # sub-canonical rank: bare 2-D / 3-D arrays are rejected
+        # A 2D batch needs (B, C, Y, X), even when B or C is 1.
+        # Reject arrays missing the batch axis or both batch and channel axes.
         (
             np.ones((10, 10)),
             np.ones((1, 10, 10), dtype=np.int32),
@@ -82,6 +143,13 @@ def test_is_3d_true_runs(image_3d_1ch, mask_3d):
             False,
             "masks must be",
         ),
+        # A 2D mask is not implicitly repeated through a 3D volume.
+        (
+            np.ones((1, 2, 4, 10, 10)),
+            np.ones((1, 1, 10, 10), dtype=np.int32),
+            True,
+            "masks must be",
+        ),
         # rank / is_3d mismatch, both directions
         (
             np.ones((1, 2, 10, 10)),
@@ -97,7 +165,7 @@ def test_is_3d_true_runs(image_3d_1ch, mask_3d):
         ),
     ],
 )
-def test_canonical_rank_errors(image, masks, is_3d, match):
+def test_missing_axes_or_wrong_dimensionality_raise(image, masks, is_3d, match):
     with pytest.raises(ValueError, match=match):
         featurize(image, masks, is_3d=is_3d)
 
@@ -125,7 +193,7 @@ def test_canonical_rank_errors(image, masks, is_3d, match):
         ),
     ],
 )
-def test_canonical_validation_errors(image, masks, exc, match):
+def test_mismatched_batch_spatial_shape_or_mask_dtype_raise(image, masks, exc, match):
     with pytest.raises(exc, match=match):
         featurize(image, masks, CONFIG_2CH)
 

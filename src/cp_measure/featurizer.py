@@ -6,9 +6,10 @@ Provides two stateless functions:
 - :func:`featurize` takes that configuration together with image and mask
   arrays and returns a numpy feature matrix with column and row metadata.
 
-``featurize`` is the single public entry point and takes a batch in the canonical
-shape ``(B, C, *spatial)`` (image) and ``(B, M, *spatial)`` (masks); a single image
-is ``B == 1``. Dimensionality is declared with ``is_3d``, never inferred from shape.
+``featurize`` takes images shaped ``(B, C, *spatial)`` and masks shaped
+``(B, M, *spatial)``: B is the batch size, C the channel count, and M the number
+of mask types. A single image still needs a batch axis, with ``B == 1``.
+Dimensionality is declared with ``is_3d``, never inferred from shape.
 
 Example
 -------
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import itertools
 import warnings
+from collections.abc import Callable
 
 import numpy as np
 
@@ -29,6 +31,10 @@ from cp_measure._sanitize import sanitize_masks
 
 # Feature groups that only support 2D spatial data.
 _2D_ONLY = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
+
+_Measurement = Callable[..., dict[str, np.ndarray]]
+_Feature = tuple[_Measurement, dict]  # measurement function, keyword arguments
+_CorrelationFeature = tuple[_Measurement, dict, bool]  # plus symmetric-pair flag
 
 
 def make_featurizer_config(
@@ -180,9 +186,9 @@ def _featurize_one(
     masks: np.ndarray,
     channels: list[str],
     objects: list[str],
-    shape_feats: list[tuple],
-    channel_feats: list[tuple],
-    corr_feats: list[tuple],
+    shape_feats: list[_Feature],
+    channel_feats: list[_Feature],
+    corr_feats: list[_CorrelationFeature],
     *,
     image_id: str | int | None = None,
 ) -> tuple[np.ndarray, list[str], list[tuple]]:
@@ -192,6 +198,13 @@ def _featurize_one(
     user-facing warnings) is done once by the public batcher :func:`featurize`, so this
     runs only the per-object measurement loop. Returns ``(data, columns, rows)`` as
     described on :func:`featurize`.
+
+    ``channels`` and ``objects`` name the image channels and mask types in axis
+    order. ``shape_feats`` and ``channel_feats`` contain ``(function, kwargs)``
+    pairs: shape measurements run once per mask type, channel measurements once
+    per mask type and channel. ``corr_feats`` contains ``(function, kwargs,
+    symmetric)`` triples. Symmetric correlations measure each channel pair once;
+    asymmetric correlations measure both channel orders.
     """
     # Shape features are purely geometric and ignore pixel values.
     dummy_pixels = None
@@ -295,7 +308,7 @@ def featurize(
     rows : list[tuple]
         One ``(image_id, object_name, label)`` per row.
     """
-    _validate_canonical(image, masks, is_3d)
+    _validate_batch_inputs(image, masks, is_3d)
     batch_size = image.shape[0]
     if image_ids is not None and len(image_ids) != batch_size:
         raise ValueError(
@@ -370,17 +383,20 @@ def featurize(
     return np.vstack(all_blocks), columns, all_rows
 
 
-def _validate_canonical(image: np.ndarray, masks: np.ndarray, is_3d: bool) -> None:
-    """Enforce the strict ``(B, C, *spatial)`` contract; raise on any deviation."""
+def _validate_batch_inputs(image: np.ndarray, masks: np.ndarray, is_3d: bool) -> None:
+    """Check batch/channel axes, spatial dimensions, and integer mask labels."""
     expected_ndim = 5 if is_3d else 4
     img_shape = "(B, C, Z, Y, X)" if is_3d else "(B, C, Y, X)"
     mask_shape = "(B, M, Z, Y, X)" if is_3d else "(B, M, Y, X)"
     if image.ndim != expected_ndim:
         hint = ""
         if image.ndim == 4:
-            hint = " Pass is_3d=False for 2-D data."
+            hint = (
+                " For a 2D batch (B, C, Y, X), pass is_3d=False."
+                " For 3D data, keep is_3d=True and supply all five axes."
+            )
         elif image.ndim == 5:
-            hint = " Pass is_3d=True for a 3-D volume."
+            hint = " For a 3D batch (B, C, Z, Y, X), pass is_3d=True."
         raise ValueError(
             f"image must be {img_shape} for is_3d={is_3d} (ndim {expected_ndim}), "
             f"got ndim {image.ndim} with shape {image.shape}.{hint}"
@@ -439,8 +455,8 @@ def _validate_names(
     """Check channel/object counts against the provided names.
 
     Rank, spatial dims, batch size and dtype are already enforced by
-    :func:`_validate_canonical`; this only checks the name counts (``C`` and ``M``,
-    the axis-1 sizes of the canonical ``(B, C|M, *spatial)`` arrays).
+    :func:`_validate_batch_inputs`; this only checks that axis 1 matches the
+    number of channel names (image) or mask-type names (masks).
     """
     if channels and image.shape[1] != len(channels):
         raise ValueError(
@@ -454,13 +470,13 @@ def _validate_names(
         )
 
 
-def _collect_channel_features(config: dict, core_funcs: dict) -> list[tuple]:
+def _collect_channel_features(config: dict, core_funcs: dict) -> list[_Feature]:
     """Collect enabled per-channel feature functions and their params.
 
     Features missing from ``core_funcs`` (e.g. 2D-only features when the
     registry is the 3D one) are silently skipped.
     """
-    feats: list[tuple] = []
+    feats: list[_Feature] = []
     for name in (
         "intensity",
         "texture",
@@ -473,13 +489,13 @@ def _collect_channel_features(config: dict, core_funcs: dict) -> list[tuple]:
     return feats
 
 
-def _collect_shape_features(config: dict, core_funcs: dict) -> list[tuple]:
+def _collect_shape_features(config: dict, core_funcs: dict) -> list[_Feature]:
     """Collect enabled shape feature functions and their params.
 
     Features missing from ``core_funcs`` (e.g. 2D-only features when the
     registry is the 3D one) are silently skipped.
     """
-    feats: list[tuple] = []
+    feats: list[_Feature] = []
     for name in ("sizeshape", "zernike"):
         if config[name] and name in core_funcs:
             feats.append((core_funcs[name], config[f"{name}_params"]))
@@ -503,7 +519,7 @@ def _collect_correlation_features(
     config: dict,
     corr_funcs: dict,
     n_channels: int,
-) -> list[tuple]:
+) -> list[_CorrelationFeature]:
     """Collect enabled correlation feature functions.
 
     The third element of each tuple indicates whether the metric is
@@ -528,7 +544,7 @@ def _collect_correlation_features(
             )
         return []
 
-    feats: list[tuple] = []
+    feats: list[_CorrelationFeature] = []
     # (config key, corr_funcs key, params key, symmetric)
     specs = [
         ("correlation_pearson", "pearson", None, False),
