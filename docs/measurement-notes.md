@@ -4,9 +4,9 @@ For essential input and performance guidance, see the [README](../README.md#impo
 
 ## 3D size and shape
 
-The featurizer supports both single- and multichannel volumes with `is_3d=True`. A 2D mask stack `(B, M, Y, X)` is repeated across the image's Z slices before measurement. This extrudes each 2D label into a single 3D object: intensity and shape measurements use the entire volume, not separate 2D measurements per slice. The expanded mask is a copy; the caller's image and mask arrays are unchanged.
+The featurizer supports both single- and multichannel volumes with `is_3d=True`. Both images `(B, C, Z, Y, X)` and masks `(B, M, Z, Y, X)` must have all five axes, with matching batch size and spatial dimensions. A 2D mask stack is rejected; singleton spatial axes are not stretched.
 
-Batch size and Y/X dimensions must match exactly. Explicitly 3D masks `(B, M, Z, Y, X)` must also match Z; a singleton Z axis is not stretched. The input image always needs all five axes and `is_3d=True`, regardless of mask rank.
+To use a 2D mask through a volume, the caller must explicitly repeat it before calling `featurize`, for example `masks_3d = np.repeat(masks_2d[:, :, None], image.shape[2], axis=2)`. Each repeated label becomes one 3D object, so intensity and shape measurements use the entire volume rather than separate 2D measurements per slice. The featurizer does not perform this conversion or modify its inputs.
 
 The existing `sizeshape` measurement uses a surface-area calculation that requires at least two voxels along each spatial axis. In particular, a single-slice volume (`Z=1`) raises `ValueError: Input array must be at least 2x2x2.` with size/shape enabled. Disable it with `make_featurizer_config(..., sizeshape=False)`, or explicitly provide a 2D batch and use `is_3d=False` if 2D measurements are intended. This limitation predates the batch featurizer.
 

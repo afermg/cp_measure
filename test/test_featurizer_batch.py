@@ -4,6 +4,7 @@ The public ``featurize`` enforces ``(B, C, *spatial)`` with ``is_3d`` declaring
 dimensionality. These tests use only the public API.
 """
 
+import gzip
 import json
 from pathlib import Path
 
@@ -87,8 +88,9 @@ def test_varied_batch_matches_singletons_and_pre_refactor_reference(is_3d, legac
     ]
     np.testing.assert_array_equal(data, np.vstack([part[0] for part in singletons]))
 
-    reference_path = Path(__file__).parent / "data" / "featurizer_pre_batch.json"
-    reference = json.loads(reference_path.read_text())
+    reference_path = Path(__file__).parent / "data" / "featurizer_pre_batch.json.gz"
+    with gzip.open(reference_path, "rt", encoding="utf-8") as saved:
+        reference = json.load(saved)
     key = f"{'3d' if is_3d else '2d'}-{'legacy' if legacy else 'modern'}"
     expected = reference["cases"][key]
     assert columns == expected["columns"]
@@ -143,10 +145,10 @@ def test_is_3d_true_runs(image_3d_1ch, mask_3d):
             False,
             "masks must be",
         ),
-        # 2D masks for a volume still need both batch and mask-type axes.
+        # 3D images require 3D masks; callers must repeat 2D masks themselves.
         (
             np.ones((1, 2, 4, 10, 10)),
-            np.ones((1, 10, 10), dtype=np.int32),
+            np.ones((1, 1, 10, 10), dtype=np.int32),
             True,
             "masks must be",
         ),

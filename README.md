@@ -109,9 +109,9 @@ data, columns, rows = featurize(image, masks, config)
 # rows: [(0, "nuclei", 1), (0, "cells", 1), (0, "cells", 2)]
 ```
 
-Single- and multichannel volumes are supported: pass images shaped `(B, C, Z, Y, X)` with `is_3d=True`. Masks can be matching 3D stacks `(B, M, Z, Y, X)` or **2D stacks `(B, M, Y, X)` that are repeated across every Z slice**. Batch size and Y/X must match; no other axes are broadcast. An explicitly 3D mask must match Z too, even if its Z axis has length 1. Inputs are not modified.
+Single- and multichannel volumes are supported: pass images shaped `(B, C, Z, Y, X)` and masks shaped `(B, M, Z, Y, X)` with `is_3d=True`. Here `M` is the number of mask types (e.g. nuclei and cells), not the number of labelled objects. Batch size and all spatial dimensions must match exactly. **The featurizer does not repeat or broadcast masks automatically**, including singleton Z axes. Inputs are not modified.
 
-A repeated label becomes one 3D object spanning the volume, not one object per slice. All measurements use the 3D image. The featurizer still skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`) with a warning. See the [single-slice size/shape limitation](docs/measurement-notes.md#3d-size-and-shape).
+If you want a 2D label map to span a volume, repeat it yourself before calling `featurize`, as below. Each repeated label then represents one 3D object, not one object per slice. The featurizer skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`) with a warning. See the [single-slice size/shape limitation](docs/measurement-notes.md#3d-size-and-shape).
 
 ```python
 import numpy as np
@@ -120,9 +120,11 @@ from cp_measure.featurizer import featurize, make_featurizer_config
 volume = np.random.default_rng(42).random((1, 1, 4, 32, 32))  # B, C, Z, Y, X
 masks_2d = np.zeros((1, 1, 32, 32), dtype=np.int32)  # B, M, Y, X
 masks_2d[0, 0, 8:24, 12:20] = 42
+# Explicit caller-side conversion; featurize does not add or repeat this axis.
+masks_3d = np.repeat(masks_2d[:, :, None], volume.shape[2], axis=2)
 config = make_featurizer_config(["DNA"])
-data, columns, rows = featurize(volume, masks_2d, config, is_3d=True)
-assert rows == [(0, "object", 42)]  # one object repeated through all four slices
+data, columns, rows = featurize(volume, masks_3d, config, is_3d=True)
+assert rows == [(0, "object", 42)]  # one object spanning all four slices
 ```
 
 **Migrating from the single-image API:** add a batch axis to both arrays: `featurize(image[None], masks[None], config)`. For volumes, also pass `is_3d=True`. Replace `image_id="sample"` with `image_ids=["sample"]`. Previously, omitting `image_id` produced `None` in row metadata; now `image_ids=None` produces zero-based batch indices, so a single-image batch produces `0`.

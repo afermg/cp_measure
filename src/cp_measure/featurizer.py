@@ -9,8 +9,8 @@ Provides two stateless functions:
 ``featurize`` takes images shaped ``(B, C, *spatial)`` and masks shaped
 ``(B, M, *spatial)``: B is the batch size, C the channel count, and M the number
 of mask types. A single image still needs a batch axis, with ``B == 1``.
-Dimensionality is declared with ``is_3d``, never inferred from shape. For 3D
-images, a 2D mask stack ``(B, M, Y, X)`` is repeated across all Z slices.
+Dimensionality is declared with ``is_3d``, never inferred from shape. Images and
+masks must have matching spatial dimensions; no axes are broadcast automatically.
 
 Example
 -------
@@ -277,14 +277,13 @@ def featurize(
 
     The single public entry point. Input is strictly ``(B, C, *spatial)``:
     ``(B, C, Y, X)`` when ``is_3d=False`` and ``(B, C, Z, Y, X)`` when ``is_3d=True``;
-    masks are ``(B, M, *spatial)``. For 3D images, masks may also be 2D stacks
-    ``(B, M, Y, X)``; each mask is repeated through the image's Z slices. A single
-    image is ``B == 1``.
+    masks are ``(B, M, *spatial)`` with matching rank and spatial dimensions.
+    A single image is ``B == 1``.
 
     Image dimensionality is *declared* via ``is_3d``, never inferred from shape, so
     a single-channel volume ``(1, 1, Z, Y, X)`` is never mistaken for a multichannel
-    2D image. Repeating a 2D mask produces one 3D object per label, not separate
-    objects per slice; measurements use the full volume. Inputs are not modified.
+    2D image. To use a 2D mask through a volume, the caller must explicitly repeat
+    it along Z before calling this function. Inputs are not modified.
 
     Images whose mask stack has no labelled objects are skipped before any
     measurement runs; the number skipped is reported via a warning.
@@ -295,9 +294,8 @@ def featurize(
         ``(B, C, Y, X)`` or ``(B, C, Z, Y, X)`` (see ``is_3d``).
     masks : numpy.ndarray
         ``(B, M, Y, X)`` or ``(B, M, Z, Y, X)``; integer labels, background 0.
-        With ``is_3d=True``, a 2D stack is broadcast along Z. Batch size and Y/X
-        must match the image. An explicitly 3D mask must also match Z, even when
-        its Z axis has length 1; no other axes are broadcast.
+        With ``is_3d=True``, all five axes are required. Batch size and spatial
+        dimensions must match the image exactly; no axes are broadcast.
     config : dict, optional
         As :func:`make_featurizer_config`; defaults to all features enabled.
     is_3d : bool, default False
@@ -315,7 +313,7 @@ def featurize(
     rows : list[tuple]
         One ``(image_id, object_name, label)`` per row.
     """
-    masks = _validate_batch_inputs(image, masks, is_3d)
+    _validate_batch_inputs(image, masks, is_3d)
     batch_size = image.shape[0]
     if image_ids is not None and len(image_ids) != batch_size:
         raise ValueError(
@@ -390,14 +388,8 @@ def featurize(
     return np.vstack(all_blocks), columns, all_rows
 
 
-def _validate_batch_inputs(
-    image: np.ndarray, masks: np.ndarray, is_3d: bool
-) -> np.ndarray:
-    """Validate shapes/dtype and return masks with the image's spatial rank.
-
-    For 3D images only, repeat a 2D mask stack along Z. The expanded copy stays
-    writable for downstream libraries without exposing the caller's mask to writes.
-    """
+def _validate_batch_inputs(image: np.ndarray, masks: np.ndarray, is_3d: bool) -> None:
+    """Check batch/channel axes, matching spatial dimensions, and integer labels."""
     expected_ndim = 5 if is_3d else 4
     img_shape = "(B, C, Z, Y, X)" if is_3d else "(B, C, Y, X)"
     mask_shape = "(B, M, Z, Y, X)" if is_3d else "(B, M, Y, X)"
@@ -414,11 +406,9 @@ def _validate_batch_inputs(
             f"image must be {img_shape} for is_3d={is_3d} (ndim {expected_ndim}), "
             f"got ndim {image.ndim} with shape {image.shape}.{hint}"
         )
-    broadcast_z = is_3d and masks.ndim == 4
-    if masks.ndim != expected_ndim and not broadcast_z:
-        allowed_shapes = f"{mask_shape} or (B, M, Y, X)" if is_3d else mask_shape
+    if masks.ndim != expected_ndim:
         raise ValueError(
-            f"masks must be {allowed_shapes} for is_3d={is_3d}, "
+            f"masks must be {mask_shape} for is_3d={is_3d} (ndim {expected_ndim}), "
             f"got ndim {masks.ndim} with shape {masks.shape}"
         )
     if image.shape[0] != masks.shape[0]:
@@ -426,16 +416,12 @@ def _validate_batch_inputs(
             f"batch size mismatch: image has {image.shape[0]} items, "
             f"masks has {masks.shape[0]}"
         )
-    image_spatial_shape = image.shape[3:] if broadcast_z else image.shape[2:]
-    if image_spatial_shape != masks.shape[2:]:
+    if image.shape[2:] != masks.shape[2:]:
         raise ValueError(
-            f"spatial dims mismatch: image {image_spatial_shape}, masks {masks.shape[2:]}"
+            f"spatial dims mismatch: image {image.shape[2:]}, masks {masks.shape[2:]}"
         )
     if not np.issubdtype(masks.dtype, np.integer):
         raise TypeError(f"masks must be integer dtype, got {masks.dtype}")
-    if broadcast_z:
-        return np.repeat(masks[:, :, None], image.shape[2], axis=2)
-    return masks
 
 
 # ---------------------------------------------------------------------------

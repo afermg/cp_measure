@@ -6,9 +6,11 @@ Run from this PR's checkout with the OLD checkout on PYTHONPATH, for example:
     PYTHONPATH=/tmp/cp-measure-reference/src python test/make_featurizer_reference.py
 
 The generator refuses a different or locally modified source tree. Tests only
-load the saved JSON; they never need Git or the old checkout.
+load the saved compressed JSON; they never need Git or the old checkout.
+This historical snapshot is temporary and will be removed after v0.3.0.
 """
 
+import gzip
 import hashlib
 import importlib.metadata
 import json
@@ -101,9 +103,10 @@ def main():
                 ],
                 "data": values,
             }
-    target = Path(__file__).parent / "data/featurizer_pre_batch.json"
+    target = Path(__file__).parent / "data/featurizer_pre_batch.json.gz"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
+    payload = json.dumps(result, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    target.write_bytes(gzip.compress(payload, mtime=0))
     print(target)
 
 
