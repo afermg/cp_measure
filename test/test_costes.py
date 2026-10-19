@@ -191,6 +191,30 @@ def test_shape_dtype_mode_and_helper_grid_guards():
         cp.bisection_costes(None, None, a, a, scale_max=1)
 
 
+@pytest.mark.parametrize(
+    "cutoff, at_or_below, above", [(0.25, 1, 2), (0.35, 2, 5), (0.45, 5, 10)]
+)
+@pytest.mark.parametrize("side", [-1, 0, 1], ids=["below", "exact", "above"])
+def test_fast_linear_step_boundaries(cutoff, at_or_below, above, side):
+    correlation = cutoff if side == 0 else np.nextafter(cutoff, side * np.inf)
+    expected = above if side > 0 else at_or_below
+    assert cp._costes_step_multiplier(correlation) == expected
+
+
+def test_accurate_linear_search_never_uses_fast_step_schedule(monkeypatch):
+    def unexpected_fast_step(_correlation):
+        pytest.fail("Accurate mode must visit every threshold candidate")
+
+    monkeypatch.setattr(cp, "_costes_step_multiplier", unexpected_fast_step)
+    case = next(case for case in FIXTURES if case["mode"] == cp.M_ACCURATE)
+    a, b = arrays(case)
+    scale = case["scale_max"]
+    thresholds = cp.linear_costes(
+        None, None, a.ravel() / scale, b.ravel() / scale, scale, cp.M_ACCURATE
+    )
+    np.testing.assert_allclose(thresholds, case["thresholds"], rtol=1e-10, atol=1e-12)
+
+
 def test_constant_candidates_never_reach_scipy_pearson(monkeypatch):
     original = cp.scipy.stats.pearsonr
 

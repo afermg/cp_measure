@@ -247,11 +247,11 @@ def _undefined_costes(reason: str) -> tuple[float, float]:
 def _validate_costes_scale(scale_max: int) -> int:
     # A one-step grid silently collapses the search. Limit grids to the integer
     # precisions historically supported here and representable by float64.
-    if isinstance(scale_max, (bool, numpy.bool_)) or not isinstance(
-        scale_max, Integral
+    if (
+        isinstance(scale_max, (bool, numpy.bool_))
+        or not isinstance(scale_max, Integral)
+        or not 2 <= scale_max <= 2**32 - 1
     ):
-        raise ValueError("scale_max must be an integer between 2 and 2**32 - 1")
-    if not 2 <= scale_max <= 2**32 - 1:
         raise ValueError("scale_max must be an integer between 2 and 2**32 - 1")
     return int(scale_max)
 
@@ -262,13 +262,12 @@ def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
     if first.shape != second.shape:
         raise ValueError("Costes images must have the same shape")
     if scale_max is None:
-        if first.dtype == second.dtype and first.dtype.kind == "u":
-            scale_max = numpy.iinfo(first.dtype).max
-        else:
+        if first.dtype != second.dtype or first.dtype.kind != "u":
             raise ValueError(
                 "Costes requires explicit scale_max for float, signed, or mixed-dtype "
                 "inputs (e.g. scale_max=65535 for normalized 16-bit images)"
             )
+        scale_max = numpy.iinfo(first.dtype).max
     scale = _validate_costes_scale(scale_max)
     converted = []
     for image in (first, second):
@@ -323,10 +322,8 @@ def _costes_pair(
     scale: int,
     fast_costes: str,
 ) -> tuple[float, float]:
-    if fast_costes == M_FASTER:
-        thr_fi, thr_si = bisection_costes(None, None, fi, si, scale, fast_costes)
-    else:
-        thr_fi, thr_si = linear_costes(None, None, fi, si, scale, fast_costes)
+    search = bisection_costes if fast_costes == M_FASTER else linear_costes
+    thr_fi, thr_si = search(None, None, fi, si, scale, fast_costes)
     if not (numpy.isfinite(thr_fi) and numpy.isfinite(thr_si)):
         return numpy.nan, numpy.nan
     fi_above = fi > thr_fi
@@ -463,6 +460,14 @@ def get_correlation_overlap_ind(
 # ---------------------------------------------------------------------------
 
 
+def _costes_step_multiplier(correlation: float) -> int:
+    """Fast linear search takes larger steps while correlation is far above zero."""
+    for cutoff, multiplier in ((0.45, 10), (0.35, 5), (0.25, 2)):
+        if correlation > cutoff:
+            return multiplier
+    return 1
+
+
 def linear_costes(
     first_pixels: NDArray[numpy.floating] | None,
     second_pixels: NDArray[numpy.floating] | None,
@@ -536,16 +541,11 @@ def linear_costes(
             )
         if costReg <= 0:
             break
-        elif fast_costes == M_ACCURATE or i < i_step * 10:
-            i -= i_step
-        elif costReg > 0.45:
-            i -= i_step * 10
-        elif costReg > 0.35:
-            i -= i_step * 5
-        elif costReg > 0.25:
-            i -= i_step * 2
-        else:
-            i -= i_step
+        # Accurate mode and thresholds below ten grid steps never skip candidates.
+        multiplier = 1
+        if fast_costes != M_ACCURATE and i >= i_step * 10:
+            multiplier = _costes_step_multiplier(costReg)
+        i -= i_step * multiplier
     return _finish_costes_thresholds(fi, si, thr_fi_c, thr_si_c)
 
 
@@ -621,10 +621,8 @@ def bisection_costes(
             right = mid + 1
             valid = mid
         lastmid = mid
-        if right - left > 6:
-            mid = ((right - left) // (6 / 5)) + left
-        else:
-            mid = ((right - left) // 2) + left
+        divisor = 6 / 5 if right - left > 6 else 2
+        mid = ((right - left) // divisor) + left
 
     if valid is None:
         return _undefined_costes("no finite nonnegative background correlation found")
