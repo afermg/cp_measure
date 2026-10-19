@@ -45,7 +45,9 @@ def get_granularity(
 
     Returns a single ``{Granularity_k: array}`` dict for a lone 2D image or 3D
     volume, or a list of such dicts for a batch (4D ``(B,Z,Y,X)`` array or a list
-    of images). Output arrays are indexed densely by label ``1..max(mask)``.
+    of same-shaped images). Ragged batches are rejected by the shared normalizer.
+    These raw/bulk shapes are distinct from the featurizer's explicit batch and
+    channel axes. Output arrays are indexed densely by label ``1..max(mask)``.
     """
     masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
     results = [

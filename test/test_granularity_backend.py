@@ -3,6 +3,10 @@
 import numpy
 import pytest
 
+import cp_measure
+from cp_measure.featurizer import featurize, make_featurizer_config
+from conftest import ALL_OFF
+
 from cp_measure.core.measuregranularity import get_granularity as gran_numpy
 from cp_measure.core.numba.measuregranularity import get_granularity as gran_numba
 
@@ -93,13 +97,60 @@ def test_batch_4d_matches_per_image_baseline():
         _assert_same(got, gran_numpy(m, p))
 
 
-def test_batch_list_ragged():
-    a = _scene(H=80, W=80, seed=0)
-    b = _scene(H=64, W=96, n=3, seed=1)
-    out = gran_numba([a[0], b[0]], [a[1], b[1]])
+@pytest.mark.parametrize("container", [list, tuple])
+def test_batch_sequence_matches_per_image_baseline(container):
+    a = _scene(seed=0)
+    b = _scene(n=3, seed=1)
+    out = gran_numba(container([a[0], b[0]]), container([a[1], b[1]]))
     assert isinstance(out, list) and len(out) == 2
     _assert_same(out[0], gran_numpy(*a))
     _assert_same(out[1], gran_numpy(*b))
+
+
+def test_batch_list_ragged_rejected():
+    a = _scene(H=80, W=80, seed=0)
+    b = _scene(H=64, W=96, n=3, seed=1)
+    with pytest.raises(ValueError, match="same shape"):
+        gran_numba([a[0], b[0]], [a[1], b[1]])
+
+
+@pytest.mark.parametrize("is_3d", [False, True], ids=["2d", "3d"])
+def test_featurizer_batch_matches_numpy(monkeypatch, is_3d):
+    """Exercise the rebased backend through #106's explicit batch interface."""
+    scenes = [_scene(seed=0), _scene(n=3, seed=1)]
+    masks = numpy.stack([m for m, _ in scenes])[:, None]
+    image = numpy.stack([p for _, p in scenes])[:, None]
+    if is_3d:
+        masks = numpy.repeat(masks[:, :, None], 4, axis=2)
+        image = numpy.repeat(image[:, :, None], 4, axis=2)
+        image *= numpy.arange(1, 5)[None, None, :, None, None]
+    config = make_featurizer_config(
+        ["DNA"],
+        **{**ALL_OFF, "granularity": True},
+        granularity_params={"element_size": 2, "granular_spectrum_length": 3},
+    )
+    image_before, masks_before = image.copy(), masks.copy()
+    monkeypatch.setattr(cp_measure, "_ACCELERATOR", None)
+    expected, columns, rows = featurize(
+        image, masks, config, is_3d=is_3d, image_ids=["A", "B"]
+    )
+    monkeypatch.setattr(cp_measure, "_ACCELERATOR", "numba")
+    actual, actual_columns, actual_rows = featurize(
+        image, masks, config, is_3d=is_3d, image_ids=["A", "B"]
+    )
+    numpy.testing.assert_allclose(actual, expected, **TOL)
+    assert actual_columns == columns
+    assert (
+        actual_rows
+        == rows
+        == [
+            (image_id, "object", label)
+            for image_id, count in [("A", 4), ("B", 3)]
+            for label in range(1, count + 1)
+        ]
+    )
+    numpy.testing.assert_array_equal(image, image_before)
+    numpy.testing.assert_array_equal(masks, masks_before)
 
 
 def test_3d_volume_falls_back_to_numpy():
