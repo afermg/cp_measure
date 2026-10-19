@@ -29,6 +29,7 @@ Notable user-facing changes are documented here.
 
 ### Fixed
 
+- Exclude generated Python/Numba cache files from built packages.
 - Costes now separates acquisition scale from normalized float dtype. Both public
   APIs accept keyword-only `scale_max`, normalize integer pixels internally, and
   reject float inputs without an explicit scale instead of silently searching a

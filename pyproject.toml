@@ -37,6 +37,9 @@ Homepage = "https://github.com/afermg/cp_measure"
 includes = [
     "src/cp_measure",
 ]
+excludes = [
+    "**/__pycache__/**",
+]
 
 [build-system]
 requires = ["pdm-backend"]
