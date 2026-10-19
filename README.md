@@ -44,7 +44,7 @@ The simplest way to extract all features from an image and its masks:
 
 ```python
 import numpy as np
-from cp_measure.featurizer import featurize
+from cp_measure.featurizer import featurize, make_featurizer_config
 
 # image: (C, H, W) float array, masks: (N_masks, H, W) integer labels
 image = np.random.default_rng(42).random((2, 240, 240))
@@ -52,7 +52,10 @@ masks = np.zeros((1, 240, 240), dtype=np.int32)
 masks[0, 50:100, 50:100] = 1
 masks[0, 150:200, 150:200] = 2
 
-data, columns, rows = featurize(image, masks)
+# Choose a 255-step threshold grid for this synthetic example.
+# For real normalized images, use their acquisition scale instead.
+config = make_featurizer_config(correlation_costes_params={"scale_max": 255})
+data, columns, rows = featurize(image, masks, config)
 # data:    np.ndarray of shape (n_objects, n_features)
 # columns: feature names (e.g. "Area", "Intensity_MeanIntensity__ch0", ...)
 # rows:    [(None, "object", 1), (None, "object", 2)]  — (image_id, object_name, label) per row
@@ -71,7 +74,10 @@ masks[0, 50:100, 50:100] = 1
 masks[0, 150:200, 150:200] = 2
 
 # Disable texture features, name channels explicitly
-config = make_featurizer_config(["DNA", "ER"], texture=False)
+config = make_featurizer_config(
+    ["DNA", "ER"], texture=False,
+    correlation_costes_params={"scale_max": 255},
+)
 data, columns, rows = featurize(image, masks, config)
 ```
 
@@ -84,7 +90,10 @@ from cp_measure.featurizer import featurize, make_featurizer_config
 # Recreate variables from previous examples for this block to run in isolation
 image = np.random.default_rng(42).random((2, 240, 240))
 
-config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
+config = make_featurizer_config(
+    ["DNA", "ER"], objects=["nuclei", "cells"],
+    correlation_costes_params={"scale_max": 255},
+)
 
 masks = np.zeros((2, 240, 240), dtype=np.int32)
 masks[0, 50:100, 50:100] = 1    # nucleus 1
@@ -192,6 +201,7 @@ measurecolocalization.get_correlation_overlap
 - **Labels**: Use positive integers for objects and `0` for background. `featurize` and the bulk registries relabel non-contiguous IDs internally without modifying your array; `featurize` reports the original IDs. Raw measurement functions require contiguous `1..N` labels; wrap them with `cp_measure._sanitize.sanitize` when needed.
 - **Image shapes**: Images in a batch must share one shape. Ragged (differently-sized) batches are not supported; normalise your images to a common shape first.
 - **Fidelity**: Use float intensities in `[0, 1]` to match CellProfiler's input convention (e.g. divide uint16 values by `65535`). Matching the original intensity quantile measurements also requires `legacy=True`; see the [legacy percentile convention](docs/measurement-notes.md#legacy-percentile-convention).
+- **Costes scale (breaking correction)**: Float inputs to `get_correlation_costes` and `get_correlation_costes_ind` must be normalized to `[0, 1]` **and** specify `scale_max` (e.g. `65535` for normalized 16-bit data). It controls the threshold grid; it is not the observed image maximum. Both matching unsigned-integer dtypes infer their storage maximum and are normalized internally. For 12-bit data stored in `uint16`, pass `scale_max=4095` explicitly; signed or mixed-dtype arrays also require a scale. Through the featurizer, use `correlation_costes_params={"scale_max": 65535}` or disable Costes. Undefined regressions/background subsets and zero signal denominators emit `RuntimeWarning` and return `NaN`. Do not replace these with zero. Threshold helpers are tested against pinned CellProfiler methods, not the full application: cp_measure fits thresholds per object, whereas CellProfiler's object workflow fits across the image. See [reference fixture provenance](test/data/README.md).
 - **Speed**: v0.2.0 speeds up the default NumPy/SciPy implementation without adding required runtime dependencies; see the [performance report](benchmarks/releases/v0.2.0.md). Optional Numba and JAX backends remain under development and are not yet supported.
 
 See [Measurement notes](docs/measurement-notes.md) for texture quantization, percentile formulas, radial-distribution centers, and floating-point caveats.

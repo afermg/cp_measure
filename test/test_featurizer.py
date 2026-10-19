@@ -17,8 +17,10 @@ class TestSmoke:
     """High-level test to capture general misbehaviour."""
 
     def test_default_config(self, image_2d_2ch, mask_2d):
+        # Unsigned input carries a default Costes storage scale.
+        image = np.rint(image_2d_2ch * 255).astype(np.uint8)
         with pytest.warns(UserWarning, match="No channel names"):
-            data, columns, rows = featurize(image_2d_2ch, mask_2d)
+            data, columns, rows = featurize(image, mask_2d)
 
         assert isinstance(data, np.ndarray)
         assert data.ndim == 2
@@ -44,9 +46,15 @@ class TestSmoke:
         _, _, rows = featurize(image_2d_1ch, mask_2d, config, image_id="plate1_A01")
         assert all(r[0] == "plate1_A01" for r in rows)
 
+    def test_float_default_requires_scale(self, image_2d_2ch, mask_2d):
+        config = make_featurizer_config(["DNA", "ER"])
+        with pytest.raises(ValueError, match="explicit scale_max"):
+            featurize(image_2d_2ch, mask_2d, config)
+
     def test_values_finite_and_nontrivial(self, image_2d_2ch, mask_2d):
+        config = make_featurizer_config(correlation_costes_params={"scale_max": 255})
         with pytest.warns(UserWarning, match="No channel names"):
-            data, columns, _ = featurize(image_2d_2ch, mask_2d)
+            data, columns, _ = featurize(image_2d_2ch, mask_2d, config)
 
         nonzero_frac = np.mean(np.any(data != 0, axis=0))
         assert nonzero_frac > 0.5

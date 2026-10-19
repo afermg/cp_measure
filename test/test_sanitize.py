@@ -93,7 +93,9 @@ def test_featurizer_uses_original_ids_and_sanitizes_once(monkeypatch):
     real = fz.sanitize_masks
     monkeypatch.setattr(fz, "sanitize_masks", lambda m: (calls.append(1), real(m))[1])
     img = np.random.default_rng(0).random((2, 64, 64))
-    config = make_featurizer_config(["DNA", "ER"])
+    config = make_featurizer_config(
+        ["DNA", "ER"], correlation_costes_params={"scale_max": 255}
+    )
 
     data_g, _, rows_g = featurize(img, _three_objects((1, 17, 5))[np.newaxis], config)
     assert len(calls) == 1  # cost paid once per object-type mask
