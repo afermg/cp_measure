@@ -23,7 +23,7 @@ This table covers the object measurements exposed by the bulk registries. The fe
 
 - The featurizer and default bulk wrappers accept non-contiguous positive integer IDs, relabel each mask independently, and leave the input unchanged. Background is `0`.
 - Raw functions (including bulk registries with `sanitize=False`) require contiguous labels `1..N`. Some accept additional inputs, such as a boolean mask for raw Feret; these are not part of the bulk wrapper's integer-label contract.
-- The batched featurizer proposed in [#106](https://github.com/afermg/cp_measure/pull/106) skips empty images and rejects an all-empty batch. That behavior does not change the underlying raw measurements.
+- The batched featurizer skips empty images and rejects an all-empty batch. That behavior does not change the underlying raw measurements.
 
 ## Numba Feret batch inputs
 

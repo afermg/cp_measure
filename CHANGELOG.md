@@ -4,8 +4,26 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Added
+
+- Experimental Numba Feret backend, selected with `set_accelerator("numba")`. It preserves
+  NumPy's 2D results and raw 3D behavior (`{}`), including single-slice volumes.
+  Byte-order normalization remains at the backend boundary; #111 tracks a
+  possible shared normalization layer.
+
 ### Changed
 
+- **Breaking:** `featurize` now takes explicit batches: images `(B, C, Y, X)`
+  and masks `(B, M, Y, X)`, or `(B, C, Z, Y, X)` / `(B, M, Z, Y, X)` with
+  `is_3d=True`. `M` counts mask types, not labelled objects. Single images still
+  require `B=1`. Batch size and all spatial dimensions must match; masks are
+  never repeated or broadcast automatically.
+- **Breaking:** replace `image_id` with `image_ids`, one identifier per batch
+  item. Omitted IDs now produce zero-based batch indices instead of `None`.
+- Empty batch items are skipped with a warning while retaining the remaining
+  items' IDs; an entirely empty batch raises `ValueError`.
 - Require centrosome 1.3.4 or newer, which removes its undeclared `six` dependency;
   test and benchmark environments no longer install `six` as a workaround.
 
@@ -25,10 +43,23 @@ Notable user-facing changes are documented here.
 
 ### Migration
 
-- Normalized float callers must supply `scale_max` to Costes, or set
+- For a formerly unbatched image/mask pair, use
+  `featurize(image[None], masks[None], config)`. For volumes, also pass
+  `is_3d=True`. Replace `image_id="sample"` with `image_ids=["sample"]`.
+  Supply caller-unique IDs when combining results from separate calls.
+- If intentionally applying a 2D mask throughout a volume, explicitly create
+  `masks_3d = np.repeat(masks_2d[:, :, None], image.shape[2], axis=2)` before
+  calling `featurize` with a 5D image. The featurizer does not add or repeat Z.
+- **Breaking:** normalized float callers must supply `scale_max` to Costes, or set
   `correlation_costes_params={"scale_max": ...}` in the featurizer. Use the
   acquisition maximum (e.g. 65535 for 16-bit), not an observed image maximum.
   Missing scale raises ValueError; other correlation families are unchanged.
+
+### Credits
+
+- Tim Treis (@timtreis) authored the batched-featurizer and Numba Feret
+  implementations (#106 and #65). Alán F. Muñoz (@afermg) authored the maintainer
+  review follow-ups, compatibility tests/documentation, and v0.3.0 preparation.
 
 ## [0.2.0] - 2026-08-13
 
