@@ -234,6 +234,8 @@ def build_config(features: set[str]) -> dict:
         radial_zernikes="radial_zernikes" in features,
         correlation_pearson="correlation_pearson" in features,
         correlation_costes="correlation_costes" in features,
+        # Match the uint16 normalization used by load_image().
+        correlation_costes_params={"scale_max": 65535},
         correlation_manders_fold="correlation_manders_fold" in features,
         correlation_rwc="correlation_rwc" in features,
     )
