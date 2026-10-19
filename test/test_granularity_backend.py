@@ -45,6 +45,31 @@ def test_2d_matches_baseline(sub, img):
     )
 
 
+@pytest.mark.parametrize("shape", [(0, 17), (1, 17), (3, 17), (7, 17), (17, 7)])
+@pytest.mark.parametrize("sub", [0.25, 1.0])
+@pytest.mark.parametrize("has_objects", [False, True])
+def test_small_image_matches_baseline(shape, sub, has_objects):
+    mask = numpy.full(shape, int(has_objects), dtype=numpy.int32)
+    pixels = numpy.random.default_rng(0).random(shape)
+    params = dict(subsample_size=sub, image_sample_size=1.0, element_size=1)
+    _assert_same(gran_numba(mask, pixels, **params), gran_numpy(mask, pixels, **params))
+
+
+@pytest.mark.parametrize("transpose", [False, True])
+def test_subsampled_boundary_object_matches_baseline(transpose):
+    # 160 * 0.4 -> 64: the final source coordinate rounds just past 63.
+    mask = numpy.zeros((160, 160), numpy.int32)
+    mask[153:, 30:90] = 1
+    mask[10:40, 10:40] = 2
+    pixels = numpy.random.default_rng(0).random(mask.shape)
+    if transpose:
+        mask, pixels = mask.T, pixels.T
+    _assert_same(
+        gran_numba(mask, pixels, subsample_size=0.4),
+        gran_numpy(mask, pixels, subsample_size=0.4),
+    )
+
+
 def test_single_object():
     mask = numpy.zeros((60, 60), numpy.int32)
     mask[20:40, 20:40] = 1
@@ -154,9 +179,8 @@ def test_featurizer_batch_matches_numpy(monkeypatch, is_3d):
 
 
 def test_3d_volume_falls_back_to_numpy():
-    # Z>1 dispatches to the numpy baseline. Use fullres: the baseline collapses Z
-    # to int(Z*subsample_size) and errors when that hits 0, so a thin volume at the
-    # 0.25 default cannot be subsampled at all (a baseline limitation, not ours).
+    # Z>1 dispatches to the numpy baseline. Use fullres to exercise morphology;
+    # default subsampling would collapse Z and return NaNs instead.
     rng = numpy.random.default_rng(5)
     pixels = rng.random((3, 40, 40))
     mask = numpy.zeros((3, 40, 40), numpy.int32)

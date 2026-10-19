@@ -91,6 +91,17 @@ def _granularity_2d(
     ng: int,
 ) -> dict[str, NDArray[numpy.floating]]:
     orig_shape = numpy.array(orig_pixels.shape)
+    effective_shape = (
+        (orig_shape * subsample_size).astype(int) if subsample_size < 1 else orig_shape
+    )
+    if (effective_shape < 2).any():
+        # Match the baseline's undefined-spectrum contract before resampling or
+        # padding an empty/single-sample axis (issue #90).
+        n_objects = int(orig_mask.max()) if orig_mask.size else 0
+        return {
+            f"Granularity_{i}": numpy.full(n_objects, numpy.nan)
+            for i in range(1, ng + 1)
+        }
     new_shape = orig_shape.copy()
 
     # 1. Subsample image (scipy map_coordinates, as baseline). The baseline also

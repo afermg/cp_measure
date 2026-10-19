@@ -24,8 +24,20 @@ def test_bilinear_gather_matches_map_coordinates(seed):
     img = rng.random((37, 41))
     H, W = img.shape
     npts = 500
-    sy = numpy.concatenate([rng.uniform(0, H - 1, npts), [0.0, H - 1, H - 1]])
-    sx = numpy.concatenate([rng.uniform(0, W - 1, npts), [0.0, W - 1, 0.0]])
+    # Constant mode zeros the entire sample outside the domain, even by one ULP;
+    # it does not interpolate with zero-valued exterior corners (grid-constant).
+    sy = numpy.concatenate(
+        [
+            rng.uniform(0, H - 1, npts),
+            [0.0, H - 1, H - 1, -0.25, numpy.nextafter(H - 1.0, numpy.inf), 1, 1],
+        ]
+    )
+    sx = numpy.concatenate(
+        [
+            rng.uniform(0, W - 1, npts),
+            [0.0, W - 1, 0.0, 1, 1, -0.25, numpy.nextafter(W - 1.0, numpy.inf)],
+        ]
+    )
     ref = scipy.ndimage.map_coordinates(img, (sy, sx), order=1)
     y0 = numpy.floor(sy).astype(numpy.int64)
     x0 = numpy.floor(sx).astype(numpy.int64)
@@ -131,10 +143,10 @@ def test_reconstruction_cascaded_mask_chain():
         recon_mask = rec
 
 
-def test_reconstruction_long_geodesic():
-    """A serpentine channel forces propagation along a long geodesic path — the
-    case the multi-raster/FIFO split is built for. The result is independent of how
-    many raster passes precede the FIFO, so it must stay bit-exact vs skimage."""
+@pytest.mark.parametrize("offset", [(0, 0), (32768, 0), (65536, 0), (0, 65536)])
+def test_reconstruction_long_geodesic(offset):
+    """A serpentine channel forces FIFO propagation, including beyond the old
+    signed/16-bit packed-coordinate limits on either axis."""
     H, W = 41, 41
     mask = numpy.zeros((H, W))
     # carve a snake of open (high) corridors one row apart, connected at alternating ends
@@ -146,6 +158,9 @@ def test_reconstruction_long_geodesic():
             mask[i, 2:-1] = 0.0  # wall from the right, gap on the left
     seed = numpy.zeros((H, W))
     seed[1, 1] = 9.0  # single high seed at one end of the snake
+    padding = ((offset[0], 0), (offset[1], 0))
+    mask = numpy.pad(mask, padding)
+    seed = numpy.pad(seed, padding)
     got = reconstruction_by_dilation_2d(seed, mask)
     expected = M.reconstruction(seed, mask, footprint=M.disk(1))
     numpy.testing.assert_array_equal(got, expected)

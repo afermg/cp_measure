@@ -29,9 +29,9 @@ def bilinear_gather(img, y0, x0, fy, fx, H, W):
     """Bilinear sample of ``img`` at points with precomputed floor/frac indices.
 
     Reproduces ``scipy.ndimage.map_coordinates(img, (y, x), order=1)`` with the
-    default ``mode="constant"`` (out-of-range corners contribute ``cval=0``):
+    default ``mode="constant"`` (out-of-range sample points return ``cval=0``):
     ``y0=floor(y)``, ``fy=y-y0`` (likewise x). Matches map_coordinates to ~3e-16
-    (FP add-order only; ``tasks/poc_granularity_gather.py``) — far inside this
+    (FP add-order only) — far inside this
     backend's ``rtol=1e-6`` contract — but ~9x faster per call. The floor/frac are
     computed once on the host and reused across the 16 granularity steps (same
     sample points, different ``img``), replacing 16 ``map_coordinates`` calls that
@@ -43,7 +43,19 @@ def bilinear_gather(img, y0, x0, fy, fx, H, W):
         ix = x0[t]
         gy = fy[t]
         gx = fx[t]
-        v00 = img[iy, ix] if (0 <= iy < H and 0 <= ix < W) else 0.0
+        # Test floor/frac separately so even a one-ULP overshoot is rejected.
+        # Interpolating exterior zero-valued corners would be grid-constant mode.
+        if (
+            iy < 0
+            or ix < 0
+            or iy >= H
+            or ix >= W
+            or (iy == H - 1 and gy > 0)
+            or (ix == W - 1 and gx > 0)
+        ):
+            out[t] = 0.0
+            continue
+        v00 = img[iy, ix]
         v01 = img[iy, ix + 1] if (0 <= iy < H and 0 <= ix + 1 < W) else 0.0
         v10 = img[iy + 1, ix] if (0 <= iy + 1 < H and 0 <= ix < W) else 0.0
         v11 = img[iy + 1, ix + 1] if (0 <= iy + 1 < H and 0 <= ix + 1 < W) else 0.0
@@ -250,10 +262,11 @@ def reconstruction_by_dilation_2d(seed, mask):
     Three raster pairs (vs a single pair) cut the FIFO seed count ~50-95%, trading a
     little cheap cache-sequential scanning for far fewer random-access FIFO updates
     (~1.5x faster reconstruction, bit-identical — the result is independent of how
-    many raster passes precede the FIFO). FIFO entries are packed as ``(i << 16) | j``
-    int32 (decoded by shift/mask, not int-div/mod; valid for sides ≤ 65535). The FIFO
-    is a ring buffer with a per-pixel ``in-queue`` flag, so at most ``N`` entries are
-    live at once and a buffer of ``N + 1`` cannot overflow.
+    many raster passes precede the FIFO). FIFO entries use pointer-sized integers
+    packed as ``(i << shift) | j``, with ``shift`` chosen from the image width.
+    Shift/mask decoding avoids int-div/mod without imposing signed 16-bit coordinate
+    limits. The FIFO is a ring buffer with a per-pixel ``in-queue`` flag, so at most
+    ``N`` entries are live at once and a buffer of ``N + 1`` cannot overflow.
     """
     H, W = seed.shape
     out = np.empty((H, W), np.float64)
@@ -271,9 +284,12 @@ def reconstruction_by_dilation_2d(seed, mask):
     _geodesic_raster_fwd(out, mask)
 
     cap = H * W + 1
-    queue = np.empty(cap, np.int32)  # packed (i << 16) | j
+    queue = np.empty(cap, np.intp)
     inq = np.zeros((H, W), np.uint8)
-    mask16 = np.int32(0xFFFF)
+    shift = 0
+    while (1 << shift) < W:
+        shift += 1
+    column_mask = (1 << shift) - 1
     head = 0
     tail = 0
 
@@ -294,7 +310,7 @@ def reconstruction_by_dilation_2d(seed, mask):
                 i < H - 1 and out[i + 1, j] < v and out[i + 1, j] < mask[i + 1, j]
             ) or (j < W - 1 and out[i, j + 1] < v and out[i, j + 1] < mask[i, j + 1])
             if seed_p:
-                queue[tail] = np.int32((i << 16) | j)
+                queue[tail] = (i << shift) | j
                 inq[i, j] = 1
                 tail += 1
                 if tail == cap:
@@ -306,8 +322,8 @@ def reconstruction_by_dilation_2d(seed, mask):
         head += 1
         if head == cap:
             head = 0
-        i = code >> np.int32(16)
-        j = code & mask16
+        i = code >> shift
+        j = code & column_mask
         inq[i, j] = 0
         v = out[i, j]
         # up, down, left, right
@@ -318,7 +334,7 @@ def reconstruction_by_dilation_2d(seed, mask):
                 out[i - 1, j] = nv
                 if inq[i - 1, j] == 0:
                     inq[i - 1, j] = 1
-                    queue[tail] = np.int32(((i - 1) << 16) | j)
+                    queue[tail] = ((i - 1) << shift) | j
                     tail += 1
                     if tail == cap:
                         tail = 0
@@ -329,7 +345,7 @@ def reconstruction_by_dilation_2d(seed, mask):
                 out[i + 1, j] = nv
                 if inq[i + 1, j] == 0:
                     inq[i + 1, j] = 1
-                    queue[tail] = np.int32(((i + 1) << 16) | j)
+                    queue[tail] = ((i + 1) << shift) | j
                     tail += 1
                     if tail == cap:
                         tail = 0
@@ -340,7 +356,7 @@ def reconstruction_by_dilation_2d(seed, mask):
                 out[i, j - 1] = nv
                 if inq[i, j - 1] == 0:
                     inq[i, j - 1] = 1
-                    queue[tail] = np.int32((i << 16) | (j - 1))
+                    queue[tail] = (i << shift) | (j - 1)
                     tail += 1
                     if tail == cap:
                         tail = 0
@@ -351,7 +367,7 @@ def reconstruction_by_dilation_2d(seed, mask):
                 out[i, j + 1] = nv
                 if inq[i, j + 1] == 0:
                     inq[i, j + 1] = 1
-                    queue[tail] = np.int32((i << 16) | (j + 1))
+                    queue[tail] = (i << shift) | (j + 1)
                     tail += 1
                     if tail == cap:
                         tail = 0
