@@ -1,6 +1,6 @@
 # Measurement notes
 
-For essential input and performance guidance, see the [README](../README.md#important-notes).
+For essential input and performance guidance, see the [README](../README.md#important-notes). For dimensions, label requirements, empty masks, and Feret batch shapes, see the [measurement support table](measurement-support.md).
 
 ## 3D size and shape
 
