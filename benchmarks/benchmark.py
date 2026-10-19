@@ -147,7 +147,7 @@ def run_featurize(
         if key not in image_index:
             return None
         channel_images.append(load_image(image_index[key]))
-    image = np.stack(channel_images)  # (5, H, W)
+    image = np.stack(channel_images)[None]  # (B=1, 5, H, W)
 
     # Load masks: Nuclei from DNA, Cells from AGP
     masks_list = []
@@ -157,9 +157,9 @@ def run_featurize(
         if not mask_path.exists():
             return None
         masks_list.append(load_mask(mask_path))
-    masks = np.stack(masks_list)  # (2, H, W)
+    masks = np.stack(masks_list)[None]  # (B=1, 2, H, W)
 
-    data, columns, rows = featurize(image, masks, config, image_id=f"{gene}_{site}")
+    data, columns, rows = featurize(image, masks, config, image_ids=[f"{gene}_{site}"])
 
     objects_arr = np.array([r[1] for r in rows])
     unique_objects = np.unique(objects_arr)

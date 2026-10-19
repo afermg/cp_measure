@@ -127,11 +127,11 @@ def test_featurizer_forwards_scale():
         **{**ALL_OFF, "correlation_costes": True},
         correlation_costes_params={"scale_max": 255},
     )
-    data, columns, rows = featurize(image, masks, config)
+    data, columns, rows = featurize(image[None], masks[None], config)
     expected = cp.get_correlation_costes_ind(
         image[0], image[1], masks[0].astype(bool), scale_max=255
     )
-    assert rows == [(None, "object", 1)]
+    assert rows == [(0, "object", 1)]
     for key, value in expected.items():
         assert data[0, columns.index(key + "__a__b")] == pytest.approx(value)
 
