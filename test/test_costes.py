@@ -150,10 +150,11 @@ def test_featurizer_forwards_scale():
 )
 @pytest.mark.parametrize("mode", [cp.M_FASTER, cp.M_FAST, cp.M_ACCURATE])
 def test_undefined_signal_warns_and_returns_nan(a, b, mode):
-    with pytest.warns(cp.CostesThresholdWarning):
+    with pytest.warns(RuntimeWarning, match="^Undefined Costes result:") as recorded:
         result = cp.get_correlation_costes_ind(
             a, b, np.ones(a.shape, bool), scale_max=255, fast_costes=mode
         )
+    assert all(w.category is RuntimeWarning for w in recorded)
     assert np.isnan(list(result.values())).all()
 
 
@@ -228,4 +229,8 @@ def test_constant_candidates_never_reach_scipy_pearson(monkeypatch):
     with warnings.catch_warnings(record=True) as recorded:
         warnings.simplefilter("always")
         cp.get_correlation_costes_ind(a, b, np.ones(a.shape, bool), scale_max=255)
-    assert all(issubclass(w.category, cp.CostesThresholdWarning) for w in recorded)
+    assert all(
+        w.category is RuntimeWarning
+        and str(w.message).startswith("Undefined Costes result:")
+        for w in recorded
+    )

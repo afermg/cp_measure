@@ -233,14 +233,8 @@ def _rwc_pair(
     return RWC1, RWC2
 
 
-class CostesThresholdWarning(RuntimeWarning):
-    """No numerically defined Costes threshold/measurement for an object."""
-
-
 def _undefined_costes(reason: str) -> tuple[float, float]:
-    warnings.warn(
-        f"Undefined Costes result: {reason}", CostesThresholdWarning, stacklevel=3
-    )
+    warnings.warn(f"Undefined Costes result: {reason}", RuntimeWarning, stacklevel=3)
     return numpy.nan, numpy.nan
 
 
@@ -481,7 +475,7 @@ def linear_costes(
     Candiate thresholds are gradually decreased until Pearson R falls below 0.
     If "Fast" mode is enabled the "steps" between tested thresholds will be increased
     when Pearson R is much greater than 0. Inputs must be normalized 1D arrays.
-    Undefined subsets return NaN thresholds with CostesThresholdWarning.
+    Undefined subsets return NaN thresholds with RuntimeWarning.
     """
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
@@ -565,7 +559,7 @@ def bisection_costes(
     at lower thresholds in some samples. Therefore the candidate tested in each
     loop is 1/6th of the window size below the maximum value (as opposed to the midpoint).
     Inputs must be normalized 1D arrays. Undefined results return NaN thresholds
-    with CostesThresholdWarning; constant candidates are treated as insufficient.
+    with RuntimeWarning; constant candidates are treated as insufficient.
     """
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
@@ -742,7 +736,7 @@ def get_correlation_costes(
     Signed or mixed-dtype inputs always require an explicit common scale.
 
     Undefined regressions/background subsets or zero signal denominators
-    return NaN and emit :class:`CostesThresholdWarning`, rather than plausible
+    return NaN and emit :class:`RuntimeWarning`, rather than plausible
     zero/one coefficients. ``thr`` is retained but unused. Input arrays are
     never modified. Labels must be contiguous ``1..N``; use the bulk API or
     :func:`cp_measure._sanitize.sanitize` for arbitrary IDs.

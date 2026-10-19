@@ -17,7 +17,7 @@ Notable user-facing changes are documented here.
   one-step grid. Matching unsigned integer dtypes infer their storage maximum;
   lower-bit-depth data in larger containers need an explicit override.
 - Undefined Costes regressions/background subsets and zero signal denominators
-  now warn with `CostesThresholdWarning` and return NaN. Constant bisection
+  now warn with `RuntimeWarning` and return NaN. Constant bisection
   candidates no longer cause silent convergence on stale bounds.
 - Added integer/float, 2D/3D, bulk/featurizer and degenerate-input regressions,
   plus 18 fixtures from pinned CellProfiler threshold methods. This does not
