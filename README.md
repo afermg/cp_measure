@@ -100,7 +100,21 @@ data, columns, rows = featurize(image, masks, config)
 # rows: [(0, "nuclei", 1), (0, "cells", 1), (0, "cells", 2)]
 ```
 
-Single- and multichannel volumes are supported: pass images shaped `(B, C, Z, Y, X)` and masks shaped `(B, M, Z, Y, X)` with `is_3d=True`. Image and mask spatial dimensions must match; 2D masks are not automatically repeated along Z. The featurizer skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`) with a warning. The remaining features support 3D, subject to the [single-slice size/shape limitation](docs/measurement-notes.md#3d-size-and-shape).
+Single- and multichannel volumes are supported: pass images shaped `(B, C, Z, Y, X)` with `is_3d=True`. Masks can be matching 3D stacks `(B, M, Z, Y, X)` or **2D stacks `(B, M, Y, X)` that are repeated across every Z slice**. Batch size and Y/X must match; no other axes are broadcast. An explicitly 3D mask must match Z too, even if its Z axis has length 1. Inputs are not modified.
+
+A repeated label becomes one 3D object spanning the volume, not one object per slice. All measurements use the 3D image. The featurizer still skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`) with a warning. See the [single-slice size/shape limitation](docs/measurement-notes.md#3d-size-and-shape).
+
+```python
+import numpy as np
+from cp_measure.featurizer import featurize, make_featurizer_config
+
+volume = np.random.default_rng(42).random((1, 1, 4, 32, 32))  # B, C, Z, Y, X
+masks_2d = np.zeros((1, 1, 32, 32), dtype=np.int32)  # B, M, Y, X
+masks_2d[0, 0, 8:24, 12:20] = 42
+config = make_featurizer_config(["DNA"])
+data, columns, rows = featurize(volume, masks_2d, config, is_3d=True)
+assert rows == [(0, "object", 42)]  # one object repeated through all four slices
+```
 
 **Migrating from the single-image API:** add a batch axis to both arrays: `featurize(image[None], masks[None], config)`. For volumes, also pass `is_3d=True`. Replace `image_id="sample"` with `image_ids=["sample"]`. Previously, omitting `image_id` produced `None` in row metadata; now `image_ids=None` produces zero-based batch indices, so a single-image batch produces `0`.
 

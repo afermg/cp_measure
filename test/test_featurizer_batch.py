@@ -143,10 +143,10 @@ def test_is_3d_true_runs(image_3d_1ch, mask_3d):
             False,
             "masks must be",
         ),
-        # A 2D mask is not implicitly repeated through a 3D volume.
+        # 2D masks for a volume still need both batch and mask-type axes.
         (
             np.ones((1, 2, 4, 10, 10)),
-            np.ones((1, 1, 10, 10), dtype=np.int32),
+            np.ones((1, 10, 10), dtype=np.int32),
             True,
             "masks must be",
         ),
