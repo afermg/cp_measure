@@ -24,7 +24,11 @@ def _zernike_basis_numpy(xm, ym, lut, nterms, m_arr):
         for t in range(int(nterms[k])):
             s = s * r2 + lut[k, t]
         s[r2 > 1] = 0
-        m = int(m_arr[k])
+        # Keep a NumPy integer exponent, as centrosome does. NumPy 2 treats a
+        # Python int exponent of 2 as the square shortcut, whose rounding can
+        # differ from power(complex, numpy_integer). The bit-exact oracle must
+        # compare the same operation; backend tolerances remain unchanged.
+        m = m_arr[k]
         out[:, k] = s if m == 0 else s * (z**m)
     return out
 
