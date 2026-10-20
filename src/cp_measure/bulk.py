@@ -48,81 +48,49 @@ _3D_FEATURES = ("intensity", "sizeshape", "texture", "granularity")
 def _numba_registries() -> dict[str, dict[str, Callable]]:
     """Registries for the 'numba' accelerator.
 
-    Composes the numba implementations (``intensity``, ``granularity``) with the
-    Composes the numba implementations (``intensity``, ``texture``) with the
-    numpy implementations of every other feature — a single global "numba"
-    Composes the numba implementations (``intensity`` and the ``pearson`` /
-    ``manders_fold`` / ``rwc`` / ``costes`` / ``overlap`` colocalization features)
-    with the numpy implementations of every other feature — a single global "numba"
-    selection still yields a full, working feature set, accelerated where a
-    numba backend exists. This is explicit per-function composition, NOT an
-    error-driven fallback.
-
-    Note: ``overlap`` is not in the numpy ``_CORRELATION`` registry, so the numba
-    correlation registry intentionally exposes one feature the numpy one does not
-    (the numba ``overlap`` backend exists and is cheap to surface). Adding
-    ``overlap`` to the numpy ``_CORRELATION`` for symmetry is a separate call.
+    Composes the numba implementations (intensity, granularity, zernike, radial_zernikes,
+    radial_distribution, texture, feret, sizeshape, and the colocalization features including
+    costes and overlap) with the numpy implementations of every other feature, so a single
+    global "numba" selection yields a full, accelerated-where-available feature set. This is
+    explicit per-function composition, NOT an error-driven fallback. ``overlap`` is numba-only
+    (not present in the numpy ``_CORRELATION`` registry).
     """
     from cp_measure.core.numba import (
-        get_granularity as _numba_granularity,
-        get_intensity as _numba_intensity,
-    Composes the numba implementations (``intensity``, ``zernike``,
-    ``radial_zernikes``, ``radial_distribution``) with the numpy implementations of
-    every other feature — a single global "numba" selection still yields a full,
-    working feature set, accelerated where a numba backend exists. This is explicit
-    per-function composition, NOT an error-driven fallback.
-    """
-    from cp_measure.core.numba import (
-        get_intensity as _numba_intensity,
-        get_radial_distribution as _numba_radial_distribution,
-        get_radial_zernikes as _numba_radial_zernikes,
-        get_zernike as _numba_zernike,
+        get_correlation_costes,
+        get_correlation_manders_fold,
+        get_correlation_overlap,
+        get_correlation_pearson,
+        get_correlation_rwc,
+        get_feret,
+        get_granularity,
+        get_intensity,
+        get_radial_distribution,
+        get_radial_zernikes,
+        get_sizeshape,
+        get_texture,
+        get_zernike,
     )
 
     return {
         "core": {
             **_CORE,
-            "intensity": _numba_intensity,
-            "granularity": _numba_granularity,
-            "zernike": _numba_zernike,
-            "radial_zernikes": _numba_radial_zernikes,
-            "radial_distribution": _numba_radial_distribution,
+            "intensity": get_intensity,
+            "granularity": get_granularity,
+            "zernike": get_zernike,
+            "radial_zernikes": get_radial_zernikes,
+            "radial_distribution": get_radial_distribution,
+            "texture": get_texture,
+            "feret": get_feret,
+            "sizeshape": get_sizeshape,
         },
-        "correlation": _CORRELATION,
-        get_correlation_costes as _numba_costes,
-        get_correlation_manders_fold as _numba_manders_fold,
-        get_correlation_overlap as _numba_overlap,
-        get_correlation_pearson as _numba_pearson,
-        get_correlation_rwc as _numba_rwc,
-    Composes the numba implementations (``intensity``, ``feret``) with the numpy
-    implementations of every other feature — a single global "numba" selection
-    still yields a full, working feature set, accelerated where a numba backend
-    exists. This is explicit per-function composition, NOT an error-driven
-    fallback.
-    """
-    from cp_measure.core.numba import (
-        get_feret as _numba_feret,
-        get_intensity as _numba_intensity,
-    )
-
-    return {
-        "core": {**_CORE, "intensity": _numba_intensity},
         "correlation": {
             **_CORRELATION,
-            "pearson": _numba_pearson,
-            "manders_fold": _numba_manders_fold,
-            "rwc": _numba_rwc,
-            "costes": _numba_costes,
-            "overlap": _numba_overlap,
+            "pearson": get_correlation_pearson,
+            "manders_fold": get_correlation_manders_fold,
+            "rwc": get_correlation_rwc,
+            "costes": get_correlation_costes,
+            "overlap": get_correlation_overlap,
         },
-        get_intensity as _numba_intensity,
-        get_texture as _numba_texture,
-    )
-
-    return {
-        "core": {**_CORE, "intensity": _numba_intensity, "texture": _numba_texture},
-        "core": {**_CORE, "intensity": _numba_intensity, "feret": _numba_feret},
-        "correlation": _CORRELATION,
     }
 
 

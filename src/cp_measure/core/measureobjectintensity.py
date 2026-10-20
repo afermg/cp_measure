@@ -170,7 +170,7 @@ def get_intensity(
         min_intensity_edge = numpy.zeros((nobjects,))
         max_intensity_edge = numpy.zeros((nobjects,))
 
-    result = {}
+    result: dict[str, NDArray[numpy.floating]] = {}
     # for labels, lindexes in ((mask, numpy.array([1])),):
     for labels, lindexes in zip(label_matrices, unique_labels):
         lindexes = lindexes[lindexes != 0]

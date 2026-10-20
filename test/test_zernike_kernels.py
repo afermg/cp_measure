@@ -24,7 +24,9 @@ def _zernike_basis_numpy(xm, ym, lut, nterms, m_arr):
         for t in range(int(nterms[k])):
             s = s * r2 + lut[k, t]
         s[r2 > 1] = 0
-        m = int(m_arr[k])
+        # Match centrosome's NumPy integer exponent. A Python int of 2 uses
+        # NumPy 2's square shortcut, whose rounding differs from power.
+        m = m_arr[k]
         out[:, k] = s if m == 0 else s * (z**m)
     return out
 

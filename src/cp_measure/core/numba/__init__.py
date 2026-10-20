@@ -9,6 +9,7 @@ the remaining features (see ``cp_measure.bulk``).
 """
 
 from cp_measure.core.numba._feret import get_feret
+from cp_measure.core.numba._sizeshape import get_sizeshape
 from cp_measure.core.numba.measurecolocalization import (
     get_correlation_costes,
     get_correlation_manders_fold,
@@ -26,6 +27,7 @@ from cp_measure.core.numba.measureobjectsizeshape import get_zernike
 from cp_measure.core.numba.measuretexture import get_texture
 
 __all__ = [
+    "get_sizeshape",
     "get_correlation_costes",
     "get_correlation_manders_fold",
     "get_correlation_overlap",

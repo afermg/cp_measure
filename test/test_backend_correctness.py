@@ -113,6 +113,7 @@ def test_set_accelerator_numba_composes_with_numpy():
         )
         assert core["granularity"].__module__ == (
             "cp_measure.core.numba.measuregranularity"
+        )
         assert core["zernike"].__module__ == (
             "cp_measure.core.numba.measureobjectsizeshape"
         )
@@ -130,8 +131,7 @@ def test_set_accelerator_numba_composes_with_numpy():
             ), feature
         assert core["texture"].__module__ == "cp_measure.core.numba.measuretexture"
         assert core["feret"].__module__ == "cp_measure.core.numba._feret"
-        # Every other feature stays on the numpy backend.
-        assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
+        assert core["sizeshape"].__module__ == "cp_measure.core.numba._sizeshape"
     finally:
         cp_measure.set_accelerator(None)
 
