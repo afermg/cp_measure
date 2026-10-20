@@ -1,0 +1,11 @@
+{
+  "refs": {
+    "old-numpy": "54e5c094e4a2c9079f747bdc419eb5623ad2d4d6",
+    "current-numpy": "c698d440e6b669222efdf0d128dad88843bf2677",
+    "candidate-numba": "fb2549ce8293bf738b734a0cc9fc153c83cacf33"
+  },
+  "cpu": 86,
+  "started_unix": 1792508562.0793633,
+  "platform": "Linux-6.12.80-x86_64-with-glibc2.42",
+  "finished_unix": 1792508668.0412738
+}

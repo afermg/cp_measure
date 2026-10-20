@@ -67,7 +67,9 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     from cp_measure.core.numba.measureobjectintensitydistribution import (
         get_radial_zernikes as _numba_radial_zernikes,
     )
-    from cp_measure.core.numba.measureobjectsizeshape import get_zernike as _numba_zernike
+    from cp_measure.core.numba.measureobjectsizeshape import (
+        get_zernike as _numba_zernike,
+    )
     from cp_measure.core.numba.measuretexture import get_texture as _numba_texture
 
     return {
