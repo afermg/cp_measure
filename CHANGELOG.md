@@ -4,6 +4,11 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** require Python 3.11 or newer. Remove the project's Python upper
+  bound; CI covers Python 3.11–3.14 on Ubuntu and macOS.
+
 ## [0.3.0]
 
 ### Added

@@ -28,6 +28,8 @@ Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but
 
 ## Installation
 
+Requires **Python 3.11 or newer**.
+
 ```bash
 pip install cp-measure
 ```
