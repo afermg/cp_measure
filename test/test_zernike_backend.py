@@ -1,7 +1,6 @@
 """Correctness of the numba Zernike backends vs the numpy baseline."""
 
 import numpy
-import pytest
 
 from cp_measure.core.measureobjectintensitydistribution import (
     get_radial_zernikes as rz_numpy,
@@ -30,8 +29,10 @@ def _scene(H=80, W=80, n=4, seed=0):
 
 
 def _assert_same(a, b):
-    assert a.keys() == b.keys()
+    assert list(a) == list(b)
     for k in a:
+        assert a[k].shape == b[k].shape
+        assert a[k].dtype == b[k].dtype
         numpy.testing.assert_allclose(a[k], b[k], **TOL, err_msg=f"key {k}")
 
 
@@ -47,21 +48,16 @@ def test_radial_zernikes_single_object():
     _assert_same(rz_numba(mask, pixels), rz_numpy(mask, pixels))
 
 
-def test_radial_zernikes_label_gaps_numba_is_robust():
-    # cp_measure masks are contiguous 1..n; on a GAP the numpy baseline raises
-    # (it indexes the per-object center array by `label-1`). Our compacted
-    # searchsorted indexing handles gaps instead of crashing -- strictly more
-    # robust, so there's no baseline value to match here; just assert it works.
+def test_radial_zernikes_label_gaps_sanitized():
+    from cp_measure._sanitize import sanitize
+
     mask = numpy.zeros((60, 60), numpy.int32)
     mask[5:20, 5:20] = 1
-    mask[35:55, 35:55] = 3  # gap at label 2
+    mask[35:55, 35:55] = 3000000
     pixels = numpy.random.default_rng(2).random((60, 60))
-    with pytest.raises(IndexError):
-        rz_numpy(mask, pixels)
-    out = rz_numba(mask, pixels)
-    assert (
-        len(out["RadialDistribution_ZernikeMagnitude_0_0"]) == 2
-    )  # two present objects
+    out = sanitize(rz_numba)(mask, pixels)
+    _assert_same(out, sanitize(rz_numpy)(mask, pixels))
+    assert len(out["RadialDistribution_ZernikeMagnitude_0_0"]) == 2
 
 
 def test_radial_zernikes_single_returns_dict():

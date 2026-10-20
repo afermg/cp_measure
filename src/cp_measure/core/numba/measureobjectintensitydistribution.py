@@ -1,14 +1,15 @@
 """Numba-accelerated radial Zernike backend.
 
 Mirrors :func:`cp_measure.core.measureobjectintensitydistribution.get_radial_zernikes`
-but replaces the per-(n,m) ``scipy.ndimage.sum_labels`` AND centrosome's per-pixel
-``construct_zernike_polynomials`` with a single fused numba kernel
-(:func:`cp_measure.core.numba._zernike.zernike_moments`) that evaluates the basis
-and the per-object weighted-complex sum in one pass. Centrosome still provides the
-radial LUT (degree-only) and ``minimum_enclosing_circle`` (host).
+but replaces its per-moment Horner array operations and ``bincount`` reductions
+with a single fused Numba kernel
+(:func:`cp_measure.core.numba._zernike.zernike_moments`). Azimuthal complex powers
+remain in NumPy to preserve phase under cancellation. Centrosome still provides
+the radial LUT (degree-only) and ``minimum_enclosing_circle`` (host).
 
 Batch-shaped via the canonical ``(B, Z, Y, X)`` form (single image = ``B == 1``);
-2D-only (a ``Z > 1`` volume returns ``{}``, matching the baseline's ``ndim == 3``).
+2D-only (raw 3D volumes, including Z=1, return ``{}``, as in NumPy). Explicit
+4D batches use Z=1 for 2D images.
 """
 
 import centrosome.zernike
@@ -22,13 +23,17 @@ from cp_measure.primitives.shapes import to_bzyx
 
 def get_radial_zernikes(masks, pixels, zernike_degree: int = 9):
     """Radial Zernike magnitude/phase per object; single image/volume or batch."""
+    if isinstance(masks, numpy.ndarray) and masks.ndim == 3:
+        return {}  # a single volume (even Z=1), matching the NumPy contract
     masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
     # degree-only work, hoisted out of the per-image loop (computed once per batch)
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
     coeffs = zernike_coeffs(zernike_indexes)
     results = [
-        _radial_zernikes_2d(m, p, zernike_indexes, coeffs)
-        for m, p in zip(masks_zyx, pixels_zyx)
+        {}
+        if isinstance(masks, (list, tuple)) and numpy.ndim(masks[i]) == 3
+        else _radial_zernikes_2d(m, p, zernike_indexes, coeffs)
+        for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx))
     ]
     return unwrap(results)
 
@@ -50,8 +55,8 @@ def _radial_zernikes_2d(
     ):  # no objects (fringe) -> empty arrays per key, matches baseline
         return {
             f"{M_CATEGORY}_Zernike{mag_or_phase}_{nn}_{mm}": numpy.zeros(0)
-            for mag_or_phase in ("Magnitude", "Phase")
             for nn, mm in zernike_indexes
+            for mag_or_phase in ("Magnitude", "Phase")
         }
 
     areas = numpy.bincount(seg0, minlength=vr.shape[0]).astype(
