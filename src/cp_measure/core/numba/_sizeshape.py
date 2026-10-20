@@ -282,7 +282,7 @@ def convex_area_2d(
     px, py, obj4 = px[order], py[order], obj4[order]
     grp = numpy.zeros(n + 1, numpy.int64)
     numpy.add.at(grp, obj4 + 1, 1)
-    grp = numpy.cumsum(grp)
+    numpy.cumsum(grp, out=grp)
     stride = numpy.int64(4 * max(labels.shape) + 10)
     hx, hy, hoff = _hull_kernel(px, py, grp, n, stride)
 

@@ -37,7 +37,9 @@ def masks_to_ijv(masks: numpy.ndarray) -> numpy.ndarray:
 
     # Extract coordinates of object from boolean mask
     masks_ijv = numpy.empty((0, 3), dtype=int)
-    for label in range(masks.max()):
+    # NumPy 2 booleans no longer implement __index__; bool masks still mean
+    # a single object, exactly as integer 0/1 labels do.
+    for label in range(int(masks.max())):
         i, j = numpy.where(masks == label + 1)
         n = len(i)
         ijv = numpy.empty((n, 3), dtype=int)

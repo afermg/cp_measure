@@ -384,7 +384,7 @@ def linear_costes(
     si: NDArray[numpy.floating],
     scale_max: int = 255,
     fast_costes: str = M_FASTER,
-) -> tuple[float, float]:
+) -> tuple[float | numpy.floating, float | numpy.floating]:
     """
     Finds the Costes Automatic Threshold for colocalization using a linear algorithm.
     Candiate thresholds are gradually decreased until Pearson R falls below 0.
@@ -462,7 +462,7 @@ def bisection_costes(
     si: NDArray[numpy.floating],
     scale_max: int = 255,
     fast_costes: str = M_FASTER,
-) -> tuple[float, float]:
+) -> tuple[float | numpy.floating, float | numpy.floating]:
     """
     Finds the Costes Automatic Threshold for colocalization using a bisection algorithm.
     Candidate thresholds are selected from within a window of possible intensities,
