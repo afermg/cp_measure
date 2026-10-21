@@ -1,113 +1,195 @@
 """Correctness of the numba Zernike backends vs the numpy baseline."""
 
-import numpy
+import numpy as np
+import pytest
 
+import cp_measure
+from cp_measure.bulk import get_core_measurements
 from cp_measure.core.measureobjectintensitydistribution import (
-    get_radial_zernikes as rz_numpy,
+    get_radial_zernikes as radial_numpy,
 )
-from cp_measure.core.measureobjectsizeshape import get_zernike as z_numpy
+from cp_measure.core.measureobjectsizeshape import get_zernike as shape_numpy
 from cp_measure.core.numba.measureobjectintensitydistribution import (
-    get_radial_zernikes as rz_numba,
+    get_radial_zernikes as radial_numba,
 )
-from cp_measure.core.numba.measureobjectsizeshape import get_zernike as z_numba
+from cp_measure.core.numba.measureobjectsizeshape import get_zernike as shape_numba
 
-TOL = dict(rtol=1e-6, atol=1e-8, equal_nan=True)
-
-
-def _scene(H=80, W=80, n=4, seed=0):
-    rng = numpy.random.default_rng(seed)
-    pixels = rng.random((H, W)) + 0.3 * numpy.add.outer(
-        numpy.sin(numpy.arange(H) / 4), numpy.cos(numpy.arange(W) / 5)
-    )
-    mask = numpy.zeros((H, W), dtype=numpy.int32)
-    step = H // (n + 1)
-    for k in range(n):
-        y0 = step * (k + 1) - 6
-        x0 = 8 + 15 * k
-        mask[y0 : y0 + 12, x0 : x0 + 12] = k + 1
-    return mask, pixels
+SHAPE, RADIAL = (shape_numpy, shape_numba), (radial_numpy, radial_numba)
+BACKENDS = [SHAPE, RADIAL]
+# Shape Zernike ignores pixels, so pixel variations only exercise the radial port.
+WEIGHTS = ["random", "ones", "zeros", "signed"]
+WEIGHT_CASES = [(*SHAPE, "random")] + [(*RADIAL, w) for w in WEIGHTS]
+DTYPE_CASES = [(*SHAPE, np.float64)] + [
+    (*RADIAL, dtype) for dtype in (np.float32, np.float64, np.uint16)
+]
 
 
-def _assert_same(a, b):
-    assert list(a) == list(b)
-    for k in a:
-        assert a[k].shape == b[k].shape
-        assert a[k].dtype == b[k].dtype
-        numpy.testing.assert_allclose(a[k], b[k], **TOL, err_msg=f"key {k}")
+def assert_same(ref, got):
+    assert list(ref) == list(got)
+    for key in ref:
+        assert ref[key].shape == got[key].shape
+        assert ref[key].dtype == got[key].dtype
+        expected, actual = ref[key], got[key]
+        if "ZernikePhase" in key:
+            # The phase of a moment that is zero by symmetry is atan2 of round-off,
+            # which differs even between NumPy runs; compare it only above noise.
+            magnitude = ref[key.replace("Phase", "Magnitude")]
+            np.testing.assert_array_equal(np.isnan(actual), np.isnan(expected))
+            defined = ~(magnitude <= 1e-10)  # keep NaN magnitudes in the comparison
+            expected, actual = expected[defined], actual[defined]
+        np.testing.assert_allclose(
+            actual, expected, rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
+        )
 
 
-def test_radial_zernikes_matches_baseline():
-    mask, pixels = _scene()
-    _assert_same(rz_numba(mask, pixels), rz_numpy(mask, pixels))
+def mask_scene(kind):
+    m = np.zeros((32, 40), np.int32)
+    if kind == "empty":
+        return m
+    if kind == "zero_size":
+        return m[:0]
+    if kind == "single_pixel":
+        m[3, 4] = 1
+    elif kind == "two_pixels":
+        m[3, 4:6] = 1
+    elif kind == "line":
+        m[3, 4:24] = 1
+    elif kind == "square":
+        m[4:20, 4:20] = 1
+    elif kind == "edge_hole":
+        m[:20, :15] = 1
+        m[5:12, 3:8] = 0
+        m[20:, 29:] = 2
+    elif kind == "disconnected":
+        m[2:5, 3:8] = 1
+        m[25:30, 30:35] = 1
+    elif kind == "irregular":
+        y, x = np.mgrid[:32, :40]
+        m[((y - 10.3) / 8.5) ** 2 + ((x - 11.4) / 7.3) ** 2 <= 1] = 1
+        m[22:, 25:34] = 2
+        m[22:25, 25:27] = 0
+    else:
+        raise ValueError(kind)
+    return m
 
 
-def test_radial_zernikes_single_object():
-    mask = numpy.zeros((50, 50), numpy.int32)
-    mask[15:35, 15:35] = 1
-    pixels = numpy.random.default_rng(1).random((50, 50))
-    _assert_same(rz_numba(mask, pixels), rz_numpy(mask, pixels))
+@pytest.mark.parametrize("ref_fn,got_fn,weights", WEIGHT_CASES)
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "empty",
+        "zero_size",
+        "single_pixel",
+        "two_pixels",
+        "line",
+        "square",
+        "edge_hole",
+        "disconnected",
+        "irregular",
+    ],
+)
+@pytest.mark.parametrize("degree", [0, 9, 14])
+def test_edge_cases(ref_fn, got_fn, weights, kind, degree):
+    mask = mask_scene(kind)
+    pixels = np.random.default_rng(12).random(mask.shape)
+    if weights == "ones":
+        pixels[:] = 1
+    elif weights == "zeros":
+        pixels[:] = 0
+    elif weights == "signed":
+        pixels -= 0.5
+    old_mask, old_pixels = mask.copy(), pixels.copy()
+    with np.errstate(all="ignore"):
+        assert_same(ref_fn(mask, pixels, degree), got_fn(mask, pixels, degree))
+    np.testing.assert_array_equal(mask, old_mask)
+    np.testing.assert_array_equal(pixels, old_pixels)
 
 
-def test_radial_zernikes_label_gaps_sanitized():
-    from cp_measure._sanitize import sanitize
-
-    mask = numpy.zeros((60, 60), numpy.int32)
-    mask[5:20, 5:20] = 1
-    mask[35:55, 35:55] = 3000000
-    pixels = numpy.random.default_rng(2).random((60, 60))
-    out = sanitize(rz_numba)(mask, pixels)
-    _assert_same(out, sanitize(rz_numpy)(mask, pixels))
-    assert len(out["RadialDistribution_ZernikeMagnitude_0_0"]) == 2
-
-
-def test_radial_zernikes_single_returns_dict():
-    mask, pixels = _scene()
-    assert isinstance(rz_numba(mask, pixels), dict)
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize("location", ["inside", "outside"])
+def test_nonfinite_weights(value, location):
+    mask = mask_scene("irregular")
+    pixels = np.ones(mask.shape)
+    pixels[10, 11] = value if location == "inside" else 1
+    pixels[0, 0] = value if location == "outside" else 1
+    with np.errstate(all="ignore"):
+        assert_same(radial_numpy(mask, pixels), radial_numba(mask, pixels))
 
 
-def test_radial_zernikes_batch_matches_per_image():
-    scenes = [_scene(seed=s) for s in range(3)]
-    masks = numpy.stack([m[numpy.newaxis] for m, _ in scenes])
-    pixels = numpy.stack([p[numpy.newaxis] for _, p in scenes])
-    out = rz_numba(masks, pixels)
-    assert isinstance(out, list) and len(out) == 3
-    for (m, p), got in zip(scenes, out):
-        _assert_same(got, rz_numpy(m, p))
+@pytest.mark.parametrize("ref_fn,got_fn,dtype", DTYPE_CASES)
+def test_noncontiguous_inputs(ref_fn, got_fn, dtype):
+    mask = mask_scene("edge_hole")[::-1, ::-1]
+    pixels = (np.random.default_rng(4).random(mask.shape) * 100).astype(dtype)[:, ::-1]
+    assert not mask.flags.c_contiguous
+    assert not pixels.flags.c_contiguous
+    assert_same(ref_fn(mask, pixels), got_fn(mask, pixels))
 
 
-def test_radial_zernikes_3d_returns_empty():
-    mask = numpy.zeros((3, 40, 40), numpy.int32)
-    mask[:, 10:25, 10:25] = 1
-    pixels = numpy.random.default_rng(5).random((3, 40, 40))
-    assert rz_numba(mask, pixels) == {}
+@pytest.mark.parametrize("ref_fn,got_fn", BACKENDS, ids=["shape", "radial"])
+@pytest.mark.parametrize("depth", [1, 3])
+def test_raw_volume_including_singleton_is_empty(ref_fn, got_fn, depth):
+    mask = np.repeat(mask_scene("square")[None], depth, axis=0)
+    pixels = np.ones(mask.shape)
+    assert ref_fn(mask, pixels) == got_fn(mask, pixels) == {}
+    assert got_fn([mask], [pixels]) == [{}]
 
 
-# --- shape zernike (get_zernike) ---
+@pytest.mark.parametrize("feature", ["zernike", "radial_zernikes"])
+@pytest.mark.parametrize("batch", ["single", "list", "tuple", "stacked"])
+def test_public_sanitation_and_batch(feature, batch):
+    masks = [mask_scene("edge_hole"), mask_scene("irregular")]
+    for mask in masks:
+        mask[mask == 1] = 17
+        mask[mask == 2] = 3000000
+    pixels = [np.random.default_rng(s).random(m.shape) for s, m in enumerate(masks)]
+    previous = cp_measure._ACCELERATOR
+    cp_measure.set_accelerator(None)
+    numpy_fn = get_core_measurements()[feature]
+    refs = [numpy_fn(m, p) for m, p in zip(masks, pixels)]
+    if batch == "single":
+        m_arg, p_arg = masks[0], pixels[0]
+    elif batch == "stacked":
+        m_arg, p_arg = np.stack(masks)[:, None], np.stack(pixels)[:, None]
+    elif batch == "tuple":
+        m_arg, p_arg = tuple(masks), tuple(pixels)
+    else:
+        m_arg, p_arg = masks, pixels
+    try:
+        cp_measure.set_accelerator("numba")
+        got = get_core_measurements()[feature](m_arg, p_arg)
+    finally:
+        cp_measure.set_accelerator(previous)
+    if batch == "single":
+        assert_same(refs[0], got)
+    else:
+        assert isinstance(got, list) and len(got) == 2
+        for ref, result in zip(refs, got):
+            assert_same(ref, result)
 
 
-def test_zernike_matches_baseline():
-    mask, pixels = _scene()
-    _assert_same(z_numba(mask, pixels), z_numpy(mask, pixels))
+@pytest.mark.parametrize("feature", ["zernike", "radial_zernikes"])
+def test_featurizer_preserves_columns_ids_and_values(feature):
+    from conftest import ALL_OFF
+    from cp_measure.featurizer import featurize, make_featurizer_config
 
-
-def test_zernike_single_object():
-    mask = numpy.zeros((50, 50), numpy.int32)
-    mask[15:35, 15:35] = 1
-    pixels = numpy.random.default_rng(1).random((50, 50))
-    _assert_same(z_numba(mask, pixels), z_numpy(mask, pixels))
-
-
-def test_zernike_batch_matches_per_image():
-    scenes = [_scene(seed=s) for s in range(3)]
-    masks = numpy.stack([m[numpy.newaxis] for m, _ in scenes])
-    pixels = numpy.stack([p[numpy.newaxis] for _, p in scenes])
-    out = z_numba(masks, pixels)
-    assert isinstance(out, list) and len(out) == 3
-    for (m, _p), got in zip(scenes, out):
-        _assert_same(got, z_numpy(m, None))
-
-
-def test_zernike_3d_returns_empty():
-    mask = numpy.zeros((3, 40, 40), numpy.int32)
-    mask[:, 10:25, 10:25] = 1
-    assert z_numba(mask, None) == {}
+    mask = mask_scene("edge_hole")
+    mask[mask == 1] = 17
+    mask[mask == 2] = 3000000
+    masks = np.stack([mask, mask])[:, None]
+    pixels = np.random.default_rng(42).random(masks.shape)
+    config = make_featurizer_config(["DNA"], **{**ALL_OFF, feature: True})
+    previous = cp_measure._ACCELERATOR
+    try:
+        cp_measure.set_accelerator(None)
+        ref, ref_columns, ref_ids = featurize(
+            pixels, masks, config, image_ids=["a", "b"]
+        )
+        cp_measure.set_accelerator("numba")
+        got, got_columns, got_ids = featurize(
+            pixels, masks, config, image_ids=["a", "b"]
+        )
+    finally:
+        cp_measure.set_accelerator(previous)
+    assert list(got_columns) == list(ref_columns)
+    assert list(got_ids) == list(ref_ids)
+    np.testing.assert_allclose(got, ref, rtol=1e-6, atol=1e-8, equal_nan=True)
