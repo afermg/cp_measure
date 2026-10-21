@@ -1,11 +1,9 @@
 """Backend correctness for numba radial_distribution.
 
-This lane intentionally FIXES Issue #22 (per-object results must not depend on
-other labels), so it does NOT match the buggy numpy baseline on multi-object
-fields. Exactness is anchored instead on the correct reference: the numba result
-for object k in a multi-object field must equal the numpy baseline run on object k
-in ISOLATION. Plus an independence test (the #22 property itself), a direct
-single-object golden, and the 2D-only / batch bzyx paths.
+Exactness against the numpy reference on multi-object fields, plus the Issue #22
+properties: object k in a multi-object field equals the numpy reference on object k
+in ISOLATION, and numba results are field-independent. Also a direct single-object
+golden and the 2D-only / batch bzyx paths.
 """
 
 import numpy as np
@@ -63,6 +61,17 @@ def _unique_centre_masks():
 
 def _assert_close(a, b, key=""):
     np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key)
+
+
+@requires_numba
+@pytest.mark.parametrize("masks_fn", [_issue22_masks, _unique_centre_masks])
+@pytest.mark.parametrize("scaled", [True, False])
+def test_numba_matches_numpy_multi_object(masks_fn, scaled):
+    """numba == numpy on the whole multi-object field, centre plateaus included."""
+    masks, pixels = masks_fn()
+    _assert_close_dict(
+        _numba()(masks, pixels, scaled=scaled), ref(masks, pixels, scaled=scaled)
+    )
 
 
 @requires_numba

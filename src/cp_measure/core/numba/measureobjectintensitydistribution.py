@@ -8,24 +8,12 @@ the radial LUT (degree-only) and ``minimum_enclosing_circle`` (host). Batch
 handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
 
 ``get_radial_distribution`` processes each object on its own cropped + 1px-padded
-sub-image — which **fixes Issue #22** (per-object results no longer depend on other
-labels in the field) and lets the dominant geometry run on small arrays — and
-replaces centrosome's ``propagate`` (the 80% cost) with a bit-exact numba chamfer
-geodesic plus the centre and histogram/wedge-CV reductions, all fused into one
-per-crop kernel (:func:`cp_measure.core.numba._radial.radial_object`). Only the
-exact-Euclidean ``distance_transform_edt`` stays host-side (scipy).
-NOTE: because of the #22 fix, this diverges from the current (buggy) numpy baseline
-on multi-object fields; it equals the baseline run on each object in ISOLATION.
-
-``get_radial_distribution`` processes each object on its own cropped + 1px-padded
-sub-image — which **fixes Issue #22** (per-object results no longer depend on other
-labels in the field) and lets the dominant geometry run on small arrays — and
-replaces centrosome's ``propagate`` (the 80% cost) with a bit-exact numba chamfer
-geodesic (:func:`cp_measure.core.numba._radial.geodesic_chamfer_fifo`) plus numba
-histogram/wedge-CV reductions. Exact-Euclidean ``distance_transform_edt`` and the
-centre (``maximum_position_of_labels``) stay host-side (scipy/centrosome).
-NOTE: because of the #22 fix, this diverges from the current (buggy) numpy baseline
-on multi-object fields; it equals the baseline run on each object in ISOLATION.
+sub-image, so the dominant geometry runs on small arrays, and replaces centrosome's
+``propagate`` (the 80% cost) with a bit-exact numba chamfer geodesic plus the
+centre and histogram/wedge-CV reductions, all fused into one per-crop kernel
+(:func:`cp_measure.core.numba._radial.radial_object`). Only the exact-Euclidean
+``distance_transform_edt`` stays host-side (scipy).
+Results match the NumPy reference, which is label-independent since #96 (Issue #22).
 """
 
 import numpy
@@ -71,8 +59,7 @@ def get_radial_distribution(
 ):
     """Radial intensity distribution (FracAtD / MeanFrac / RadialCV) per object.
 
-    Per-object cropped processing fixes Issue #22 (results independent of other
-    labels) and equals the numpy baseline run on each object in ISOLATION. Single
+    Matches the NumPy reference; each object is processed on its own crop. Single
     image/volume or batch; 2D only.
     """
     masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
