@@ -54,6 +54,41 @@ def labels_to_binmasks(masks: numpy.ndarray) -> numpy.ndarray:
     return masks == labels.reshape((-1,) + (1,) * masks.ndim)
 
 
+def _zernike_coords(
+    masks: NDArray[numpy.integer],
+) -> tuple[
+    NDArray[numpy.integer],
+    NDArray[numpy.bool_],
+    NDArray[numpy.floating],
+    NDArray[numpy.floating],
+    NDArray[numpy.floating],
+]:
+    """Foreground pixels in each object's unit disk, for the Zernike moment sums.
+
+    Returns ``(seg, keep, ym, xm, radii)``: the 0-based object index of each foreground
+    pixel, the foreground mask, the pixels' row/column offsets from their object's
+    enclosing-circle centre divided by its radius, and the ``(n,)`` radii. No full
+    ``(H, W)`` coordinate grid is materialised. Shared by the numpy and numba backends.
+    """
+    # Contiguous 1..N contract: segment index is label - 1, so the label->index lookup is a
+    # plain arange. masks.max() raises on a size-0 array, so guard it.
+    n = 0 if masks.size == 0 else int(masks.max())
+    lut = numpy.arange(-1, n)  # lut[0] = -1 (background); lut[label] = label - 1
+    centers, radii = zernike.minimum_enclosing_circle(masks, numpy.arange(1, n + 1))
+    radii = numpy.asarray(radii, dtype=float)
+    seg_full = lut[masks]
+    keep = seg_full >= 0
+    rows, cols = numpy.nonzero(keep)
+    seg = seg_full[keep]
+    # Single-pixel objects have an enclosing-circle radius of 0; the resulting 0/0 yields NaN
+    # coordinates (which the r**2 > 1 cutoff later discards), matching centrosome — suppress the
+    # warning since it is expected, not a fault.
+    with numpy.errstate(invalid="ignore", divide="ignore"):
+        ym = (rows - centers[seg, 0]) / radii[seg]
+        xm = (cols - centers[seg, 1]) / radii[seg]
+    return seg, keep, ym, xm, radii
+
+
 def _zernike_scores(
     masks: NDArray[numpy.integer],
     zernike_indexes: NDArray[numpy.integer],
@@ -83,32 +118,13 @@ def _zernike_scores(
     ``counts`` the object pixel count. ``get_zernike`` normalises by ``pi * radii**2``; the
     intensity-weighted radial Zernikes normalise by ``counts``.
     """
-    # Contiguous 1..N contract: segment index is label - 1, so the label->index lookup is a
-    # plain arange. masks.max() raises on a size-0 array, so guard it.
-    n = 0 if masks.size == 0 else int(masks.max())
-    k = len(zernike_indexes)
-    labels = numpy.arange(1, n + 1)
-    lut = numpy.arange(-1, n)  # lut[0] = -1 (background); lut[label] = label - 1
-    centers, radii = zernike.minimum_enclosing_circle(masks, labels)
-    radii = numpy.asarray(radii, dtype=float)
+    seg, keep, ym, xm, radii = _zernike_coords(masks)
+    n, k = len(radii), len(zernike_indexes)
     real_sums = numpy.zeros((n, k))
     imag_sums = numpy.zeros((n, k))
     if n == 0:
         return real_sums, imag_sums, radii, numpy.zeros(0)
-
-    # Foreground pixels, their object row, and unit-disk coordinates relative to each
-    # object's enclosing circle — no full (H, W) coordinate grid is materialised.
-    seg_full = lut[masks]
-    keep = seg_full >= 0
-    rows, cols = numpy.nonzero(keep)
-    seg = seg_full[keep]
     counts = numpy.bincount(seg, minlength=n).astype(float)
-    # Single-pixel objects have an enclosing-circle radius of 0; the resulting 0/0 yields NaN
-    # coordinates (which the r**2 > 1 cutoff later discards), matching centrosome — suppress the
-    # warning since it is expected, not a fault.
-    with numpy.errstate(invalid="ignore", divide="ignore"):
-        ym = (rows - centers[seg, 0]) / radii[seg]
-        xm = (cols - centers[seg, 1]) / radii[seg]
 
     coeffs = zernike.construct_zernike_lookuptable(zernike_indexes)
     r_square = xm * xm + ym * ym

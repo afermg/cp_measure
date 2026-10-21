@@ -15,7 +15,9 @@ import centrosome.zernike
 import numpy
 from numpy.typing import NDArray
 
-from cp_measure.core.measureobjectintensitydistribution import M_CATEGORY
+from cp_measure.core.measureobjectintensitydistribution import (
+    _radial_zernike_features,
+)
 from cp_measure.core.numba._zernike import zernike_coeffs, zernike_moments_per_object
 from cp_measure.primitives.shapes import to_bzyx
 
@@ -46,28 +48,7 @@ def _radial_zernikes_2d(
     if labels_zyx.shape[0] > 1:  # Z > 1 -> 3D volume; baseline returns {} for ndim==3
         return {}
 
-    vr, vi, _radii, seg0 = zernike_moments_per_object(
+    vr, vi, _radii, counts = zernike_moments_per_object(
         labels_zyx[0], pixels_zyx[0], coeffs
     )
-    if (
-        vr.shape[0] == 0
-    ):  # no objects (fringe) -> empty arrays per key, matches baseline
-        return {
-            f"{M_CATEGORY}_Zernike{mag_or_phase}_{nn}_{mm}": numpy.zeros(0)
-            for nn, mm in zernike_indexes
-            for mag_or_phase in ("Magnitude", "Phase")
-        }
-
-    areas = numpy.bincount(seg0, minlength=vr.shape[0]).astype(
-        numpy.float64
-    )  # px/object
-    results = {}
-    for i, (nn, mm) in enumerate(zernike_indexes):
-        results[f"{M_CATEGORY}_ZernikeMagnitude_{nn}_{mm}"] = (
-            numpy.sqrt(vr[:, i] ** 2 + vi[:, i] ** 2) / areas
-        )
-        # baseline's (real, imag) arctan2 arg order
-        results[f"{M_CATEGORY}_ZernikePhase_{nn}_{mm}"] = numpy.arctan2(
-            vr[:, i], vi[:, i]
-        )
-    return results
+    return _radial_zernike_features(vr, vi, counts, zernike_indexes)

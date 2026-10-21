@@ -970,6 +970,16 @@ def get_zernike(
     zernike_indexes = zernike.get_zernike_indexes(zernike_numbers + 1)
 
     real_sums, imag_sums, radii, _counts = _zernike_scores(masks, zernike_indexes)
+    return _zernike_features(real_sums, imag_sums, radii, zernike_indexes)
+
+
+def _zernike_features(
+    real_sums: NDArray[numpy.floating],
+    imag_sums: NDArray[numpy.floating],
+    radii: NDArray[numpy.floating],
+    zernike_indexes: NDArray[numpy.integer],
+) -> dict[str, NDArray[numpy.floating]]:
+    """Name and normalise the moment sums; shared with the numba backend."""
     areas = numpy.pi * radii * radii
     with numpy.errstate(divide="ignore", invalid="ignore"):
         score = numpy.sqrt(real_sums**2 + imag_sums**2) / areas[:, numpy.newaxis]

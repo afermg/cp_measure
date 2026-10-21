@@ -16,14 +16,16 @@ degree-only, cheap) via :func:`zernike_coeffs`; the per-pixel evaluation follows
   xm = normalised column offset),
 - strict unit-disk cutoff: zero where ``r² > 1`` (keep ``== 1``).
 
-``minimum_enclosing_circle`` (center/radius) and label enumeration stay on the host.
+``minimum_enclosing_circle`` (center/radius) and label enumeration stay on the host
+(:func:`cp_measure.utils._zernike_coords`, shared with the NumPy backend).
 """
 
-import centrosome.cpmorphology
 import centrosome.zernike
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
+
+from cp_measure.utils import _zernike_coords
 
 
 def zernike_coeffs(
@@ -98,42 +100,16 @@ def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n):
 
 
 def zernike_moments_per_object(labels, pixels, coeffs):
-    """Per-object weighted-complex Zernike sum shared by both 2D backends.
+    """Per-object weighted-complex Zernike sums shared by both 2D backends.
 
-    Does the part identical to shape and radial Zernikes: enumerate objects,
-    find the per-object minimum enclosing circle, normalise each labeled pixel's
-    coordinates into the unit disk (``ym`` from rows, ``xm`` from cols), and run the
-    fused kernel. ``pixels`` is the intensity image for the weighted (radial) case
-    or ``None`` for the unweighted (shape) case. ``coeffs`` is :func:`zernike_coeffs`.
-
-    Returns ``(vr, vi, radii, seg0)``: ``vr``/``vi`` are ``(n, K)`` Re/Im sums,
-    ``radii`` ``(n,)`` the enclosing-circle radii (shape's ``π·r²`` denominator),
-    ``seg0`` ``(M,)`` the 0-based object index per pixel (radial's pixel-count
-    denominator via ``bincount``). ``n == vr.shape[0]`` is 0 when there are no objects.
+    Same contract as :func:`cp_measure.utils._zernike_scores`, whose coordinate
+    setup it shares: ``pixels`` is the intensity image for the weighted (radial)
+    case or ``None`` for the unweighted (shape) case, ``coeffs`` is
+    :func:`zernike_coeffs`. Returns ``(vr, vi, radii, counts)``.
     """
     lut, nterms, m_arr = coeffs
-    K = lut.shape[0]
-    # Raw measurements use dense 1..N labels; bulk/featurizer entry points
-    # sanitize arbitrary IDs before dispatch, just like the NumPy backend.
-    n = int(labels.max()) if labels.size else 0
-    if n == 0:
-        z = np.zeros((0, K))
-        return z, z, np.zeros(0), np.zeros(0, np.int64)
-
-    centers, radii = centrosome.cpmorphology.minimum_enclosing_circle(
-        labels, np.arange(1, n + 1)
-    )
-    radii = np.asarray(radii, dtype=np.float64)
-    rows, cols = np.nonzero(labels)
-    seg0 = labels[rows, cols].astype(np.int64) - 1
-    # Single-pixel objects intentionally produce NaN coordinates, as in NumPy.
-    with np.errstate(invalid="ignore", divide="ignore"):
-        ym = (rows - centers[seg0, 0]) / radii[seg0]
-        xm = (cols - centers[seg0, 1]) / radii[seg0]
-    weights = (
-        np.ones(seg0.shape[0])
-        if pixels is None
-        else pixels[rows, cols].astype(np.float64)
-    )
-    vr, vi = zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n)
-    return vr, vi, radii, seg0
+    seg, keep, ym, xm, radii = _zernike_coords(labels)
+    weights = np.ones(len(seg)) if pixels is None else pixels[keep].astype(np.float64)
+    vr, vi = zernike_moments(weights, xm, ym, seg, lut, nterms, m_arr, len(radii))
+    counts = np.bincount(seg, minlength=len(radii)).astype(np.float64)
+    return vr, vi, radii, counts

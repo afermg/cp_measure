@@ -16,6 +16,7 @@ import centrosome.zernike
 import numpy
 from numpy.typing import NDArray
 
+from cp_measure.core.measureobjectsizeshape import _zernike_features
 from cp_measure.core.numba._zernike import zernike_coeffs, zernike_moments_per_object
 from cp_measure.primitives.shapes import to_bzyx
 
@@ -53,15 +54,5 @@ def _zernike_2d(
         return {}
 
     # shape Zernike is unweighted (binary mask) -> pixels=None
-    vr, vi, radii, _seg0 = zernike_moments_per_object(labels_zyx[0], None, coeffs)
-    if vr.shape[0] == 0:  # no objects -> empty per key, matching NumPy
-        return {f"Zernike_{nn}_{mm}": numpy.zeros(0) for nn, mm in zernike_indexes}
-
-    areas = numpy.pi * radii * radii  # enclosing-circle area, same order as NumPy
-    results = {}
-    with numpy.errstate(divide="ignore", invalid="ignore"):
-        for i, (nn, mm) in enumerate(zernike_indexes):
-            results[f"Zernike_{nn}_{mm}"] = (
-                numpy.sqrt(vr[:, i] ** 2 + vi[:, i] ** 2) / areas
-            )
-    return results
+    vr, vi, radii, _counts = zernike_moments_per_object(labels_zyx[0], None, coeffs)
+    return _zernike_features(vr, vi, radii, zernike_indexes)
