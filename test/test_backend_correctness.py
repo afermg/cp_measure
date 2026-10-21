@@ -129,6 +129,21 @@ def test_set_accelerator_numba_composes_with_numpy():
     assert restored["granularity"].__module__ == "cp_measure.core.measuregranularity"
 
 
+@requires_numba
+@pytest.mark.parametrize(
+    "feature,mask_name", [("zernike", "masks"), ("radial_zernikes", "labels")]
+)
+def test_numba_accepts_numpy_keyword_names(feature, mask_name):
+    """Switching the accelerator must not break callers using numpy's keywords."""
+    masks, pixels = _mask_pixels_2d()
+    cp_measure.set_accelerator("numba")
+    try:
+        numba_fn = cp_measure.bulk.get_core_measurements()[feature]
+        assert numba_fn(**{mask_name: masks, "pixels": pixels})
+    finally:
+        cp_measure.set_accelerator(None)
+
+
 def test_set_accelerator_numba_absent_raises(monkeypatch):
     """When find_spec reports numba absent, selecting it raises (no silent fallback)."""
     monkeypatch.setattr(cp_measure._detect, "HAS_NUMBA", False)

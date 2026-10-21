@@ -3,8 +3,7 @@
 Mirrors :func:`cp_measure.core.measureobjectintensitydistribution.get_radial_zernikes`
 but replaces its per-moment Horner array operations and ``bincount`` reductions
 with a single fused Numba kernel
-(:func:`cp_measure.core.numba._zernike.zernike_moments`). Azimuthal complex powers
-remain in NumPy to preserve phase under cancellation. Centrosome still provides
+(:func:`cp_measure.core.numba._zernike.zernike_moments`). Centrosome still provides
 the radial LUT (degree-only) and ``minimum_enclosing_circle`` (host).
 
 Batch-shaped via the canonical ``(B, Z, Y, X)`` form (single image = ``B == 1``);
@@ -21,17 +20,17 @@ from cp_measure.core.numba._zernike import zernike_coeffs, zernike_moments_per_o
 from cp_measure.primitives.shapes import to_bzyx
 
 
-def get_radial_zernikes(masks, pixels, zernike_degree: int = 9):
+def get_radial_zernikes(labels, pixels, zernike_degree: int = 9):
     """Radial Zernike magnitude/phase per object; single image/volume or batch."""
-    if isinstance(masks, numpy.ndarray) and masks.ndim == 3:
+    if isinstance(labels, numpy.ndarray) and labels.ndim == 3:
         return {}  # a single volume (even Z=1), matching the NumPy contract
-    masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
+    masks_zyx, pixels_zyx, unwrap = to_bzyx(labels, pixels)
     # degree-only work, hoisted out of the per-image loop (computed once per batch)
     zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
     coeffs = zernike_coeffs(zernike_indexes)
     results = [
         {}
-        if isinstance(masks, (list, tuple)) and numpy.ndim(masks[i]) == 3
+        if isinstance(labels, (list, tuple)) and numpy.ndim(labels[i]) == 3
         else _radial_zernikes_2d(m, p, zernike_indexes, coeffs)
         for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx))
     ]
