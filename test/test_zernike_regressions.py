@@ -22,8 +22,16 @@ def assert_same(ref, got):
     for key in ref:
         assert ref[key].shape == got[key].shape
         assert ref[key].dtype == got[key].dtype
+        expected, actual = ref[key], got[key]
+        if "ZernikePhase" in key:
+            # The phase of a moment that is zero by symmetry is atan2 of round-off,
+            # which differs even between NumPy runs; compare it only above noise.
+            magnitude = ref[key.replace("Phase", "Magnitude")]
+            np.testing.assert_array_equal(np.isnan(actual), np.isnan(expected))
+            defined = ~(magnitude <= 1e-10)  # keep NaN magnitudes in the comparison
+            expected, actual = expected[defined], actual[defined]
         np.testing.assert_allclose(
-            got[key], ref[key], rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
+            actual, expected, rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
         )
 
 
