@@ -2,8 +2,7 @@ name: Tests
 
 on:
   push:
-    # Stacked drafts need head-branch tests even when the PR cannot merge.
-    branches: ["main", "feat/numba-radial-distribution", "feat/numba-sizeshape"]
+    branches: ["main"]
     tags:
       - "v*"
   pull_request:
@@ -18,7 +17,6 @@ jobs:
         shell: bash -e {0}
 
     strategy:
-      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
@@ -43,7 +41,6 @@ jobs:
         shell: bash -e {0}
 
     strategy:
-      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
