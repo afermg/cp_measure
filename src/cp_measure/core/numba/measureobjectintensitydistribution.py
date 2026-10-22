@@ -51,7 +51,7 @@ def get_radial_zernikes(labels, pixels, zernike_degree: int = 9):
 
 
 def get_radial_distribution(
-    masks,
+    labels,
     pixels,
     scaled: bool = True,
     bin_count: int = 4,
@@ -62,10 +62,15 @@ def get_radial_distribution(
     Matches the NumPy reference; each object is processed on its own crop. Single
     image/volume or batch; 2D only.
     """
-    masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
+    # Volumes give {} as in NumPy, including Z=1, as for the numba Zernikes.
+    if not isinstance(labels, (list, tuple)) and numpy.ndim(labels) == 3:
+        return {}
+    masks_zyx, pixels_zyx, unwrap = to_bzyx(labels, pixels)
     results = [
-        _radial_distribution_2d(m, p, scaled, bin_count, maximum_radius)
-        for m, p in zip(masks_zyx, pixels_zyx)
+        {}
+        if isinstance(labels, (list, tuple)) and numpy.ndim(labels[i]) == 3
+        else _radial_distribution_2d(m, p, scaled, bin_count, maximum_radius)
+        for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx))
     ]
     return unwrap(results)
 

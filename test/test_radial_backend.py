@@ -114,11 +114,13 @@ def _assert_close_dict(got, exp):
 
 
 @requires_numba
-def test_3d_volume_returns_empty():
-    vol = np.zeros((3, 32, 32), np.int32)
+@pytest.mark.parametrize("depth", [1, 3])
+def test_3d_volume_returns_empty(depth):
+    vol = np.zeros((depth, 32, 32), np.int32)
     vol[:, 5:15, 5:15] = 1
-    pix = np.random.default_rng(0).random((3, 32, 32))
-    assert _numba()(vol, pix) == {}
+    pix = np.random.default_rng(0).random((depth, 32, 32))
+    assert _numba()(vol, pix) == ref(vol, pix) == {}
+    assert _numba()([vol], [pix]) == [{}]
 
 
 @requires_numba
