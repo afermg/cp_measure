@@ -5,7 +5,7 @@ Both Zernike features — shape (`get_zernike`, weight=1) and intensity-weighted
 weighted-complex sum of the Zernike polynomial basis ``V_nm`` over the object's
 pixels. This module fuses Horner basis evaluation and the segment-sum into one
 single-pass ``@njit`` kernel (no ``(M, K)`` intermediate). The radial path computes
-azimuthal powers with NumPy to keep its phase identical to the NumPy backend.
+azimuthal powers with NumPy, so its phase rounds like the NumPy backend's.
 
 The polynomial *coefficients* come from centrosome (``construct_zernike_lookuptable``,
 degree-only, cheap) via :func:`zernike_coeffs`; the per-pixel evaluation follows
@@ -26,6 +26,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
+from cp_measure.primitives.shapes import to_bzyx
 from cp_measure.utils import _zernike_coords
 
 
@@ -137,3 +138,33 @@ def zernike_moments_per_object(labels, pixels, coeffs):
     vr, vi = zernike_moments(weights, xm, ym, seg, lut, nterms, m_arr, n, powers)
     counts = np.bincount(seg, minlength=n).astype(np.float64)
     return vr, vi, radii, counts
+
+
+def zernike_per_image(labels, pixels, degree, features):
+    """Batch driver shared by the numba ``get_zernike`` and ``get_radial_zernikes``.
+
+    Accepts a single 2D image or a batch (list/tuple of images, or a 4D
+    ``(B, Z, Y, X)`` array) and returns a dict or a list of dicts. Volumes give
+    ``{}`` as in NumPy: a raw 3D array (including Z=1), a 3D element of a list, or
+    Z > 1 in a 4D batch, whose Z=1 entries are measured as 2D images. ``pixels``
+    is ``None`` for the unweighted shape moments. ``features(vr, vi, radii,
+    counts, zernike_indexes)`` names and normalises one image's moment sums.
+    """
+    if not isinstance(labels, (list, tuple)) and np.ndim(labels) == 3:
+        return {}
+    weighted = pixels is not None
+    masks_bzyx, pixels_bzyx, unwrap = to_bzyx(labels, pixels if weighted else labels)
+    # degree-only work, hoisted out of the per-image loop (computed once per batch)
+    zernike_indexes = centrosome.zernike.get_zernike_indexes(degree + 1)
+    coeffs = zernike_coeffs(zernike_indexes)
+    results = []
+    for i, (masks_zyx, pixels_zyx) in enumerate(zip(masks_bzyx, pixels_bzyx)):
+        listed_volume = isinstance(labels, (list, tuple)) and np.ndim(labels[i]) == 3
+        if listed_volume or masks_zyx.shape[0] > 1:
+            results.append({})
+            continue
+        sums = zernike_moments_per_object(
+            masks_zyx[0], pixels_zyx[0] if weighted else None, coeffs
+        )
+        results.append(features(*sums, zernike_indexes))
+    return unwrap(results)
