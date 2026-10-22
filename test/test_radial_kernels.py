@@ -48,7 +48,7 @@ def test_geodesic_matches_centrosome_propagate(name):
     center = np.zeros(m.shape, int)
     center[si, sj] = 1
     _, d_cent = centrosome.propagate.propagate(np.zeros(m.shape), center, m, 1)
-    np.testing.assert_allclose(d_numba[m], d_cent[m], atol=1e-9)
+    np.testing.assert_array_equal(d_numba[m], d_cent[m])
 
 
 @requires_numba
