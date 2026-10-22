@@ -2,21 +2,18 @@
 
 Two kernels backing :func:`cp_measure.core.numba.measureobjectintensitydistribution.get_radial_distribution`:
 
-- :func:`geodesic_chamfer_fifo` — geodesic distance from the object centre within
-  the object mask, as a 1/sqrt(2) chamfer shortest-path (FIFO Bellman-Ford / SPFA,
-  ring-buffer queue). This is BIT-EXACT to centrosome's
-  ``propagate(zeros, seed, mask, 1)`` (shortest-path is algorithm-independent — the
-  heap-Dijkstra C extension and this serial sweep reach the identical minimum),
-  verified across convex/concave/ring/spiral shapes, and ~35x faster on small
-  per-object crops. It replaces the dominant geometry cost.
-- :func:`radial_object` — one fused per-crop pass: the centre (argmax of
-  ``d_to_edge``), the chamfer geodesic, the per-bin intensity/count histograms and
-  the per-(bin, 8-wedge) anisotropy CV — replacing the reference's repeated
-  ``scipy.sparse.coo_matrix(...).toarray()`` builds and ``numpy.ma`` masked CV.
+- :func:`geodesic_chamfer_fifo`: geodesic distance from the object centre within
+  the object mask, as a 1/sqrt(2) chamfer shortest path (FIFO Bellman-Ford with a
+  ring-buffer queue). Shortest paths do not depend on the algorithm, so it equals
+  centrosome's ``propagate(zeros, seed, mask, 1)`` exactly (tested on convex,
+  concave, ring and single-pixel shapes) and is ~35x faster on small crops.
+- :func:`radial_object`: one fused pass per crop computing the centre, the
+  geodesic, the per-bin histograms and the per-(bin, wedge) sums that replace the
+  reference's repeated ``scipy.sparse.coo_matrix(...).toarray()`` builds.
 
-Only the exact-Euclidean ``distance_to_edge`` (scipy EDT) stays host-side; the
-centre, chamfer geodesic and reductions are all in the numba kernel. Serial; no
-``prange``/``nogil``.
+The exact-Euclidean distance to edge (scipy EDT) and the final ``RadialCV``
+(``numpy.ma``, to keep the reference's masked-division results) stay on the host.
+Serial; no ``prange``/``nogil``.
 """
 
 import numpy as np
