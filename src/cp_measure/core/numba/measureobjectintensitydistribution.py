@@ -118,6 +118,10 @@ def _radial_distribution_2d(
             name: numpy.zeros(0) for _, name, _ in _radial_features(scaled, bin_count)
         }
 
+    # Fixed scalar types keep the cached kernel to one compiled signature; the
+    # radius is unused (and may be None, as NumPy allows) when scaled.
+    scaled, bin_count = bool(scaled), int(bin_count)
+    radius = 1.0 if scaled else float(maximum_radius)
     slices = scipy.ndimage.find_objects(labels)
     nb = bin_count + 1
     frac_at_d = numpy.zeros((n, nb))
@@ -143,7 +147,7 @@ def _radial_distribution_2d(
             mean_frac[label - 1],
             wedge_sums[label - 1],
             wedge_counts[label - 1],
-        ) = radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius)
+        ) = radial_object(m, pix, d_to_edge, scaled, bin_count, radius)
 
     arrays = (frac_at_d, mean_frac, _radial_cv(wedge_sums, wedge_counts))
     return {
