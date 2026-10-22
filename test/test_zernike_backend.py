@@ -26,26 +26,32 @@ DTYPE_CASES = [(*SHAPE, np.float64)] + [
 
 def assert_same(ref, got):
     assert list(ref) == list(got)
+    magnitudes = [ref[k] for k in ref if "Magnitude" in k and ref[k].size]
+    scale = max((np.nanmax(m, initial=0) for m in magnitudes), default=0)
     for key in ref:
         assert ref[key].shape == got[key].shape
         assert ref[key].dtype == got[key].dtype
-        expected, actual = ref[key], got[key]
-        if "ZernikePhase" in key:
-            # The phase of a moment that is zero by symmetry is atan2 of round-off,
-            # which differs even between NumPy runs; compare it only above noise.
-            magnitude = ref[key.replace("Phase", "Magnitude")]
-            np.testing.assert_array_equal(np.isnan(actual), np.isnan(expected))
-            defined = ~(magnitude <= 1e-10)  # keep NaN magnitudes in the comparison
-            expected, actual = expected[defined], actual[defined]
-        np.testing.assert_allclose(
-            actual, expected, rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
-        )
+        if "ZernikePhase" not in key:
+            np.testing.assert_allclose(
+                got[key], ref[key], rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
+            )
+            continue
+        # Phase is atan2 of round-off for a moment that is zero by symmetry, and +pi
+        # vs -pi when only its real part is (that sign flips even between NumPy
+        # runs). So compare angles modulo 2*pi, only above the image's noise floor.
+        np.testing.assert_array_equal(np.isnan(got[key]), np.isnan(ref[key]))
+        magnitude = ref[key.replace("Phase", "Magnitude")]
+        defined = magnitude > 1e-9 * scale
+        wrapped = np.angle(np.exp(1j * (got[key] - ref[key])[defined]))
+        np.testing.assert_allclose(wrapped, 0, atol=1e-6, err_msg=key)
 
 
 def mask_scene(kind):
     m = np.zeros((32, 40), np.int32)
     if kind == "empty":
         return m
+    if kind == "empty_bool":  # sanitize keeps an object-free bool mask as bool
+        return m.astype(bool)
     if kind == "zero_size":
         return m[:0]
     if kind == "single_pixel":
@@ -78,6 +84,7 @@ def mask_scene(kind):
     "kind",
     [
         "empty",
+        "empty_bool",
         "zero_size",
         "single_pixel",
         "two_pixels",

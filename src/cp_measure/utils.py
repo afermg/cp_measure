@@ -76,13 +76,22 @@ def _zernike_coords(
     lut = numpy.arange(-1, n)  # lut[0] = -1 (background); lut[label] = label - 1
     centers, radii = zernike.minimum_enclosing_circle(masks, numpy.arange(1, n + 1))
     radii = numpy.asarray(radii, dtype=float)
+    if n == 0:  # before the lut gather, which needs integer labels
+        empty = numpy.zeros(0)
+        return (
+            numpy.zeros(0, int),
+            numpy.zeros(numpy.shape(masks), bool),
+            empty,
+            empty,
+            radii,
+        )
     seg_full = lut[masks]
     keep = seg_full >= 0
     rows, cols = numpy.nonzero(keep)
     seg = seg_full[keep]
     # Single-pixel objects have an enclosing-circle radius of 0; the resulting 0/0 yields NaN
-    # coordinates (which the r**2 > 1 cutoff later discards), matching centrosome — suppress the
-    # warning since it is expected, not a fault.
+    # coordinates and so NaN features, matching centrosome — suppress the warning since it is
+    # expected, not a fault.
     with numpy.errstate(invalid="ignore", divide="ignore"):
         ym = (rows - centers[seg, 0]) / radii[seg]
         xm = (cols - centers[seg, 1]) / radii[seg]
