@@ -116,7 +116,8 @@ def _radial_distribution_2d(
     nb = bin_count + 1
     frac_at_d = numpy.zeros((n, nb))
     mean_frac = numpy.zeros((n, nb))
-    radial_cv = numpy.zeros((n, nb))
+    wedge_sums = numpy.zeros((n, nb, 8))
+    wedge_counts = numpy.zeros((n, nb, 8))
     for label in range(1, n + 1):
         sl = slices[label - 1]
         if sl is None:
@@ -131,14 +132,32 @@ def _radial_distribution_2d(
         m = numpy.ascontiguousarray(labels[sl] == label)
         pix = numpy.ascontiguousarray(pixels[sl], dtype=numpy.float64)
         d_to_edge = scipy.ndimage.distance_transform_edt(m)
-        fad, mfr, cv = radial_object(
-            m, pix, d_to_edge, scaled, bin_count, maximum_radius
-        )
-        frac_at_d[label - 1] = fad
-        mean_frac[label - 1] = mfr
-        radial_cv[label - 1] = cv
+        (
+            frac_at_d[label - 1],
+            mean_frac[label - 1],
+            wedge_sums[label - 1],
+            wedge_counts[label - 1],
+        ) = radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius)
 
-    arrays = (frac_at_d, mean_frac, radial_cv)
+    arrays = (frac_at_d, mean_frac, _radial_cv(wedge_sums, wedge_counts))
     return {
         name: arrays[col][:, b] for col, name, b in _radial_features(scaled, bin_count)
     }
+
+
+def _radial_cv(wedge_sums, wedge_counts):
+    """RadialCV per (object, bin) with the reference's own ``numpy.ma`` expression.
+
+    ``numpy.ma`` division masks zero or non-finite denominators and keeps the
+    numerator, so all-dark rings give 0 rather than NaN; evaluating the same
+    expression (vectorised over objects) keeps those cases identical.
+    """
+    radial_cv = numpy.zeros(wedge_sums.shape[:2])
+    with numpy.errstate(invalid="ignore", divide="ignore"):
+        for b in range(wedge_sums.shape[1]):
+            mask = wedge_counts[:, b] == 0
+            means = numpy.ma.MaskedArray(wedge_sums[:, b] / wedge_counts[:, b], mask)
+            cv = numpy.std(means, 1) / numpy.mean(means, 1)
+            cv[numpy.sum(~mask, 1) == 0] = 0
+            radial_cv[:, b] = numpy.array(cv)
+    return radial_cv

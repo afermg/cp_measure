@@ -80,16 +80,15 @@ def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
     """All per-object radial work for one cropped object, in one numba pass.
 
     Folds the centre (argmax of ``d_to_edge`` within ``m``), the chamfer geodesic,
-    the per-bin intensity/count histograms and the per-(bin, 8-wedge) ``RadialCV``
-    into a single kernel — so the host loop does no per-object ``mgrid``/
-    ``np.where``/``maximum_position``/concatenate. Returns ``(frac_at_d, mean_frac,
-    radial_cv)``, each length ``bin_count + 1`` (last entry = overflow bin).
+    the per-bin intensity/count histograms and the per-(bin, 8-wedge) sums into a
+    single kernel, so the host loop does no per-object ``mgrid``/``np.where``.
+    Returns ``(frac_at_d, mean_frac, wedge_sums, wedge_counts)``: two arrays of
+    length ``bin_count + 1`` (last entry = overflow bin) and two ``(bin_count + 1,
+    8)`` arrays from which the host computes ``RadialCV``.
 
-    Centre tie-break: first pixel of maximal ``d_to_edge`` in C-order (deterministic
-    and field-independent). On a unique maximum this equals the reference's
-    ``scipy.ndimage.maximum_position``; only a symmetric centre plateau can differ
-    (an equally-valid centre — see the backend module note).
-    ``error_model="numpy"`` so empty-bin ``0/0`` yields ``nan`` like the reference.
+    The centre is the first maximal ``d_to_edge`` pixel in C order, the
+    reference's ``_maximum_position_of_labels`` rule. ``error_model="numpy"``
+    gives ``nan`` for a ``0/0`` like the reference.
     """
     H, W = m.shape
     # Centre = first (C-order) pixel with the maximal distance-to-edge.
@@ -109,7 +108,7 @@ def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
     hist = np.zeros(nb)
     num = np.zeros(nb)
     wsum = np.zeros((nb, 8))
-    wcnt = np.zeros((nb, 8), np.int64)
+    wcnt = np.zeros((nb, 8))
     for r in range(H):
         for c in range(W):
             if not (m[r, c] and d_from[r, c] < UNREACHED):
@@ -133,34 +132,14 @@ def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
             hist[b] += v
             num[b] += 1.0
             wsum[b, w] += v
-            wcnt[b, w] += 1
+            wcnt[b, w] += 1.0
 
     eps = np.finfo(np.float64).eps
     frac_at_d = np.zeros(nb)
     mean_frac = np.zeros(nb)
-    radial_cv = np.zeros(nb)
     tot_h = hist.sum()
     tot_n = num.sum()
     for b in range(nb):
-        fad = hist[b] / tot_h
-        frac_at_d[b] = fad
-        mean_frac[b] = fad / (num[b] / tot_n + eps)
-        # RadialCV: std/mean of per-wedge mean intensities, populated wedges only
-        # (matches numpy.ma masked std/mean, ddof=0; 0 when no wedge populated).
-        npop = 0
-        s = 0.0
-        for w in range(8):
-            if wcnt[b, w] > 0:
-                npop += 1
-                s += wsum[b, w] / wcnt[b, w]
-        if npop == 0:
-            radial_cv[b] = 0.0
-        else:
-            meanw = s / npop
-            ss = 0.0
-            for w in range(8):
-                if wcnt[b, w] > 0:
-                    mw = wsum[b, w] / wcnt[b, w]
-                    ss += (mw - meanw) * (mw - meanw)
-            radial_cv[b] = np.sqrt(ss / npop) / meanw
-    return frac_at_d, mean_frac, radial_cv
+        frac_at_d[b] = hist[b] / tot_h
+        mean_frac[b] = frac_at_d[b] / (num[b] / tot_n + eps)
+    return frac_at_d, mean_frac, wsum, wcnt
