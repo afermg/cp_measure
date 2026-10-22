@@ -121,14 +121,15 @@ def _radial_distribution_2d(
         sl = slices[label - 1]
         if sl is None:
             continue
-        # Crop to the object's bbox + a 1px background border, so the imported
-        # scipy EDT (exact Euclidean, kept host-side) and the in-kernel chamfer
-        # geodesic are bit-identical to the object computed in isolation (the
-        # Issue #22 semantics). The fused radial_object kernel then does the centre,
-        # geodesic, histograms and wedge-CV with no per-object host numpy.
-        # numpy.pad returns C-contiguous arrays, so the kernel needs no further copy.
-        m = numpy.pad(labels[sl] == label, 1)
-        pix = numpy.pad(pixels[sl].astype(numpy.float64), 1)
+        # Crop to the object's bbox grown by 1px and clipped to the image: the
+        # margin gives the EDT its background edge, and the clip keeps the image
+        # border from counting as one, as in the whole-image reference.
+        sl = tuple(
+            slice(max(s.start - 1, 0), min(s.stop + 1, dim))
+            for s, dim in zip(sl, labels.shape)
+        )
+        m = numpy.ascontiguousarray(labels[sl] == label)
+        pix = numpy.ascontiguousarray(pixels[sl], dtype=numpy.float64)
         d_to_edge = scipy.ndimage.distance_transform_edt(m)
         fad, mfr, cv = radial_object(
             m, pix, d_to_edge, scaled, bin_count, maximum_radius
