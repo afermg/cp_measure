@@ -140,3 +140,23 @@ def test_batch_list_matches_per_image():
     assert isinstance(got, list) and len(got) == 2
     for per_image, m in zip(got, (m0, m1)):
         _assert_close_dict(per_image, _numba()(m, p0))
+
+
+@requires_numba
+@pytest.mark.parametrize(
+    "pixels_shape,kwargs",
+    [
+        ((50, 50), {}),
+        ((3, 60, 60), {}),
+        ((60, 60), dict(scaled=False, maximum_radius=-1)),
+        ((60, 60), dict(bin_count=-1)),
+    ],
+    ids=["smaller-image", "channel-stack", "negative-radius", "negative-bins"],
+)
+def test_invalid_inputs_raise(pixels_shape, kwargs):
+    """The kernel has no bounds checks: these would read or write out of bounds."""
+    masks = np.zeros((60, 60), np.int32)
+    masks[5:50, 5:50] = 1
+    pixels = np.random.default_rng(0).random(pixels_shape)
+    with pytest.raises(ValueError):
+        _numba()(masks, pixels, **kwargs)

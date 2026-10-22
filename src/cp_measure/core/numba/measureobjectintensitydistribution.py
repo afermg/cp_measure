@@ -99,6 +99,12 @@ def _radial_distribution_2d(
     bin_count: int,
     maximum_radius: int,
 ) -> dict[str, NDArray[numpy.floating]]:
+    # The kernel has no bounds checks, so a mismatched image would be read out of
+    # bounds; NumPy raises on it too.
+    if labels_zyx.shape != pixels_zyx.shape:
+        raise ValueError(
+            f"labels {labels_zyx.shape} and pixels {pixels_zyx.shape} differ in shape"
+        )
     if labels_zyx.shape[0] > 1:  # Z > 1 -> 3D volume; baseline returns {} for ndim==3
         return {}
     labels = labels_zyx[0]

@@ -90,6 +90,8 @@ def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
     reference's ``_maximum_position_of_labels`` rule. ``error_model="numpy"``
     gives ``nan`` for a ``0/0`` like the reference.
     """
+    if bin_count < 0:
+        raise ValueError("bin_count must be >= 0")
     H, W = m.shape
     # Centre = first (C-order) pixel with the maximal distance-to-edge.
     best = -1.0
@@ -118,9 +120,13 @@ def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
                 nd = df / (df + d_to_edge[r, c] + 0.001)
             else:
                 nd = df / maximum_radius
-            b = int(nd * bin_count)
-            if b > bin_count:
+            x = nd * bin_count
+            if not x < bin_count + 1:  # includes inf/nan, e.g. maximum_radius == 0
                 b = bin_count
+            elif x <= -1:  # would index out of bounds; NumPy raises here too
+                raise ValueError("negative radial bin; maximum_radius must be > 0")
+            else:
+                b = int(x)
             w = 0
             if r > ci:
                 w += 1
