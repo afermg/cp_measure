@@ -51,7 +51,8 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     """Registries for the 'numba' accelerator.
 
     Composes the numba implementations (``intensity``, ``texture``, ``feret``,
-    ``granularity``) with the numpy implementations of every other feature — a
+    ``granularity``, ``zernike``, ``radial_zernikes``) with the numpy implementations
+    of every other feature — a
     single global "numba" selection still yields a full, working feature set,
     accelerated where a numba backend exists. This is explicit per-function
     composition, NOT an error-driven fallback.
@@ -63,6 +64,12 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
     from cp_measure.core.numba.measureobjectintensity import (
         get_intensity as _numba_intensity,
     )
+    from cp_measure.core.numba.measureobjectintensitydistribution import (
+        get_radial_zernikes as _numba_radial_zernikes,
+    )
+    from cp_measure.core.numba.measureobjectsizeshape import (
+        get_zernike as _numba_zernike,
+    )
     from cp_measure.core.numba.measuretexture import get_texture as _numba_texture
 
     return {
@@ -72,6 +79,8 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
             "texture": _numba_texture,
             "feret": _numba_feret,
             "granularity": _numba_granularity,
+            "zernike": _numba_zernike,
+            "radial_zernikes": _numba_radial_zernikes,
         },
         "correlation": _CORRELATION,
     }

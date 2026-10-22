@@ -346,7 +346,16 @@ def get_radial_zernikes(
     # Intensity-weighted moment sums via the shared helper (pixels as the per-pixel weight);
     # radial Zernikes normalise by pixel count, not the enclosing-circle area. See _zernike_scores.
     vr, vi, _radii, counts = _zernike_scores(labels, zernike_indexes, weight=pixels)
+    return _radial_zernike_features(vr, vi, counts, zernike_indexes)
 
+
+def _radial_zernike_features(
+    vr: NDArray[numpy.floating],
+    vi: NDArray[numpy.floating],
+    counts: NDArray[numpy.floating],
+    zernike_indexes: NDArray[numpy.integer],
+) -> dict[str, NDArray[numpy.floating]]:
+    """Name and normalise the moment sums; shared with the numba backend."""
     magnitude = numpy.sqrt(vr * vr + vi * vi) / counts[:, numpy.newaxis]
     # CellProfiler convention: arctan2(real, imag), not textbook arctan2(imag, real).
     # Kept for 1:1 parity — do not "fix" the argument order.

@@ -112,6 +112,12 @@ def test_set_accelerator_numba_composes_with_numpy():
         assert core["granularity"].__module__ == (
             "cp_measure.core.numba.measuregranularity"
         )
+        assert core["zernike"].__module__ == (
+            "cp_measure.core.numba.measureobjectsizeshape"
+        )
+        assert core["radial_zernikes"].__module__ == (
+            "cp_measure.core.numba.measureobjectintensitydistribution"
+        )
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
     finally:
@@ -121,6 +127,21 @@ def test_set_accelerator_numba_composes_with_numpy():
     assert restored["intensity"].__module__ == "cp_measure.core.measureobjectintensity"
     assert restored["feret"].__module__ == "cp_measure.core.measureobjectsizeshape"
     assert restored["granularity"].__module__ == "cp_measure.core.measuregranularity"
+
+
+@requires_numba
+@pytest.mark.parametrize(
+    "feature,mask_name", [("zernike", "masks"), ("radial_zernikes", "labels")]
+)
+def test_numba_accepts_numpy_keyword_names(feature, mask_name):
+    """Switching the accelerator must not break callers using numpy's keywords."""
+    masks, pixels = _mask_pixels_2d()
+    cp_measure.set_accelerator("numba")
+    try:
+        numba_fn = cp_measure.bulk.get_core_measurements()[feature]
+        assert numba_fn(**{mask_name: masks, "pixels": pixels})
+    finally:
+        cp_measure.set_accelerator(None)
 
 
 def test_set_accelerator_numba_absent_raises(monkeypatch):
