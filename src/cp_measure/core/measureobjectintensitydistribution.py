@@ -172,6 +172,9 @@ def get_radial_distribution(
 
     if labels.dtype == bool:
         labels = labels.astype(numpy.int64)
+    # The histograms below sum in the pixel dtype, so integer images would wrap
+    # around (uint8: 300 x 200 sums to 96) and float32 would lose precision.
+    pixels = numpy.asarray(pixels, dtype=numpy.float64)
 
     nobjects = int(labels.max())
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
