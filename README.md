@@ -1,5 +1,5 @@
 <div align="center">
-<img src="./logos/cpm.svg" width="150px">
+<img src="https://raw.githubusercontent.com/afermg/cp_measure/main/logos/cpm.svg" width="150px">
 </div>
 
 # cp_measure: Morphological features for imaging data
