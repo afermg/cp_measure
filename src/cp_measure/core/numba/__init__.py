@@ -12,6 +12,8 @@ One module per numpy module it accelerates, same name:
 - ``_feret`` -> ``get_feret`` (the ``measureobjectsizeshape`` Feret feature, split
   into its own module to avoid colliding with the sizeshape port)
 - ``measuregranularity`` -> ``get_granularity``
+- ``measureobjectsizeshape`` -> ``get_zernike``
+- ``measureobjectintensitydistribution`` -> ``get_radial_zernikes``
 
 The global "numba" accelerator composes these with the numpy implementations of
 every other feature (see ``cp_measure.bulk``). Nothing is re-exported here: each
