@@ -60,9 +60,8 @@ def test_pr_benchmark_records_grid_for_new_and_old_api(
         "get_correlation_measurements",
         lambda: {"costes": current if supports_scale else legacy},
     )
-    monkeypatch.setattr(
-        benchmark, "MATRIX", {"sizes": (8,), "counts": (1,), "seeds": (0,)}
-    )
+    monkeypatch.setattr(benchmark, "WORKLOADS", (("Test", 8, 1),))
+    monkeypatch.setattr(benchmark, "SEEDS", (0,))
     monkeypatch.setattr(benchmark, "_time", call_once)
     output = tmp_path / "benchmark.json"
     benchmark.run(str(output))

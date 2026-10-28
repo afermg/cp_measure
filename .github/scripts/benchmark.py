@@ -34,7 +34,15 @@ from time import perf_counter  # noqa: E402
 
 import numpy  # noqa: E402
 
-MATRIX = {"sizes": (256, 512, 1024), "counts": (16, 64, 256), "seeds": (0, 1, 2)}
+# Explicit pairs, not a size/count Cartesian product. These are synthetic workload
+# proxies, not measurements on real Cell Painting or spatial-omics data.
+WORKLOADS = (
+    ("Tiles", 256, 16),
+    ("Intermediate", 512, 64),
+    ("Cell Painting-like", 1024, 128),
+    ("Spatial-omics-like", 1024, 256),
+)
+SEEDS = (0, 1, 2)
 BLOBS_PER_CHANNEL = 5
 WARMUP, REPS, TIMEOUT = 1, 3, 120.0
 AFFECTED = 1.05  # report a function if any cell moves by this factor either way (faster or slower)
@@ -130,18 +138,23 @@ def run(out_path: str, accelerator: str | None = None):
         cp_measure.set_accelerator(accelerator)
     funcs = _functions()
     cells, results = [], {name: {} for name, _, _ in funcs}
-    for size in MATRIX["sizes"]:
-        for n in MATRIX["counts"]:
-            for seed in MATRIX["seeds"]:
-                labels, channels = generate(size, n, seed)
-                imgs = (_norm01(channels[0]), _norm01(channels[1]))
-                key = f"s{size}_n{n}_seed{seed}"
-                cells.append({"key": key, "size": size, "n_objects": n})
-                for name, fn, arity in funcs:
-                    args = (
-                        (labels, imgs[0]) if arity == 1 else (imgs[0], imgs[1], labels)
-                    )
-                    results[name][key] = _time(fn, args)
+    for workload, size, n in WORKLOADS:
+        for seed in SEEDS:
+            labels, channels = generate(size, n, seed)
+            imgs = (_norm01(channels[0]), _norm01(channels[1]))
+            key = f"s{size}_n{n}_seed{seed}"
+            cells.append(
+                {
+                    "key": key,
+                    "size": size,
+                    "n_objects": n,
+                    "workload": workload,
+                    "seed": seed,
+                }
+            )
+            for name, fn, arity in funcs:
+                args = (labels, imgs[0]) if arity == 1 else (imgs[0], imgs[1], labels)
+                results[name][key] = _time(fn, args)
     costes = next(fn for name, fn, _ in funcs if name == "costes")
     scale = getattr(costes, "keywords", {}).get("scale_max", 1)
     Path(out_path).write_text(
@@ -172,10 +185,12 @@ def compare(
     filter_base: dict | None = None,
 ) -> str:
     groups: dict[tuple, list[str]] = {}
+    names = {}
     for e in head["cells"]:
-        groups.setdefault((e["size"], e["n_objects"]), []).append(e["key"])
-    sizes = sorted({s for s, _ in groups})
-    counts = sorted({n for _, n in groups})
+        pair = (e["size"], e["n_objects"])
+        groups.setdefault(pair, []).append(e["key"])
+        # Older saved JSONs lack workload labels; retain support for those cells.
+        names[pair] = e.get("workload", "Synthetic")
     br, hr = base["results"], head["results"]
     # A function is *shown* when it moved vs filter_base (default: the displayed base), but the
     # printed speedup is always base/head. This lets the numba table pick which functions THIS PR
@@ -188,6 +203,13 @@ def compare(
         "",
         f"`speedup = {base_name}/{head_name}` (>1 faster, <1 slower) · median per cell · "
         f"showing functions that moved ≥{AFFECTED:.2f}× either way",
+        "",
+        "Synthetic 2D workload proxies, not real biological datasets. "
+        "Warm-call timings exclude JIT warmup; shared-runner noise can affect small changes.",
+        "",
+        "| Workload | Image size | Objects |",
+        "|---|---:|---:|",
+        *[f"| {names[(s, n)]} | {s} × {s} | {n} |" for s, n in groups],
     ]
 
     # Historical benchmark JSONs used normalized floats with inferred scale 1.
@@ -213,15 +235,13 @@ def compare(
         if fn == "costes" and incompatible_costes:
             continue
         grid, moves = {}, []
-        for size in sizes:
-            for n in counts:
-                keys = groups.get((size, n), [])
-                m = _median_ms(br.get(fn, {}), keys)
-                h = _median_ms(hr[fn], keys)
-                grid[(size, n)] = (m / h) if (m and h) else None
-                f = _median_ms(fr.get(fn, {}), keys)
-                if f and h:
-                    moves.append(f / h)  # movement vs filter_base decides inclusion
+        for pair, keys in groups.items():
+            m = _median_ms(br.get(fn, {}), keys)
+            h = _median_ms(hr[fn], keys)
+            grid[pair] = (m / h) if (m and h) else None
+            f = _median_ms(fr.get(fn, {}), keys)
+            if f and h:
+                moves.append(f / h)  # movement vs filter_base decides inclusion
         if moves and (max(moves) >= AFFECTED or min(moves) <= lo):
             affected.append((fn, grid))
 
@@ -234,15 +254,12 @@ def compare(
             "",
             f"#### `{fn}`",
             "",
-            "| size \\ objects | " + " | ".join(str(n) for n in counts) + " |",
-            "|---" + "|--:" * len(counts) + "|",
+            "| Workload | Image size | Objects | Speedup |",
+            "|---|---:|---:|---:|",
         ]
-        for size in sizes:
-            row = [
-                (f"{grid[(size, n)]:.2f}×" if grid.get((size, n)) else "—")
-                for n in counts
-            ]
-            out.append(f"| **{size}** | " + " | ".join(row) + " |")
+        for (size, n), speedup in grid.items():
+            ratio = f"{speedup:.2f}×" if speedup is not None else "—"
+            out.append(f"| {names[(size, n)]} | {size} × {size} | {n} | {ratio} |")
     return "\n".join(out)
 
 
