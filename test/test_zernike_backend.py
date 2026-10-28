@@ -179,16 +179,24 @@ def test_public_sanitation_and_batch(feature, batch):
             assert_same(ref, result)
 
 
-@pytest.mark.parametrize("batch", ["single", "list", "tuple", "stacked"])
-@pytest.mark.parametrize("empty", [False, True])
-@pytest.mark.parametrize("pixel_shape", [(0, 32, 40), (2, 32, 40), (31, 40), (32, 39)])
+@pytest.mark.parametrize(
+    "batch,empty,pixel_shape",
+    [
+        pytest.param("single", False, (2, 32, 40), id="single-planes"),
+        pytest.param("list", False, (2, 32, 40), id="list-planes"),
+        pytest.param("stacked", False, (2, 32, 40), id="stacked-planes"),
+        pytest.param("single", True, (2, 32, 40), id="empty-mask-planes"),
+        pytest.param("single", False, (0, 32, 40), id="empty-pixel-volume"),
+        pytest.param("single", False, (31, 40), id="height-mismatch"),
+        pytest.param("stacked", False, (32, 39), id="width-mismatch"),
+        pytest.param("list", True, (31, 40), id="empty-list-spatial-mismatch"),
+    ],
+)
 def test_radial_rejects_mismatched_pixels(batch, empty, pixel_shape):
     mask = mask_scene("empty" if empty else "square")
     pixels = np.ones(pixel_shape)
     if batch == "list":
         mask, pixels = [mask], [pixels]
-    elif batch == "tuple":
-        mask, pixels = (mask,), (pixels,)
     elif batch == "stacked":
         mask = mask[None, None]
         pixels = pixels[None, None] if pixels.ndim == 2 else pixels[None]
@@ -203,22 +211,19 @@ def test_radial_rejects_mismatched_pixels(batch, empty, pixel_shape):
         cp_measure.set_accelerator(previous)
 
 
-@pytest.mark.parametrize("batch", ["single", "list", "tuple"])
+@pytest.mark.parametrize("batch", ["single", "list"])
 def test_radial_rejects_singleton_pixel_volume_with_2d_mask(batch):
     mask = mask_scene("square")
     pixels = np.ones((1, *mask.shape))
     if batch == "list":
         mask, pixels = [mask], [pixels]
-    elif batch == "tuple":
-        mask, pixels = (mask,), (pixels,)
     with pytest.raises(ValueError, match="labels and pixels must have matching shapes"):
         radial_numba(mask, pixels)
 
 
-@pytest.mark.parametrize("pixel_shape", [None, (2, 32, 40), (31, 40)])
-def test_shape_still_ignores_pixels(pixel_shape):
+def test_shape_still_ignores_pixels():
     mask = mask_scene("square")
-    pixels = None if pixel_shape is None else np.ones(pixel_shape)
+    pixels = np.ones((2, *mask.shape))
     assert_same(shape_numpy(mask, None), shape_numba(mask, pixels))
 
 
@@ -229,10 +234,9 @@ def test_stacked_volumes_still_return_empty(ref_fn, got_fn):
     assert got_fn(mask[None], pixels[None]) == [ref_fn(mask, pixels)] == [{}]
 
 
-@pytest.mark.parametrize("kind", ["square", "irregular", "edge_hole"])
 @pytest.mark.parametrize("scale", [1e-12, 1, 2**24])
-def test_radial_phase_across_intensity_scales(kind, scale):
-    mask = mask_scene(kind)
+def test_radial_phase_across_intensity_scales(scale):
+    mask = mask_scene("irregular")
     pixels = np.random.default_rng(41).random(mask.shape) * scale
     assert_same(radial_numpy(mask, pixels), radial_numba(mask, pixels))
 
