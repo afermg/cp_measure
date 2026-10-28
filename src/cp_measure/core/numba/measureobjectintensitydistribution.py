@@ -15,7 +15,12 @@ from cp_measure.core.numba._zernike import zernike_per_image
 
 
 def get_radial_zernikes(labels, pixels, zernike_degree: int = 9):
-    """Radial Zernike magnitude/phase per object; single image/volume or batch."""
+    """Radial Zernike magnitude/phase per object; single image/volume or batch.
+
+    Measured 2D entries require matching label and intensity shapes; mismatches
+    raise ``ValueError`` rather than selecting an intensity plane. Compare phases
+    modulo 2π; near-zero moments have numerically unstable phases.
+    """
     return zernike_per_image(
         labels,
         pixels,

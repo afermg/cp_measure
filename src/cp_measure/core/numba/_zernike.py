@@ -5,7 +5,9 @@ Both Zernike features — shape (`get_zernike`, weight=1) and intensity-weighted
 weighted-complex sum of the Zernike polynomial basis ``V_nm`` over the object's
 pixels. This module fuses Horner basis evaluation and the segment-sum into one
 single-pass ``@njit`` kernel (no ``(M, K)`` intermediate). The radial path computes
-azimuthal powers with NumPy, so its phase rounds like the NumPy backend's.
+azimuthal powers with NumPy to reduce phase-rounding differences, not to guarantee
+identical phases. Meaningful phases agree modulo 2π; phases of near-zero moments
+are numerically unstable (see ``docs/measurement-notes.md``).
 
 The polynomial *coefficients* come from centrosome (``construct_zernike_lookuptable``,
 degree-only, cheap) via :func:`zernike_coeffs`; the per-pixel evaluation follows
@@ -127,8 +129,9 @@ def zernike_moments_per_object(labels, pixels, coeffs):
     if pixels is not None:
         # Mirror-symmetric objects have moments whose real (or imaginary) part is
         # zero by symmetry, so atan2 returns +pi or -pi on the sign of round-off.
-        # Building z^m with NumPy's complex multiply, exactly as _zernike_scores
-        # does, keeps that sign, and so the phase, identical to the NumPy backend.
+        # Building z^m with NumPy's complex multiply, as _zernike_scores does,
+        # reduces these sign differences but cannot guarantee identical phases:
+        # even repeated NumPy calls can differ at the branch cut or near zero.
         # Only the (max_m + 1, M) powers are materialised, not the (M, K) basis.
         z = ym + 1j * xm
         powers = np.empty((int(m_arr.max()) + 1, len(z)), dtype=np.complex128)
@@ -147,10 +150,13 @@ def zernike_per_image(labels, pixels, degree, features):
     ``(B, Z, Y, X)`` array) and returns a dict or a list of dicts. Volumes give
     ``{}`` as in NumPy: a raw 3D array (including Z=1), a 3D element of a list, or
     Z > 1 in a 4D batch, whose Z=1 entries are measured as 2D images. ``pixels``
-    is ``None`` for the unweighted shape moments. ``features(vr, vi, radii,
-    counts, zernike_indexes)`` names and normalises one image's moment sums.
+    is ``None`` for the unweighted shape moments. For measured 2D entries, weighted
+    inputs must have matching shapes and dimensionality, before axis promotion.
+    ``features(vr, vi, radii, counts, zernike_indexes)`` names and normalises one
+    image's moment sums.
     """
-    if not isinstance(labels, (list, tuple)) and np.ndim(labels) == 3:
+    is_sequence = isinstance(labels, (list, tuple))
+    if not is_sequence and np.ndim(labels) == 3:
         return {}
     weighted = pixels is not None
     masks_bzyx, pixels_bzyx, unwrap = to_bzyx(labels, pixels if weighted else labels)
@@ -159,10 +165,16 @@ def zernike_per_image(labels, pixels, degree, features):
     coeffs = zernike_coeffs(zernike_indexes)
     results = []
     for i, (masks_zyx, pixels_zyx) in enumerate(zip(masks_bzyx, pixels_bzyx)):
-        listed_volume = isinstance(labels, (list, tuple)) and np.ndim(labels[i]) == 3
-        if listed_volume or masks_zyx.shape[0] > 1:
+        mask_ndim = np.ndim(labels[i] if is_sequence else labels)
+        if mask_ndim == 3 or masks_zyx.shape[0] > 1:
             results.append({})
             continue
+        if weighted:
+            pixel_ndim = np.ndim(pixels[i] if is_sequence else pixels)
+            if mask_ndim != pixel_ndim or masks_zyx.shape != pixels_zyx.shape:
+                raise ValueError(
+                    "radial Zernike labels and pixels must have matching shapes"
+                )
         sums = zernike_moments_per_object(
             masks_zyx[0], pixels_zyx[0] if weighted else None, coeffs
         )
