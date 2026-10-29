@@ -250,6 +250,25 @@ def _validate_costes_scale(scale_max: int) -> int:
     return int(scale_max)
 
 
+def _canonical_costes_pixels(values, scale):
+    """Use division encoding for exact reciprocal-normalized integer grid levels.
+
+    Recognize the encoding used by img_as_float without tolerance-snapping other
+    floats. Apply per object to bound scratch memory and ignore background pixels.
+    """
+    # Only probe the nonzero grid range, avoiding nonfinite/overflow and subnormal
+    # arithmetic on invalid or unrelated values. Zero is already canonical.
+    eligible = (values >= 1.0 / scale) & (values <= 1)
+    original = values[eligible]
+    levels = numpy.rint(original * scale)
+    canonical = levels / scale
+    encoded = original == levels * (1.0 / scale)
+    if numpy.any(encoded & (original != canonical)):
+        values = values.copy()
+        values[eligible] = numpy.where(encoded, canonical, original)
+    return values
+
+
 def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
     """Keep acquisition scale independent of the normalized array dtype."""
     first, second = numpy.asarray(pixels_1), numpy.asarray(pixels_2)
@@ -316,6 +335,8 @@ def _costes_pair(
     scale: int,
     fast_costes: str,
 ) -> tuple[float, float]:
+    fi = _canonical_costes_pixels(fi, scale)
+    si = _canonical_costes_pixels(si, scale)
     search = bisection_costes if fast_costes == M_FASTER else linear_costes
     thr_fi, thr_si = search(None, None, fi, si, scale, fast_costes)
     if not (numpy.isfinite(thr_fi) and numpy.isfinite(thr_si)):
@@ -734,6 +755,9 @@ def get_correlation_costes(
     its storage maximum is inferred when ``scale_max`` is omitted. Supply
     the acquisition maximum for lower-bit-depth data in a larger container.
     Signed or mixed-dtype inputs always require an explicit common scale.
+    Exact reciprocal-multiply encodings of integer grid levels (as produced by
+    ``img_as_float``) are mapped to the integer path's division encoding. Other
+    float values are not quantized or tolerance-snapped to the grid.
 
     Undefined regressions/background subsets or zero signal denominators
     return NaN and emit :class:`RuntimeWarning`, rather than plausible
