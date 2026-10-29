@@ -10,6 +10,10 @@ To use a 2D mask through a volume, the caller must explicitly repeat it before c
 
 The existing `sizeshape` measurement uses a surface-area calculation that requires at least two voxels along each spatial axis. In particular, a single-slice volume (`Z=1`) raises `ValueError: Input array must be at least 2x2x2.` with size/shape enabled. Disable it with `make_featurizer_config(..., sizeshape=False)`, or explicitly provide a 2D batch and use `is_3d=False` if 2D measurements are intended. This limitation predates the batch featurizer.
 
+## Granularity intermediate precision
+
+The Numba granularity backend preserves the input dtype through background opening, background resampling and subtraction, matching the NumPy path (#123). The extrema kernels may compute in float64 internally, but their selected values are restored to the incoming background dtype before interpolation. Without that boundary conversion, float32 inputs could produce small but observable backend differences (approximately `6.5e-6` in the real-image pilot). Float64 behavior is unchanged; this is not arbitrary rounding of final measurements or a relaxed comparison tolerance.
+
 ## Texture quantization
 
 Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim variation can disappear, and pairs containing zero are excluded. See the [#100 explanation](https://github.com/afermg/cp_measure/issues/100#issuecomment-5939719548) and [`get_texture` Notes](../src/cp_measure/core/measuretexture.py) for CellProfiler compatibility and zero/NaN behavior.
