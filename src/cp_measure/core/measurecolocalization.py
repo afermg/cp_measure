@@ -161,11 +161,20 @@ def _pearson_pair(
     return float(corr), float(slope)
 
 
+def _percentage_threshold(
+    values: NDArray[numpy.floating], thr: float
+) -> NDArray[numpy.floating]:
+    # Keep the maximum array-valued, as in CP's ndimage.maximum(..., indices).
+    # NumPy 1.x promotes Python-float * float32-scalar to float64, unlike the
+    # array operation. Rounding that product back can change boundary membership.
+    return (thr / 100) * values.max(keepdims=True)
+
+
 def _manders_pair(
     fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
 ) -> tuple[float, float]:
-    tff = (thr / 100) * fi.max()
-    tss = (thr / 100) * si.max()
+    tff = _percentage_threshold(fi, thr)
+    tss = _percentage_threshold(si, thr)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0
@@ -181,8 +190,8 @@ def _manders_pair(
 def _overlap_pair(
     fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
 ) -> tuple[float, float, float]:
-    tff = (thr / 100) * fi.max()
-    tss = (thr / 100) * si.max()
+    tff = _percentage_threshold(fi, thr)
+    tss = _percentage_threshold(si, thr)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0, 0.0
@@ -217,8 +226,8 @@ def _rwc_pair(
     Di = abs(Rank_im1 - Rank_im2)
     weight = (R - Di) * 1.0 / R
 
-    tff = (thr / 100) * fi.max()
-    tss = (thr / 100) * si.max()
+    tff = _percentage_threshold(fi, thr)
+    tss = _percentage_threshold(si, thr)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0
