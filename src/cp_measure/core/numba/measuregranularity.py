@@ -115,7 +115,7 @@ def _granularity_2d(
         )
         pixels = scipy.ndimage.map_coordinates(orig_pixels, (i, j), order=1)
     else:
-        pixels = orig_pixels.astype(numpy.float64, copy=True)
+        pixels = orig_pixels.copy()
 
     # 2. Background subtraction via greyscale opening (numba disk erosion+dilation)
     if image_sample_size < 1:
@@ -130,8 +130,13 @@ def _granularity_2d(
         back_shape = new_shape
     radius = element_size
     # back_mask is all-ones (full-frame), so the baseline's masked re-zeroing is a no-op
+    background_dtype = back_pixels.dtype
     back_pixels = disk_erosion_2d(back_pixels, radius)
     back_pixels = disk_dilation_2d(back_pixels, radius)
+    # The kernels select extrema in float64, but the NumPy opening preserves
+    # its input dtype. Restore it before interpolation and subtraction: promoting
+    # these stages changes float32 rounding and the resulting spectrum (#123).
+    back_pixels = back_pixels.astype(background_dtype, copy=False)
     if image_sample_size < 1:
         i, j = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
         i *= float(back_shape[0] - 1) / float(new_shape[0] - 1)

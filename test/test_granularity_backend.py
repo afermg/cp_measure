@@ -1,5 +1,9 @@
 """Correctness of the numba granularity backend vs the numpy baseline."""
 
+import hashlib
+import json
+from pathlib import Path
+
 import numpy
 import pytest
 
@@ -68,6 +72,43 @@ def test_subsampled_boundary_object_matches_baseline(transpose):
         gran_numba(mask, pixels, subsample_size=0.4),
         gran_numpy(mask, pixels, subsample_size=0.4),
     )
+
+
+@pytest.mark.parametrize(
+    "case_index",
+    range(3),
+    ids=["resample-both", "resample-background", "no-background-resampling"],
+)
+def test_float32_background_matches_numpy_and_cellprofiler(case_index):
+    reference = json.loads(
+        (
+            Path(__file__).parent
+            / "data/granularity_float32_cellprofiler_reference.json"
+        ).read_text()
+    )
+    y, x = numpy.indices((64, 80))
+    raw = ((73 * y + 157 * x + ((13 * x + 29 * y) % 31) * 101) % 40000 + 1000).astype(
+        numpy.uint16
+    )
+    pixels = raw.astype(numpy.float32) / numpy.float32(65535)
+    labels = numpy.zeros(raw.shape, numpy.int32)
+    labels[8:28, 8:28] = 1
+    labels[32:58, 37:68] = 2
+    assert hashlib.sha256(pixels.tobytes()).hexdigest() == reference["pixels_sha256"]
+    assert hashlib.sha256(labels.tobytes()).hexdigest() == reference["labels_sha256"]
+    case = reference["cases"][case_index]
+    params = dict(
+        subsample_size=case["subsample_size"],
+        image_sample_size=case["image_sample_size"],
+        element_size=2,
+        granular_spectrum_length=6,
+    )
+    before = pixels.copy()
+    baseline = gran_numpy(labels, pixels, **params)
+    accelerated = gran_numba(labels, pixels, **params)
+    _assert_same(baseline, case["expected"])
+    _assert_same(accelerated, baseline)
+    numpy.testing.assert_array_equal(pixels, before)
 
 
 def test_single_object():
