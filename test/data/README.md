@@ -1,4 +1,17 @@
-# Costes reference fixtures
+# Reference fixtures
+
+## Colocalization reference fixtures
+
+`colocalization_cellprofiler_reference.json` contains static outputs from actual
+CellProfiler 4.2.8 modules for float32 threshold boundaries and object-set RWC
+ranking. Inputs, normalization and dependency versions are recorded in the file.
+The regression tests consume only this JSON; CellProfiler is not a test dependency.
+
+CellProfiler-dependent regeneration lives in **cpm_benchmark**, not cp_measure:
+[generator](https://github.com/afermg/cpm_benchmark/blob/fe22662b38ab31649b4855c8453bc3c976210b6a/benchmarks/make_colocalization_reference.py)
+and [pinned-environment instructions](https://github.com/afermg/cpm_benchmark/blob/fe22662b38ab31649b4855c8453bc3c976210b6a/docs/equivalent-pipeline.md#regenerating-cp_measure-colocalization-references).
+
+## Costes reference fixtures
 
 `costes_cellprofiler_reference.json` contains 18 cases: three fixed synthetic
 background-plus-signal pairs, two acquisition grids (255 and 65535), and three

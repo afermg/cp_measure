@@ -30,6 +30,12 @@ Phases follow CellProfiler's `arctan2(real, imag)` convention, not the usual rev
 
 Backend parity tests compare finite moments' phases only when their magnitude exceeds `1e-9` times the largest finite magnitude **of the same object**, with wrapped angular tolerance `1e-6` radians. This object-local threshold prevents a bright or nonfinite object from hiding phase errors in another object. Magnitudes and phase NaN patterns are checked regardless of the threshold. These are comparison rules only: returned phases are not rounded, zeroed, or masked.
 
+## Percentage-of-maximum colocalization thresholds
+
+Manders, overlap/K and RWC use array-valued per-object maxima when calculating percentage thresholds. This preserves the historical CellProfiler float32 arithmetic under both NumPy 1.x and 2.x. Scalar promotion in NumPy 1.x could otherwise change a threshold by one float32 ULP and include or exclude boundary pixels (#122). Correcting it can change coefficients on such inputs; pixels themselves are not rounded or adjusted, and comparisons remain `>=`.
+
+This does not change RWC's ranking definition, introduce an epsilon, or change Costes threshold fitting/normalization. Float64 and integer-input threshold behavior and undefined-result conventions remain unchanged.
+
 ## Floating-point differences
 
 Some features differ by approximately `1e-16` when using one versus multiple masks. See the [#18 explanation](https://github.com/afermg/cp_measure/issues/18#issuecomment-4593709963) for the upstream centrosome discrepancy.
