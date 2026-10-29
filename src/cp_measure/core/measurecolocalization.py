@@ -694,16 +694,80 @@ def get_correlation_manders_fold(
     return {f"{F_MANDERS_FORMAT}_1": m1_list, f"{F_MANDERS_FORMAT}_2": m2_list}
 
 
+def _rwc_object_set(
+    pixels_1: NDArray[numpy.floating],
+    pixels_2: NDArray[numpy.floating],
+    masks: NDArray[numpy.integer],
+    thr: float,
+) -> dict[str, list[float]]:
+    """CP-style dense ranks across foreground, with per-object reductions."""
+    nobjects = int(masks.max(initial=0))
+    if nobjects == 0:
+        return {f"{F_RWC_FORMAT}_1": [], f"{F_RWC_FORMAT}_2": []}
+    foreground = masks > 0
+    labels = masks[foreground].astype(numpy.intp, copy=False)
+    fi, si = pixels_1[foreground], pixels_2[foreground]
+    if not (numpy.isfinite(fi).all() and numpy.isfinite(si).all()):
+        raise ValueError("object_set ranking requires finite foreground intensities")
+    _, rank1 = numpy.unique(fi, return_inverse=True)
+    _, rank2 = numpy.unique(si, return_inverse=True)
+    rank_count = max(rank1.max(), rank2.max()) + 1
+    weights = (rank_count - numpy.abs(rank1 - rank2)) * 1.0 / rank_count
+
+    indices = numpy.arange(1, nobjects + 1)
+    # Array-valued maxima retain CP's float32 threshold arithmetic, including
+    # boundary pixels. This is intentionally independent of the local API.
+    threshold1 = (thr / 100) * scipy.ndimage.maximum(fi, labels, indices)
+    threshold2 = (thr / 100) * scipy.ndimage.maximum(si, labels, indices)
+    above1 = fi >= threshold1[labels - 1]
+    above2 = si >= threshold2[labels - 1]
+    joint = above1 & above2
+
+    def reduce(
+        values: NDArray[numpy.floating], selected: NDArray[numpy.bool_]
+    ) -> NDArray[numpy.float64]:
+        # bincount returns integer zeros for empty inputs even with weights.
+        return numpy.bincount(labels[selected], weights=values, minlength=nobjects + 1)[
+            1:
+        ].astype(numpy.float64, copy=False)
+
+    has_joint = numpy.bincount(labels[joint], minlength=nobjects + 1)[1:] > 0
+    results: list[list[float]] = []
+    for pixels, above in ((fi, above1), (si, above2)):
+        numerator = reduce(pixels[joint] * weights[joint], joint)
+        denominator = reduce(pixels[above], above)
+        result = numpy.zeros(nobjects)
+        # Preserve the existing API: absent/no-joint objects return zero;
+        # an object with joint pixels but zero total signal returns NaN.
+        with numpy.errstate(divide="ignore", invalid="ignore"):
+            numpy.divide(numerator, denominator, out=result, where=has_joint)
+        results.append(result.tolist())
+    return {f"{F_RWC_FORMAT}_1": results[0], f"{F_RWC_FORMAT}_2": results[1]}
+
+
 def get_correlation_rwc(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    rank_scope: str = "object",
 ) -> dict[str, list[float]]:
     """Per-object rank-weighted colocalization coefficients between two channels.
 
+    ``rank_scope="object"`` preserves the historical default: rank each object's
+    pixels independently. ``rank_scope="object_set"`` uses CellProfiler 4.2.8's
+    dense ranks across all foreground objects, then reduces per object. Other
+    objects can therefore affect an object's result in object-set mode.
+    Background is excluded; object-set mode requires finite foreground pixels.
+    Existing empty/absent and zero-signal return conventions are retained.
+
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
+    if rank_scope == "object_set":
+        return _rwc_object_set(pixels_1, pixels_2, masks, thr)
+    if rank_scope != "object":
+        raise ValueError("rank_scope must be 'object' or 'object_set'")
     r1: list[float] = []
     r2: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):

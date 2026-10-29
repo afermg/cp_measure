@@ -4,6 +4,11 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
+  object-set ranks. The default remains independent per-object ranking (#121).
+
 ### Changed
 
 - **Breaking:** require Python 3.11 or newer. Remove the project's Python upper
