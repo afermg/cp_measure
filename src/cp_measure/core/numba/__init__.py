@@ -11,6 +11,7 @@ One module per numpy module it accelerates, same name:
 - ``measuretexture`` -> ``get_texture``
 - ``measurecolocalization`` -> ``get_correlation_pearson`` /
   ``get_correlation_manders_fold`` / ``get_correlation_rwc`` /
+  ``get_correlation_costes`` /
   ``get_correlation_overlap`` (direct API only, like the numpy backend)
 - ``_feret`` -> ``get_feret`` (the ``measureobjectsizeshape`` Feret feature, split
   into its own module to avoid colliding with the sizeshape port)

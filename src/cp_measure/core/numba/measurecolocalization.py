@@ -1,4 +1,4 @@
-"""Numba-backed non-Costes colocalization, with current NumPy semantics.
+"""Numba-backed colocalization, with current NumPy semantics.
 
 One grouped flatten and a fused per-object kernel handle float64 images.
 Other dtypes use the reference reductions explicitly: promoting float32 changes
@@ -7,8 +7,9 @@ reference. Undefined kernel results also use the reference to preserve warnings
 and errors, including the existing zero-denominator Overlap error.
 
 The public feature schema, label slots and per-object RWC scope are unchanged.
-Overlap remains a direct API, not an extra default bulk feature. Costes is owned
-by its stacked follow-up; no combined featurizer dispatch is introduced here.
+Overlap remains a direct API, not an extra default bulk feature. Costes keeps
+NumPy's scale preparation and regression reductions around compiled searches;
+no combined featurizer dispatch is introduced here.
 """
 
 import numpy
@@ -17,13 +18,18 @@ from numpy.typing import NDArray
 from cp_measure.core import measurecolocalization as reference
 from cp_measure.core.measurecolocalization import (
     F_CORRELATION_FORMAT,
+    F_COSTES_FORMAT,
     F_K_FORMAT,
     F_MANDERS_FORMAT,
     F_OVERLAP_FORMAT,
     F_RWC_FORMAT,
     F_SLOPE_FORMAT,
+    M_ACCURATE,
+    M_FAST,
+    M_FASTER,
 )
 from cp_measure.core.numba._colocalization import coloc_per_object
+from cp_measure.core.numba._costes import _bisection, _linear, _regression_ab
 from cp_measure.primitives._segment_numba import flatten_pairs_grouped
 from cp_measure.primitives.shapes import to_bzyx
 
@@ -200,4 +206,90 @@ def get_correlation_overlap(
         build,
         reference.get_correlation_overlap,
         thr=thr,
+    )
+
+
+def _costes_pair(fi, si, scale, mode):
+    """Keep reference reductions and diagnostics around the compiled search.
+
+    When #118 lands, apply its shared per-object canonicalization here too,
+    before validation/regression/search; image-scale preparation alone does not
+    inherit that policy. Until then each encoding must match current main.
+    """
+    if not reference._valid_costes_pixels(fi, si):
+        return numpy.nan, numpy.nan
+    a, b = _regression_ab(fi, si, 0, fi.size)
+    if not (numpy.isfinite(a) and numpy.isfinite(b)):
+        return reference._costes_pair(fi, si, scale, mode)
+    if mode == M_FASTER:
+        first, second = _bisection(fi, si, 0, fi.size, a, b, scale)
+    else:
+        first, second = _linear(fi, si, 0, fi.size, a, b, scale, mode == M_ACCURATE)
+    if not (numpy.isfinite(first) and numpy.isfinite(second)):
+        # The kernel does not emit Python warnings. Replay only exceptional
+        # objects to preserve the reference's precise warning categories/messages.
+        return reference._costes_pair(fi, si, scale, mode)
+    combined = (fi > first) & (si > second)
+    total_first = fi[fi >= first].sum()
+    total_second = si[si >= second].sum()
+    if total_first <= 0 or total_second <= 0:
+        return reference._undefined_costes("zero above-threshold intensity denominator")
+    return float(fi[combined].sum() / total_first), float(
+        si[combined].sum() / total_second
+    )
+
+
+def get_correlation_costes(
+    pixels_1: NDArray[numpy.number],
+    pixels_2: NDArray[numpy.number],
+    masks: NDArray[numpy.integer],
+    fast_costes: str = M_FASTER,
+    thr: int = 15,
+    *,
+    scale_max: int | None = None,
+) -> dict[str, list[float]]:
+    """Costes coefficients using the current NumPy scale and warning contracts.
+
+    Floats require an explicit acquisition ``scale_max``; same-dtype unsigned
+    integers infer it. ``thr`` is retained but unused. The repeated threshold
+    search is compiled; regression and coefficient reductions remain NumPy to
+    preserve threshold inclusion. Undefined/near-constant searches use the
+    reference implementation for diagnostics. See the NumPy API for details.
+    """
+    # Share acquisition-scale preparation. The separate #118 per-object
+    # canonicalization belongs in _costes_pair when that change is integrated.
+    first, second, scale = reference._prepare_costes_inputs(
+        pixels_1, pixels_2, scale_max
+    )
+    labels = numpy.asarray(masks)
+    if labels.shape != first.shape or not numpy.issubdtype(labels.dtype, numpy.integer):
+        raise ValueError("Costes labels must be an integer array matching the images")
+    if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
+        raise ValueError("Unknown Costes threshold-search mode")
+
+    def measure(p1, p2, mask):
+        c1, c2 = [], []
+        for fi, si in reference._iter_label_pixels(p1, p2, mask):
+            if fi is None or si is None or fi.size == 0:
+                v1, v2 = reference._undefined_costes("missing or empty object label")
+            else:
+                v1, v2 = _costes_pair(fi, si, scale, fast_costes)
+            c1.append(v1)
+            c2.append(v2)
+        return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
+
+    # Single arrays retain their original rank, including singleton Z. Explicit
+    # batches follow the existing backend helper; no mask repetition is allowed.
+    if not isinstance(masks, (list, tuple)) and labels.ndim < 4:
+        return measure(first, second, labels)
+    if isinstance(masks, (list, tuple)):
+        if not isinstance(pixels_1, (list, tuple)) or not isinstance(
+            pixels_2, (list, tuple)
+        ):
+            raise ValueError("masks and pixels must both be sequences, or both arrays")
+        labels, first, second = list(labels), list(first), list(second)
+    masks_list, first_list, unwrap = to_bzyx(labels, first)
+    _, second_list, _ = to_bzyx(labels, second)
+    return unwrap(
+        [measure(p1, p2, m) for m, p1, p2 in zip(masks_list, first_list, second_list)]
     )

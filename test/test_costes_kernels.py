@@ -1,10 +1,8 @@
-"""Unit tests for the costes numba kernels.
+"""Costes compiled search and NumPy regression tests against current main.
 
-The reference ``bisection_costes`` / ``linear_costes`` accept ``scale_max`` as a
-parameter, so the REAL multi-iteration search can be exercised at scale=255 on
-float pixels in [0,1] — without the integer dtype that would make the reference
-overflow ``z = fi + si``. This is where the control flow actually runs (the
-end-to-end float64 path has scale=1 and a near-trivial search).
+Explicit scale=255 exercises genuine multi-iteration searches. Production API
+coverage, including undefined replay and normalization, lives in
+``test_costes_backend.py``.
 """
 
 import numpy as np

@@ -67,3 +67,36 @@ Two independent follow-ups are deliberately not included here:
   ordinary object-local default; that follow-up will also need to add keyword
   forwarding to the Numba wrapper (with a reference path for the new scope, or
   a separately validated implementation). It must not silently change the default.
+
+### Costes
+
+The Numba Costes wrapper accepts the same `scale_max`, `fast_costes` and unused
+`thr` parameters as NumPy. Normalized floats require an explicit acquisition
+maximum; same-dtype unsigned integers infer their storage maximum. Integer
+normalization uses the shared NumPy preparation, not the old dtype-derived
+`scale=1` float shortcut. All three search modes are supported.
+
+NumPy regression and coefficient reductions surround the compiled threshold
+search. This preserves threshold inclusion: even last-bit changes in the fitted
+line can change the result substantially. Constant/nonfinite or insufficient
+signals retain NaN results and standard `RuntimeWarning` diagnostics. Missing
+raw Costes labels likewise yield NaN and warnings, unlike the zero-valued slots
+of the other colocalization metrics. Undefined searches are replayed per object
+by the reference to preserve precise diagnostics. Near-constant subsets and
+correlations within a reduction-error bound of a search decision also use this
+compatibility path; no correlation is rounded or search cutoff moved.
+
+The pending [#118](https://github.com/afermg/cp_measure/pull/118) normalization
+canonicalization is **not** included. Each encoding currently matches NumPy,
+without promising equality between division and reciprocal-multiplication
+encodings. Both backends share image-scale preparation, but #118 canonicalizes
+inside its per-object `_costes_pair`, **not** `_prepare_costes_inputs`. Its
+integration must call the same canonicalization helper in the Numba
+`_costes_pair` before validation/regression/search; merging only #118's NumPy
+change would leave finite accelerated searches on the old policy. That
+propagation is already requested, not a new policy decision. Its regression
+case is checked against current main in the accelerator tests.
+
+No fused `get_correlation_all` dispatch is introduced. Costes supports matching
+2D, singleton-Z and true 3D inputs, and the existing explicit batch convention;
+it does not repeat masks or select an intensity plane implicitly.
