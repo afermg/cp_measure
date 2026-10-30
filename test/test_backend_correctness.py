@@ -118,6 +118,13 @@ def test_set_accelerator_numba_composes_with_numpy():
         assert core["radial_zernikes"].__module__ == (
             "cp_measure.core.numba.measureobjectintensitydistribution"
         )
+        corr = cp_measure.bulk.get_correlation_measurements()
+        assert list(corr) == ["costes", "pearson", "manders_fold", "rwc"]
+        for feature in ("pearson", "manders_fold", "rwc"):
+            assert corr[feature].__module__ == (
+                "cp_measure.core.numba.measurecolocalization"
+            )
+        assert corr["costes"].__module__ == "cp_measure.core.measurecolocalization"
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
     finally:
