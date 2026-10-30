@@ -61,3 +61,22 @@ def test_geodesic_leaves_disconnected_unreached():
     d = geodesic_chamfer_fifo(np.ascontiguousarray(m), 4, 4)
     assert d[4, 4] == 0.0
     assert np.all(d[12:18, 12:18] >= UNREACHED)  # never reached
+
+
+@requires_numba
+def test_radial_object_uses_first_c_order_center_on_plateau():
+    """A subpixel first bin contains only the first of four tied EDT maxima."""
+    from cp_measure.core.numba._radial import radial_object
+
+    mask = np.zeros((8, 8), dtype=bool)
+    mask[1:7, 1:7] = True
+    distance = scipy.ndimage.distance_transform_edt(mask)
+    np.testing.assert_array_equal(
+        np.argwhere(distance == distance.max()), [[3, 3], [3, 4], [4, 3], [4, 4]]
+    )
+    pixels = np.arange(1, 65, dtype=np.float64).reshape(8, 8)
+    frac, mean, sums, counts = radial_object(mask, pixels, distance, False, 1, 0.5)
+    assert frac[0] == pixels[3, 3] / pixels[mask].sum()
+    assert mean[0] > 0
+    assert sums[0, 0] == pixels[3, 3]
+    assert counts[0, 0] == counts[0].sum() == 1

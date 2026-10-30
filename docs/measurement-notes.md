@@ -22,6 +22,10 @@ Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim 
 
 Center ties use the first pixel in C order, so symmetric objects may differ from older releases. See the [#22 discussion](https://github.com/afermg/cp_measure/issues/22) for the tie-breaking fix.
 
+The Numba radial-distribution backend preserves this object-independent center rule. It uses per-object crops clipped to the image border, SciPy's exact Euclidean distance transform, and host-side masked `RadialCV` calculations. Intensities are accumulated in float64 by both backends, avoiding integer wraparound.
+
+Measured 2D labels and intensities must have matching shapes and spatial rank: a `(1, Y, X)` intensity array is not silently squeezed to match `(Y, X)` labels. Raw 3D label arrays (including single-slice volumes) return `{}`; list/tuple volume entries return empty dictionaries too. Matching `(B, 1, Y, X)` stacked batches are measured as 2D. Bin counts must be non-negative integers; unscaled radii that produce non-finite bin indexes (zero or NaN) raise rather than becoming overflow bins.
+
 ## Radial Zernike inputs and phases
 
 Radial Zernikes measure one intensity channel at a time. For a 2D label image `(Y, X)`, pass a matching 2D intensity image. The Numba backend rejects mismatched shapes, including `(C, Y, X)` or `(1, Y, X)` intensities paired with a 2D mask, rather than selecting the first plane. This also applies to 2D entries in list/tuple batches. Stacked 2D batches use matching `(B, 1, Y, X)` arrays. Volume masks retain the existing empty-result behavior.

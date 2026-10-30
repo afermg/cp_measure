@@ -7,14 +7,16 @@ with a single fused Numba kernel
 the radial LUT (degree-only) and ``minimum_enclosing_circle`` (host). Batch
 handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
 
-``get_radial_distribution`` processes each object on its own cropped + 1px-padded
-sub-image, so the dominant geometry runs on small arrays, and replaces centrosome's
-``propagate`` (the 80% cost) with a bit-exact numba chamfer geodesic plus the
-centre and histogram/wedge-CV reductions, all fused into one per-crop kernel
-(:func:`cp_measure.core.numba._radial.radial_object`). Only the exact-Euclidean
-``distance_transform_edt`` stays host-side (scipy).
+``get_radial_distribution`` processes each object on its bounding-box crop,
+grown by one pixel and clipped to the image. It replaces centrosome's
+``propagate`` with a numba chamfer geodesic plus centre and histogram/wedge
+reductions, fused into one per-crop kernel
+(:func:`cp_measure.core.numba._radial.radial_object`). The exact-Euclidean
+``distance_transform_edt`` (scipy) and masked ``RadialCV`` stay host-side.
 Results match the NumPy reference, which is label-independent since #96 (Issue #22).
 """
+
+import operator
 
 import numpy
 import scipy.ndimage
@@ -65,18 +67,25 @@ def get_radial_distribution(
     """Radial intensity distribution (FracAtD / MeanFrac / RadialCV) per object.
 
     Matches the NumPy reference; each object is processed on its own crop. Single
-    image/volume or batch; 2D only.
+    image/volume or batch; 2D only. Measured entries require matching label and
+    intensity shapes and spatial rank, before axis promotion. A raw 3D volume
+    (including Z=1) returns {}; a 4D batch measures Z=1 entries as 2D.
     """
     # Volumes give {} as in NumPy, including Z=1, as for the numba Zernikes.
-    if not isinstance(labels, (list, tuple)) and numpy.ndim(labels) == 3:
+    is_sequence = isinstance(labels, (list, tuple))
+    if not is_sequence and numpy.ndim(labels) == 3:
         return {}
     masks_zyx, pixels_zyx, unwrap = to_bzyx(labels, pixels)
-    results = [
-        {}
-        if isinstance(labels, (list, tuple)) and numpy.ndim(labels[i]) == 3
-        else _radial_distribution_2d(m, p, scaled, bin_count, maximum_radius)
-        for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx))
-    ]
+    results: list[dict[str, NDArray[numpy.floating]]] = []
+    for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx)):
+        mask_ndim = numpy.ndim(labels[i] if is_sequence else labels)
+        if mask_ndim == 3 or m.shape[0] > 1:
+            results.append({})
+            continue
+        pixel_ndim = numpy.ndim(pixels[i] if is_sequence else pixels)
+        if mask_ndim != pixel_ndim or m.shape != p.shape:
+            raise ValueError("radial labels and pixels must have matching shapes")
+        results.append(_radial_distribution_2d(m, p, scaled, bin_count, maximum_radius))
     return unwrap(results)
 
 
@@ -104,14 +113,11 @@ def _radial_distribution_2d(
     bin_count: int,
     maximum_radius: int,
 ) -> dict[str, NDArray[numpy.floating]]:
-    # The kernel has no bounds checks, so a mismatched image would be read out of
-    # bounds; NumPy raises on it too.
-    if labels_zyx.shape != pixels_zyx.shape:
-        raise ValueError(
-            f"labels {labels_zyx.shape} and pixels {pixels_zyx.shape} differ in shape"
-        )
-    if labels_zyx.shape[0] > 1:  # Z > 1 -> 3D volume; baseline returns {} for ndim==3
-        return {}
+    # Validate before the empty-image path and allocation. Unlike int(), index()
+    # rejects fractional bin counts instead of silently changing the requested bins.
+    bin_count = operator.index(bin_count)
+    if bin_count < 0:
+        raise ValueError("bin_count must be >= 0")
     labels = labels_zyx[0]
     pixels = pixels_zyx[0]
     # cp_measure labels are the contiguous 1..n of relabel_sequential, so the object

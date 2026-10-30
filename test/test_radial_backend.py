@@ -68,8 +68,10 @@ def _assert_close(a, b, key=""):
 
 
 def _assert_close_dict(got, exp):
-    assert set(got) == set(exp), set(got).symmetric_difference(exp)
+    assert list(got) == list(exp)
     for key in exp:
+        assert got[key].shape == exp[key].shape
+        assert got[key].dtype == exp[key].dtype
         _assert_close(got[key], exp[key], key)
 
 
@@ -154,3 +156,164 @@ def test_invalid_inputs_raise(pixels_shape, kwargs):
     pixels = np.random.default_rng(0).random(pixels_shape)
     with pytest.raises(ValueError):
         _numba()(masks, pixels, **kwargs)
+
+
+@requires_numba
+@pytest.mark.parametrize("as_list", [False, True])
+@pytest.mark.parametrize("empty", [False, True])
+def test_singleton_intensity_axis_is_not_silently_promoted(as_list, empty):
+    masks = _border_masks()
+    if empty:
+        masks[:] = 0
+    pixels = _pixels("random", masks.shape)[None]
+    with pytest.raises((IndexError, ValueError)):
+        ref(masks, pixels)
+    if as_list:
+        masks, pixels = [masks], [pixels]
+    with pytest.raises(ValueError, match="matching shapes"):
+        _numba()(masks, pixels)
+
+
+@requires_numba
+@pytest.mark.parametrize("bin_count", [-1, -2, 4.5, -0.5])
+@pytest.mark.parametrize("empty", [False, True])
+def test_invalid_bin_count_matches_numpy(bin_count, empty):
+    masks = _border_masks()
+    if empty:
+        masks[:] = 0
+    pixels = _pixels("random", masks.shape)
+    error = TypeError if isinstance(bin_count, float) else ValueError
+    for fn in (ref, _numba()):
+        with pytest.raises(error):
+            fn(masks, pixels, bin_count=bin_count)
+
+
+@requires_numba
+@pytest.mark.parametrize("maximum_radius", [0, np.nan])
+def test_nonfinite_bin_indexes_raise_like_numpy(maximum_radius):
+    masks = _border_masks()
+    pixels = _pixels("random", masks.shape)
+    with np.errstate(all="ignore"):
+        for fn in (ref, _numba()):
+            with pytest.raises(ValueError):
+                fn(masks, pixels, scaled=False, maximum_radius=maximum_radius)
+
+
+@requires_numba
+@pytest.mark.parametrize("layout", ["contiguous", "transpose", "strided", "reversed"])
+@pytest.mark.parametrize("scaled", [True, False])
+def test_layout_label_remapping_and_input_immutability(layout, scaled):
+    from cp_measure import bulk, set_accelerator
+
+    masks = _border_masks()
+    masks = np.choose(masks, [0, 91, 7, 1003]).astype(np.int32)
+    pixels = _pixels("random", masks.shape)
+    if layout == "transpose":
+        masks, pixels = masks.T, pixels.T
+    elif layout == "strided":
+        masks, pixels = masks[::2, ::2], pixels[::2, ::2]
+    elif layout == "reversed":
+        masks, pixels = masks[::-1, ::-1], pixels[::-1, ::-1]
+    before = masks.copy(), pixels.copy()
+    kwargs = dict(scaled=scaled, bin_count=5, maximum_radius=7)
+    try:
+        set_accelerator(None)
+        expected = bulk.get_core_measurements()["radial_distribution"](
+            labels=masks, pixels=pixels, **kwargs
+        )
+        set_accelerator("numba")
+        got = bulk.get_core_measurements()["radial_distribution"](
+            labels=masks, pixels=pixels, **kwargs
+        )
+    finally:
+        set_accelerator(None)
+    assert list(got) == list(expected)
+    for key in got:
+        assert got[key].dtype == expected[key].dtype == np.float64
+        assert got[key].shape == (3,)
+    _assert_close_dict(got, expected)
+    for i, label in enumerate((7, 91, 1003)):
+        isolated = ref((masks == label).astype(np.int32), pixels, **kwargs)
+        for key in got:
+            _assert_close(got[key][i], isolated[key][0], key)
+    np.testing.assert_array_equal(masks, before[0])
+    np.testing.assert_array_equal(pixels, before[1])
+
+
+@requires_numba
+@pytest.mark.parametrize("depth", [1, 3])
+def test_stacked_batch_volume_contract(depth):
+    masks = np.repeat(_border_masks()[None, None], 2, axis=0)
+    masks = np.repeat(masks, depth, axis=1)
+    pixels = _pixels("random", masks.shape)
+    got = _numba()(labels=masks, pixels=pixels)
+    if depth > 1:
+        assert got == [{}, {}]
+    else:
+        for i in range(2):
+            _assert_close_dict(got[i], ref(masks[i, 0], pixels[i, 0]))
+
+
+@requires_numba
+@pytest.mark.parametrize("pixels_kind", ["signed", "nan", "inf", "float32"])
+@pytest.mark.parametrize("scaled", [True, False])
+def test_nonfinite_signed_and_float32_pixels(pixels_kind, scaled):
+    masks = _disconnected_masks()
+    pixels = _pixels("random", masks.shape)
+    if pixels_kind == "signed":
+        pixels -= 0.5
+    elif pixels_kind == "float32":
+        pixels = pixels.astype(np.float32)
+    else:
+        pixels[::7, ::7] = np.nan if pixels_kind == "nan" else np.inf
+    with np.errstate(all="ignore"):
+        kwargs = dict(scaled=scaled, bin_count=9, maximum_radius=7)
+        _assert_close_dict(
+            _numba()(masks, pixels, **kwargs), ref(masks, pixels, **kwargs)
+        )
+
+
+@requires_numba
+def test_featurizer_radial_label_ids_columns_and_immutability():
+    from conftest import ALL_OFF
+
+    from cp_measure import set_accelerator
+    from cp_measure.featurizer import featurize, make_featurizer_config
+
+    masks = _border_masks()
+    masks = np.choose(masks, [0, 91, 7, 1003]).astype(np.int32)
+    pixels = _pixels("random", masks.shape)
+    images = np.stack([pixels, pixels * 2])[:, None]
+    labels = np.stack([masks, masks])[:, None]
+    before = images.copy(), labels.copy()
+    config = make_featurizer_config(["DNA"], **{**ALL_OFF, "radial_distribution": True})
+    try:
+        set_accelerator(None)
+        expected = featurize(images, labels, config, image_ids=["a", "b"])
+        set_accelerator("numba")
+        got = featurize(images, labels, config, image_ids=["a", "b"])
+    finally:
+        set_accelerator(None)
+    assert got[1] == expected[1]
+    assert len(got[1]) == 12
+    assert (
+        got[2]
+        == expected[2]
+        == [(image, "object", label) for image in ("a", "b") for label in (7, 91, 1003)]
+    )
+    _assert_close(got[0], expected[0])
+    np.testing.assert_array_equal(images, before[0])
+    np.testing.assert_array_equal(labels, before[1])
+
+
+@requires_numba
+@pytest.mark.parametrize("bin_count", [0, np.int32(4)])
+@pytest.mark.parametrize("scaled,maximum_radius", [(True, None), (False, np.inf)])
+def test_valid_bin_scalars_and_unused_radius(bin_count, scaled, maximum_radius):
+    masks = _border_masks()
+    pixels = _pixels("random", masks.shape)
+    kwargs = dict(bin_count=bin_count, scaled=scaled, maximum_radius=maximum_radius)
+    with np.errstate(all="ignore"):
+        _assert_close_dict(
+            _numba()(masks, pixels, **kwargs), ref(masks, pixels, **kwargs)
+        )
