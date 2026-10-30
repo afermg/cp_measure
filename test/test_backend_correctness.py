@@ -118,8 +118,7 @@ def test_set_accelerator_numba_composes_with_numpy():
         assert core["radial_zernikes"].__module__ == (
             "cp_measure.core.numba.measureobjectintensitydistribution"
         )
-        # Every other feature stays on the numpy backend.
-        assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
+        assert core["sizeshape"].__module__ == "cp_measure.core.numba._sizeshape"
     finally:
         cp_measure.set_accelerator(None)
 
