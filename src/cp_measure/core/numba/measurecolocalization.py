@@ -42,7 +42,9 @@ def _run(
     Returns the nine per-object arrays from ``coloc_per_object``, or ``None`` when
     the image holds no objects (the callers then emit empty feature arrays).
     """
-    masks = numpy.ascontiguousarray(masks_zyx)
+    # Numba requires native-endian labels; convert values, never reinterpret or
+    # byteswap the caller's array in place. Native contiguous inputs stay zero-copy.
+    masks = numpy.ascontiguousarray(masks_zyx, dtype=masks_zyx.dtype.newbyteorder("="))
     if not numpy.issubdtype(masks.dtype, numpy.integer):
         masks = masks.astype(numpy.intp)
     # Labels are contiguous 1..N by contract (see cp_measure._sanitize), so the
