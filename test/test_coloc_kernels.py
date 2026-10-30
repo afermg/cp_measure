@@ -66,3 +66,19 @@ def test_dense_rank_matches_scipy(seed):
     expected = scipy.stats.rankdata(vals, method="dense") - 1
     np.testing.assert_array_equal(ranks, expected)
     assert rmax == expected.max()
+
+
+@requires_numba
+def test_fused_kernel_undefined_and_missing_slots():
+    from cp_measure.core.numba._colocalization import coloc_per_object
+
+    first = np.array([0.0, 0.0, 0.0, 1.0, np.nan, 2.0])
+    second = np.array([0.0, 0.0, 0.0, 2.0, 1.0, 3.0])
+    result = coloc_per_object(first, second, np.array([0, 3, 3, 6]), 3, 0.15, True)
+    for values in result:
+        assert values[1] == 0  # missing label retains its slot
+        assert np.isnan(values[0])  # zero denominators, not ZeroDivisionError
+    assert np.isnan(result[0][2])
+    assert np.isnan(result[1][2])
+    for values in result[2:]:
+        assert values[2] == 0  # NaN max means no combined-threshold pixels

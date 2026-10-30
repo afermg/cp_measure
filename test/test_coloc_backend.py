@@ -6,12 +6,9 @@ run: continuous random floats (generic path) and integer-VALUED floats in a smal
 range (forces RWC dense-rank ties). 2D and 3D, single image and batch (4D array +
 same-shape list) all run, since every bzyx path must hold.
 
-Pixels stay float64 deliberately. Feeding a genuine integer dtype to the *numpy*
-reference triggers two baseline artifacts the numba backend does not reproduce
-(it upcasts to float64): ``fi*si`` overflows in uint8 (so Overlap/K can exceed 1),
-and the Pearson slope's ``lstsq`` design matrix is uint8 → a float32 result. The
-numba float64 path is strictly more accurate; matching those artifacts is not a
-goal. (costes, the follow-up, will exercise true integer dtypes for its scale.)
+These golden inputs exercise the accelerated float64 path. Dtype-sensitive
+reference compatibility (including real integer images) is covered separately
+in test_coloc_contracts.py.
 """
 
 import numpy as np
