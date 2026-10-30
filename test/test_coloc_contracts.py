@@ -232,3 +232,25 @@ def test_uint64_label_slots(name):
     second = first[:, ::-1].copy()
     masks = np.array([[1, 1, 1], [3, 3, 3]], dtype=np.uint64)
     assert_parity(name, first, second, masks)
+
+
+@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("label_type", ["i2", "u2", "i4", "u4", "i8", "u8"])
+@pytest.mark.parametrize("byteorder", ["=", "S"], ids=["native", "swapped"])
+@pytest.mark.parametrize("strided", [False, True], ids=["contiguous", "strided"])
+def test_label_byteorder_parity_and_immutability(name, label_type, byteorder, strided):
+    dtype = np.dtype(label_type).newbyteorder(byteorder)
+    masks = np.ones((3, 8 if strided else 4), dtype=dtype)
+    if strided:
+        masks = masks[:, ::2]
+        masks[-1] = 3  # Retain a missing raw label slot too.
+    masks.setflags(write=False)
+    original_bytes = masks.tobytes()
+    first = np.arange(1, 13, dtype=float).reshape(3, 4)
+    second = first[::-1].copy()
+
+    assert_parity(name, first, second, masks)
+
+    assert masks.dtype == dtype
+    assert masks.tobytes() == original_bytes
+    assert not masks.flags.writeable
