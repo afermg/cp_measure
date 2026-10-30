@@ -50,37 +50,49 @@ _3D_FEATURES = ("intensity", "sizeshape", "texture", "granularity")
 def _numba_registries() -> dict[str, dict[str, Callable]]:
     """Registries for the 'numba' accelerator.
 
-    Composes the numba implementations (``intensity``, ``texture``, and the
-    ``pearson`` / ``manders_fold`` / ``rwc`` / ``overlap`` colocalization
-    features) with the numpy implementations of every other feature — a single
-    global "numba" selection still yields a full, working feature set, accelerated
-    where a numba backend exists. This is explicit per-function composition, NOT an
-    error-driven fallback.
-
-    Note: ``overlap`` is not in the numpy ``_CORRELATION`` registry, so the numba
-    correlation registry intentionally exposes one feature the numpy one does not
-    (the numba ``overlap`` backend exists and is cheap to surface). Adding
-    ``overlap`` to the numpy ``_CORRELATION`` for symmetry is a separate call.
+    Composes the numba implementations (``intensity``, ``texture``, ``feret``,
+    ``granularity``, ``zernike``, ``radial_zernikes``, ``pearson``,
+    ``manders_fold``, ``rwc``) with the numpy implementations
+    of every other feature — a
+    single global "numba" selection still yields a full, working feature set,
+    accelerated where a numba backend exists. This is explicit per-function
+    composition, NOT an error-driven fallback.
     """
     from cp_measure.core.numba.measurecolocalization import (
         get_correlation_manders_fold as _numba_manders_fold,
-        get_correlation_overlap as _numba_overlap,
         get_correlation_pearson as _numba_pearson,
         get_correlation_rwc as _numba_rwc,
+    )
+    from cp_measure.core.numba._feret import get_feret as _numba_feret
+    from cp_measure.core.numba.measuregranularity import (
+        get_granularity as _numba_granularity,
     )
     from cp_measure.core.numba.measureobjectintensity import (
         get_intensity as _numba_intensity,
     )
+    from cp_measure.core.numba.measureobjectintensitydistribution import (
+        get_radial_zernikes as _numba_radial_zernikes,
+    )
+    from cp_measure.core.numba.measureobjectsizeshape import (
+        get_zernike as _numba_zernike,
+    )
     from cp_measure.core.numba.measuretexture import get_texture as _numba_texture
 
     return {
-        "core": {**_CORE, "intensity": _numba_intensity, "texture": _numba_texture},
+        "core": {
+            **_CORE,
+            "intensity": _numba_intensity,
+            "texture": _numba_texture,
+            "feret": _numba_feret,
+            "granularity": _numba_granularity,
+            "zernike": _numba_zernike,
+            "radial_zernikes": _numba_radial_zernikes,
+        },
         "correlation": {
             **_CORRELATION,
             "pearson": _numba_pearson,
             "manders_fold": _numba_manders_fold,
             "rwc": _numba_rwc,
-            "overlap": _numba_overlap,
         },
     }
 

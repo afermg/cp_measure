@@ -1,12 +1,12 @@
 [project]
 name = "cp_measure"
-version = "0.2.0"
+version = "0.3.0"
 description = "cp_measure implements CellProfiler measurements in an accessible interface. "
 authors = [
     {name= "Alan Munoz"},
 ]
 readme = "README.md"
-requires-python = "<3.15,>=3.10"
+requires-python = ">=3.11"
 
 dependencies = [
     "scikit-image>=0.25",
@@ -36,6 +36,9 @@ Homepage = "https://github.com/afermg/cp_measure"
 [tool.pdm.build]
 includes = [
     "src/cp_measure",
+]
+excludes = [
+    "**/__pycache__/**",
 ]
 
 [build-system]
