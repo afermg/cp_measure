@@ -189,14 +189,127 @@ def test_invalid_bin_count_matches_numpy(bin_count, empty):
 
 
 @requires_numba
-@pytest.mark.parametrize("maximum_radius", [0, np.nan])
-def test_nonfinite_bin_indexes_raise_like_numpy(maximum_radius):
+@pytest.mark.parametrize("maximum_radius", [0, -0.0, np.nan])
+@pytest.mark.parametrize("bin_count", [0, 4])
+def test_nonfinite_bin_indexes_match_numpy_outcome(maximum_radius, bin_count):
+    """Non-finite-to-int casts can yield results or errors across NumPy platforms."""
     masks = _border_masks()
     pixels = _pixels("random", masks.shape)
+    before = masks.copy(), pixels.copy()
+    kwargs = dict(scaled=False, bin_count=bin_count, maximum_radius=maximum_radius)
     with np.errstate(all="ignore"):
-        for fn in (ref, _numba()):
-            with pytest.raises(ValueError):
-                fn(masks, pixels, scaled=False, maximum_radius=maximum_radius)
+        try:
+            expected = ref(masks, pixels, **kwargs)
+        except ValueError as expected_error:
+            with pytest.raises(ValueError) as actual_error:
+                _numba()(masks, pixels, **kwargs)
+            assert str(actual_error.value) == str(expected_error)
+        else:
+            _assert_close_dict(_numba()(masks, pixels, **kwargs), expected)
+    np.testing.assert_array_equal(masks, before[0])
+    np.testing.assert_array_equal(pixels, before[1])
+
+
+@requires_numba
+@pytest.mark.parametrize("maximum_radius", [0, np.nan])
+@pytest.mark.parametrize("raises", [False, True], ids=["result", "exception"])
+@pytest.mark.parametrize("batch", ["single", "list", "stacked"])
+def test_exceptional_radius_delegates_to_reference(
+    monkeypatch, maximum_radius, raises, batch
+):
+    """Exercise both reference outcomes even where the installed NumPy only raises."""
+    from cp_measure.core.numba import measureobjectintensitydistribution as backend
+
+    masks = _border_masks()[::2, ::-1]
+    pixels = _pixels("random", masks.shape).astype(np.float32)
+    before = masks.copy(), pixels.copy()
+    with np.errstate(all="ignore"):
+        expected = ref(masks, pixels, scaled=False, bin_count=5, maximum_radius=7)
+    reference_error = ValueError("reference outcome")
+    calls = []
+
+    def reference(labels, image, *, scaled, bin_count, maximum_radius):
+        calls.append(maximum_radius)
+        assert scaled is False and bin_count == 5
+        np.testing.assert_array_equal(labels, before[0])
+        np.testing.assert_array_equal(image, before[1])
+        assert labels.dtype == masks.dtype and image.dtype == pixels.dtype
+        if raises:
+            raise reference_error
+        return expected
+
+    def unchecked_kernel(*args):
+        pytest.fail("exceptional radius reached unchecked kernel")
+
+    monkeypatch.setattr(backend, "_numpy_radial_distribution", reference)
+    monkeypatch.setattr(backend, "radial_object", unchecked_kernel)
+    labels, image = masks, pixels
+    if batch == "list":
+        labels, image = [masks], [pixels]
+    elif batch == "stacked":
+        labels, image = masks[None, None], pixels[None, None]
+    kwargs = dict(scaled=False, bin_count=np.int32(5), maximum_radius=maximum_radius)
+    if raises:
+        with pytest.raises(ValueError) as actual_error:
+            backend.get_radial_distribution(labels, image, **kwargs)
+        assert actual_error.value is reference_error
+    else:
+        got = backend.get_radial_distribution(labels, image, **kwargs)
+        assert (got if batch == "single" else got[0]) is expected
+    np.testing.assert_equal(calls, [maximum_radius])
+    np.testing.assert_array_equal(masks, before[0])
+    np.testing.assert_array_equal(pixels, before[1])
+
+
+@requires_numba
+@pytest.mark.parametrize("maximum_radius", [0, np.nan])
+def test_exceptional_radius_preserves_validation_and_empty_paths(
+    monkeypatch, maximum_radius
+):
+    from cp_measure.core.numba import measureobjectintensitydistribution as backend
+
+    def unexpected_reference(*args, **kwargs):
+        pytest.fail("reference called before validation or on an empty image")
+
+    monkeypatch.setattr(backend, "_numpy_radial_distribution", unexpected_reference)
+    masks = _border_masks()
+    pixels = _pixels("random", masks.shape)
+    kwargs = dict(scaled=False, maximum_radius=maximum_radius)
+    with pytest.raises(ValueError, match="matching shapes"):
+        backend.get_radial_distribution(masks, pixels[None], **kwargs)
+    for labels in (masks, masks * 0):
+        with pytest.raises(ValueError, match="bin_count"):
+            backend.get_radial_distribution(labels, pixels, bin_count=-1, **kwargs)
+        with pytest.raises(TypeError):
+            backend.get_radial_distribution(labels, pixels, bin_count=4.5, **kwargs)
+    empty = backend.get_radial_distribution(masks * 0, pixels, **kwargs)
+    assert len(empty) == 15 and all(value.shape == (0,) for value in empty.values())
+    assert backend.get_radial_distribution(masks[None], pixels[None], **kwargs) == {}
+    assert backend.get_radial_distribution([masks[None]], [pixels[None]], **kwargs) == [
+        {}
+    ]
+
+
+@requires_numba
+@pytest.mark.parametrize(
+    "scaled,maximum_radius",
+    [(True, None), (True, 0), (True, np.nan), (False, 7), (False, np.inf)],
+)
+def test_regular_radius_does_not_delegate(monkeypatch, scaled, maximum_radius):
+    from cp_measure.core.numba import measureobjectintensitydistribution as backend
+
+    def unexpected_reference(*args, **kwargs):
+        pytest.fail("regular radius left accelerated path")
+
+    monkeypatch.setattr(backend, "_numpy_radial_distribution", unexpected_reference)
+    masks = _border_masks()
+    pixels = _pixels("random", masks.shape)
+    kwargs = dict(scaled=scaled, maximum_radius=maximum_radius)
+    with np.errstate(all="ignore"):
+        _assert_close_dict(
+            backend.get_radial_distribution(masks, pixels, **kwargs),
+            ref(masks, pixels, **kwargs),
+        )
 
 
 @requires_numba

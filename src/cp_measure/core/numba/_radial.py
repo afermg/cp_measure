@@ -119,8 +119,8 @@ def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
                 nd = df / maximum_radius
             x = nd * bin_count
             if not np.isfinite(x):
-                # NumPy's integer cast produces an invalid sparse-matrix index,
-                # not an overflow bin (e.g. radius zero or NaN).
+                # Never cast non-finite values into unchecked array indices.
+                # The host delegates zero/NaN radii to the NumPy reference.
                 raise ValueError("non-finite radial bin")
             if x >= bin_count + 1:
                 b = bin_count

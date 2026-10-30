@@ -80,3 +80,16 @@ def test_radial_object_uses_first_c_order_center_on_plateau():
     assert mean[0] > 0
     assert sums[0, 0] == pixels[3, 3]
     assert counts[0, 0] == counts[0].sum() == 1
+
+
+@requires_numba
+@pytest.mark.parametrize("maximum_radius", [0.0, np.nan])
+def test_radial_object_rejects_nonfinite_bins_before_indexing(maximum_radius):
+    """The host delegates these radii; direct unchecked-kernel calls remain safe."""
+    from cp_measure.core.numba._radial import radial_object
+
+    mask = np.ones((3, 3), dtype=bool)
+    pixels = np.ones(mask.shape)
+    distance = np.ones(mask.shape)
+    with pytest.raises(ValueError, match="non-finite radial bin"):
+        radial_object(mask, pixels, distance, False, 4, maximum_radius)

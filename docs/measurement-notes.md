@@ -24,7 +24,7 @@ Center ties use the first pixel in C order, so symmetric objects may differ from
 
 The Numba radial-distribution backend preserves this object-independent center rule. It uses per-object crops clipped to the image border, SciPy's exact Euclidean distance transform, and host-side masked `RadialCV` calculations. Intensities are accumulated in float64 by both backends, avoiding integer wraparound.
 
-Measured 2D labels and intensities must have matching shapes and spatial rank: a `(1, Y, X)` intensity array is not silently squeezed to match `(Y, X)` labels. Raw 3D label arrays (including single-slice volumes) return `{}`; list/tuple volume entries return empty dictionaries too. Matching `(B, 1, Y, X)` stacked batches are measured as 2D. Bin counts must be non-negative integers; unscaled radii that produce non-finite bin indexes (zero or NaN) raise rather than becoming overflow bins.
+Measured 2D labels and intensities must have matching shapes and spatial rank: a `(1, Y, X)` intensity array is not silently squeezed to match `(Y, X)` labels. Raw 3D label arrays (including single-slice volumes) return `{}`; list/tuple volume entries return empty dictionaries too. Matching `(B, 1, Y, X)` stacked batches are measured as 2D. Bin counts must be non-negative integers. For nonempty 2D inputs with zero or NaN unscaled radii, the Numba wrapper delegates to the NumPy reference: its non-finite-to-integer bin conversion can produce results or raise depending on the installed NumPy/platform. These exceptional inputs never reach the unchecked kernel; regular radii remain accelerated.
 
 ## Radial Zernike inputs and phases
 

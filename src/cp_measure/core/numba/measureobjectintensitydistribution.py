@@ -30,6 +30,7 @@ from cp_measure.core.measureobjectintensitydistribution import (
     OF_MEAN_FRAC,
     OF_RADIAL_CV,
     _radial_zernike_features,
+    get_radial_distribution as _numpy_radial_distribution,
 )
 from cp_measure.core.numba._radial import (
     radial_object,
@@ -133,6 +134,16 @@ def _radial_distribution_2d(
     # radius is unused (and may be None, as NumPy allows) when scaled.
     scaled, bin_count = bool(scaled), int(bin_count)
     radius = 1.0 if scaled else float(maximum_radius)
+    if not scaled and (radius == 0 or numpy.isnan(radius)):
+        # Non-finite-to-int bin casts in NumPy are platform/version-dependent.
+        # Preserve its result or exception without exposing unchecked kernel indices.
+        return _numpy_radial_distribution(
+            labels,
+            pixels,
+            scaled=scaled,
+            bin_count=bin_count,
+            maximum_radius=maximum_radius,
+        )
     slices = scipy.ndimage.find_objects(labels)
     nb = bin_count + 1
     frac_at_d = numpy.zeros((n, nb))
