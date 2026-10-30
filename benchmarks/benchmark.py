@@ -147,7 +147,7 @@ def run_featurize(
         if key not in image_index:
             return None
         channel_images.append(load_image(image_index[key]))
-    image = np.stack(channel_images)  # (5, H, W)
+    image = np.stack(channel_images)[None]  # (B=1, 5, H, W)
 
     # Load masks: Nuclei from DNA, Cells from AGP
     masks_list = []
@@ -157,9 +157,9 @@ def run_featurize(
         if not mask_path.exists():
             return None
         masks_list.append(load_mask(mask_path))
-    masks = np.stack(masks_list)  # (2, H, W)
+    masks = np.stack(masks_list)[None]  # (B=1, 2, H, W)
 
-    data, columns, rows = featurize(image, masks, config, image_id=f"{gene}_{site}")
+    data, columns, rows = featurize(image, masks, config, image_ids=[f"{gene}_{site}"])
 
     objects_arr = np.array([r[1] for r in rows])
     unique_objects = np.unique(objects_arr)
@@ -234,6 +234,8 @@ def build_config(features: set[str]) -> dict:
         radial_zernikes="radial_zernikes" in features,
         correlation_pearson="correlation_pearson" in features,
         correlation_costes="correlation_costes" in features,
+        # Match the uint16 normalization used by load_image().
+        correlation_costes_params={"scale_max": 65535},
         correlation_manders_fold="correlation_manders_fold" in features,
         correlation_rwc="correlation_rwc" in features,
     )

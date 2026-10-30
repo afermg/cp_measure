@@ -1,11 +1,10 @@
 import centrosome.cpmorphology
 import centrosome.propagate
-import centrosome.zernike
 import numpy
 import numpy.ma
-import scipy.ndimage
 import scipy.sparse
-from cp_measure.utils import masks_to_ijv
+from centrosome import zernike
+from cp_measure.utils import _zernike_scores
 from numpy.typing import NDArray
 
 """"
@@ -89,6 +88,35 @@ MEASUREMENT_ALIASES = {
 }
 
 
+def _maximum_position_of_labels(
+    image: NDArray[numpy.floating],
+    labels: NDArray[numpy.integer],
+    nobjects: int,
+) -> tuple[NDArray[numpy.intp], NDArray[numpy.intp]]:
+    """Return the first C-order maximum position for each label ``1..N``.
+
+    SciPy versions through 1.16 use an unstable global sort for list-valued
+    ``index`` in ``ndimage.maximum_position``. Consequently, ties within one
+    label can be reordered by values under unrelated labels (SciPy gh-25279).
+    Linear reductions make the tie-break deterministic and label-independent.
+    """
+    if nobjects == 0:
+        empty = numpy.empty(0, dtype=numpy.intp)
+        return empty, empty
+
+    flat_labels = labels.ravel()
+    flat_image = image.ravel()
+    maxima = numpy.full(nobjects + 1, -numpy.inf, dtype=flat_image.dtype)
+    numpy.maximum.at(maxima, flat_labels, flat_image)
+
+    is_maximum = (flat_labels > 0) & (flat_image == maxima[flat_labels])
+    candidate_positions = numpy.flatnonzero(is_maximum)
+    first_positions = numpy.full(nobjects + 1, labels.size, dtype=numpy.intp)
+    numpy.minimum.at(first_positions, flat_labels[is_maximum], candidate_positions)
+    positions = numpy.unravel_index(first_positions[1:], labels.shape)
+    return positions[0], positions[1]
+
+
 def get_radial_distribution(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -98,6 +126,11 @@ def get_radial_distribution(
 ) -> dict[str, NDArray[numpy.floating]]:
     """
     Radial features (2D only)
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    When several pixels are tied for the greatest distance from an object's edge,
+    the first in C order is used as its center. This deterministic tie-break keeps
+    each object's measurements independent of other labels in the image.
 
     zernike_degree : int
         Maximum zernike moment.
@@ -138,11 +171,9 @@ def get_radial_distribution(
         return {}
 
     if labels.dtype == bool:
-        labels = labels.astype(numpy.integer)
+        labels = labels.astype(numpy.int64)
 
-    unique_labels = numpy.unique(labels)
-    unique_labels = unique_labels[unique_labels > 0]
-    nobjects = len(unique_labels)
+    nobjects = int(labels.max())
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
 
     # Find the point in each object farthest away from the edge.
@@ -151,15 +182,9 @@ def get_radial_distribution(
     # * The center tends to be an interesting point, like the
     #   center of the nucleus or the center of one or the other
     #   of two touching cells.
-    #
-    # MODIFICATION: Delegated label indices to maximum_position_of_labels
-    # This should not affect this one-mask/object function
-    i, j = centrosome.cpmorphology.maximum_position_of_labels(
-        # d_to_edge, labels, indices=[1]
-        d_to_edge,
-        labels,
-        indices=unique_labels,
-    )
+    # Tied maxima use the first position in C order so an object's center is
+    # independent of values under other labels (SciPy gh-25279 / Issue #22).
+    i, j = _maximum_position_of_labels(d_to_edge, labels, nobjects)
 
     center_labels = numpy.zeros(labels.shape, int)
 
@@ -282,7 +307,7 @@ def get_radial_distribution(
 
         mask = pixel_count == 0
 
-        radial_means: numpy.ma.MaskedArray = numpy.ma.masked_array(
+        radial_means: numpy.ma.MaskedArray = numpy.ma.MaskedArray(
             radial_values / pixel_count, mask
         )
 
@@ -310,77 +335,41 @@ def get_radial_zernikes(
     pixels: NDArray[numpy.floating],
     zernike_degree: int = 9,
 ) -> dict[str, NDArray[numpy.floating]]:
-    # Radial Zernike features (2D only)
+    """Per-object radial Zernike features (2D only).
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     if labels.ndim == 3:
         return {}
-    zernike_indexes = centrosome.zernike.get_zernike_indexes(zernike_degree + 1)
+    zernike_indexes = zernike.get_zernike_indexes(zernike_degree + 1)
 
-    unique_labels = numpy.unique(labels)  # Will be used later for scipy.ndimage.sum
-    unique_labels = unique_labels[unique_labels > 0]
-    # MODIFIED: Delegate index generation to the minimum_enclosing_circle
-    # MODIFIED: We assume non-overlapping labels for now
-    # TODO Support label overlap (i.e., format in ijv)
-    # MODIFIED: Delegate indexes to minimum_enclosing_circle
-    ij, r = centrosome.cpmorphology.minimum_enclosing_circle(labels, unique_labels)
+    # Intensity-weighted moment sums via the shared helper (pixels as the per-pixel weight);
+    # radial Zernikes normalise by pixel count, not the enclosing-circle area. See _zernike_scores.
+    vr, vi, _radii, counts = _zernike_scores(labels, zernike_indexes, weight=pixels)
+    return _radial_zernike_features(vr, vi, counts, zernike_indexes)
+
+
+def _radial_zernike_features(
+    vr: NDArray[numpy.floating],
+    vi: NDArray[numpy.floating],
+    counts: NDArray[numpy.floating],
+    zernike_indexes: NDArray[numpy.integer],
+) -> dict[str, NDArray[numpy.floating]]:
+    """Name and normalise the moment sums; shared with the numba backend."""
+    magnitude = numpy.sqrt(vr * vr + vi * vi) / counts[:, numpy.newaxis]
+    # CellProfiler convention: arctan2(real, imag), not textbook arctan2(imag, real).
+    # Kept for 1:1 parity — do not "fix" the argument order.
+    phase = numpy.arctan2(vr, vi)
 
     #
-    # Then compute x and y, the position of each labeled pixel
-    # within a unit circle around the object
+    # Results will be formatted in a dictionary with the following keys:
+    # Zernike{Magnitude|Phase}_{n}_{m}
+    # n - the radial moment of the Zernike
+    # m - the azimuthal moment of the Zernike
     #
-    ijv = masks_to_ijv(labels)
-
-    l_ = ijv[:, 2]  # (N,1) vector with labels
-
-    yx = (ijv[:, :2] - ij[l_ - 1, :]) / r[l_ - 1, numpy.newaxis]
-
-    z = centrosome.zernike.construct_zernike_polynomials(
-        yx[:, 1], yx[:, 0], zernike_indexes
-    )
-
-    # Filter ijv-formatted items to keep the ones inside the pixels boundary
-    ijv_mask = (ijv[:, 0] < pixels.shape[0]) & (ijv[:, 1] < pixels.shape[1])
-    # ijv_mask[ijv_mask] = pixels[ijv[ijv_mask,0], ijv[ijv_mask, 1]]
-
-    yx = yx[ijv_mask, :]
-    l_ = l_[ijv_mask]
-    z_ = z[ijv_mask, :]
-
     results: dict[str, NDArray[numpy.floating]] = {}
-    if len(l_) == 0:
-        # Cover fringe case in which all labels were filtered out
-        for mag_or_phase in ("Magnitude", "Phase"):
-            for n, m in zernike_indexes:
-                name = f"{M_CATEGORY}_Zernike{mag_or_phase}_{n}_{m}"
-                results[name] = numpy.zeros(0)
-    else:
-        # MODIFIED: Replaced sum with the updated sum_labels
-        areas = scipy.ndimage.sum_labels(
-            numpy.ones(l_.shape, int), labels=l_, index=unique_labels
-        )
-
-        #
-        # Results will be formatted in a dictionary with the following keys:
-        # Zernike{Magniture|Phase}_{n}_{m}
-        # n - the radial moment of the Zernike
-        # m - the azimuthal moment of the Zernike
-        #
-        for i, (n, m) in enumerate(zernike_indexes):
-            vr = scipy.ndimage.sum_labels(
-                pixels[ijv[:, 0], ijv[:, 1]] * z_[:, i].real,
-                labels=l_,
-                index=unique_labels,
-            )
-
-            vi = scipy.ndimage.sum_labels(
-                pixels[ijv[:, 0], ijv[:, 1]] * z[:, i].imag,
-                labels=l_,
-                index=unique_labels,
-            )
-
-            magnitude = numpy.sqrt(vr * vr + vi * vi) / areas
-            phase = numpy.arctan2(vr, vi)
-
-            results[f"{M_CATEGORY}_ZernikeMagnitude_{n}_{m}"] = magnitude
-            results[f"{M_CATEGORY}_ZernikePhase_{n}_{m}"] = phase
+    for i, (n, m) in enumerate(zernike_indexes):
+        results[f"{M_CATEGORY}_ZernikeMagnitude_{n}_{m}"] = magnitude[:, i]
+        results[f"{M_CATEGORY}_ZernikePhase_{n}_{m}"] = phase[:, i]
 
     return results

@@ -39,7 +39,6 @@ from cp_measure.core.measureobjectintensity import (
     STD_INTENSITY_EDGE,
     UPPER_QUARTILE_INTENSITY,
 )
-from cp_measure.primitives.segment import label_to_idx_lut
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
     inner_boundary,
@@ -54,8 +53,16 @@ def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
+    legacy: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """masks is a labeled array where 0 are background."""
+    """masks is a labeled array where 0 are background.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+
+    ``legacy`` mirrors the numpy backend: False (default) uses ``numpy.percentile``
+    'linear' quartiles + textbook median MAD; True reproduces the original
+    CellProfiler ``n*q`` quartiles + ``(1/ndim)``-quantile MAD.
+    """
     orig_ndim = pixels.ndim
 
     masked_image = pixels
@@ -66,7 +73,7 @@ def get_intensity(
     elif pixels.ndim == 3 and masks.ndim == 2:  # 3D image, 2D mask
         masks = masks.reshape(1, *masks.shape)
 
-    lut, nobjects = label_to_idx_lut(masks)
+    nobjects = int(masks.max())
 
     integrated_intensity = numpy.zeros(nobjects)
     mean_intensity = numpy.zeros(nobjects)
@@ -88,7 +95,6 @@ def get_intensity(
     values, seg0, xc, yc, zc = flatten_numba(
         numpy.ascontiguousarray(masks),
         numpy.ascontiguousarray(masked_image),
-        lut,
     )
     has_objects = values.size > 0
 
@@ -132,7 +138,7 @@ def get_intensity(
             median_intensity,
             upper_quartile_intensity,
             mad_intensity,
-        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim)
+        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim, legacy)
 
     if edge_measurements:
         integrated_intensity_edge = numpy.zeros(nobjects)
@@ -148,7 +154,7 @@ def get_intensity(
         else:
             emask = skimage.segmentation.find_boundaries(masks, mode="inner") > 0
         e_values = masked_image[emask].astype(numpy.float64)
-        e_seg0 = lut[masks[emask]]
+        e_seg0 = masks[emask] - 1
 
         if e_values.size > 0:
             ecount, esum, emin, emax = segment_stats(e_values, e_seg0, nobjects)

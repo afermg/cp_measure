@@ -4,14 +4,11 @@ Compares the numba ``pearson``/``manders_fold``/``rwc``/``overlap`` against the
 reference ``cp_measure.core.measurecolocalization`` key-by-key. Two value regimes
 run: continuous random floats (generic path) and integer-VALUED floats in a small
 range (forces RWC dense-rank ties). 2D and 3D, single image and batch (4D array +
-ragged list) all run, since every bzyx path must hold.
+same-shape list) all run, since every bzyx path must hold.
 
-Pixels stay float64 deliberately. Feeding a genuine integer dtype to the *numpy*
-reference triggers two baseline artifacts the numba backend does not reproduce
-(it upcasts to float64): ``fi*si`` overflows in uint8 (so Overlap/K can exceed 1),
-and the Pearson slope's ``lstsq`` design matrix is uint8 → a float32 result. The
-numba float64 path is strictly more accurate; matching those artifacts is not a
-goal. (costes, the follow-up, will exercise true integer dtypes for its scale.)
+These golden inputs exercise the accelerated float64 path. Dtype-sensitive
+reference compatibility (including real integer images) is covered separately
+in test_coloc_contracts.py.
 """
 
 import numpy as np
@@ -30,7 +27,7 @@ from cp_measure._detect import HAS_NUMBA
 
 requires_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
-FUNCS = ["pearson", "manders_fold", "rwc", "overlap", "costes"]
+FUNCS = ["pearson", "manders_fold", "rwc", "overlap"]
 
 
 def _numba_fn(name):
@@ -94,7 +91,9 @@ def test_matches_numpy_3d(name):
 @requires_numba
 @pytest.mark.parametrize("name", FUNCS)
 def test_batch_list_matches_per_image(name):
-    imgs = [_data_2d(float), _data_3d(float)]
+    # A list batch must be same-shape (ragged batches are rejected by the
+    # _stack/to_bzyx contract); distinct data comes from the two pixel regimes.
+    imgs = [_data_2d("cont"), _data_2d("ties")]
     masks = [m for m, _, _ in imgs]
     p1 = [a for _, a, _ in imgs]
     p2 = [b for _, _, b in imgs]
@@ -116,13 +115,3 @@ def test_4d_batch_matches_per_image(name):
     assert isinstance(got, list) and len(got) == 2
     for per_image, (m, a, b) in zip(got, [(m0, a0, b0), (m1, a1, b1)]):
         _assert_match(per_image, getattr(ref, f"get_correlation_{name}")(a, b, m))
-
-
-@requires_numba
-@pytest.mark.parametrize("mode", ["Faster", "Fast", "Accurate"])
-@pytest.mark.parametrize("dim", ["2d", "3d"])
-def test_costes_modes_match_numpy(mode, dim):
-    masks, p1, p2 = _data_2d("cont") if dim == "2d" else _data_3d("cont")
-    expected = ref.get_correlation_costes(p1, p2, masks, fast_costes=mode)
-    got = _numba_fn("costes")(p1, p2, masks, fast_costes=mode)
-    _assert_match(got, expected)

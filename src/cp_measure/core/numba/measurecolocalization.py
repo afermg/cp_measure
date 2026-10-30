@@ -1,99 +1,126 @@
-"""Numba-backed MeasureColocalization (Pearson, Manders, RWC, Overlap).
+"""Numba-backed non-Costes colocalization, with current NumPy semantics.
 
-Drop-in replacements for the like-named functions in
-:mod:`cp_measure.core.measurecolocalization`, producing the identical per-object
-feature dicts. The reference iterates ``labels_to_binmasks`` — materialising an
-``(N, H, W)`` boolean stack — and re-indexes the whole image per object through
-``scipy.ndimage`` (single-label reductions, hence the ``[0]`` everywhere). Here a
-single grouped flatten plus one fused per-object kernel
-(:func:`cp_measure.core.numba._colocalization.coloc_per_object`) replaces all of
-it.
+One grouped flatten and a fused per-object kernel handle float64 images.
+Other dtypes use the reference reductions explicitly: promoting float32 changes
+threshold inclusion (pending #124), and integer products can overflow in the
+reference. Undefined kernel results also use the reference to preserve warnings
+and errors, including the existing zero-denominator Overlap error.
 
-Input is normalised through :func:`cp_measure.primitives.shapes.to_bzyx`, exactly
-like the numba ``intensity``/``zernike`` backends. Colocalization takes a
-``(pixels_1, pixels_2, masks)`` triple, so ``to_bzyx`` is called twice against the
-shared mask and the single ``unwrap`` is reused. Every feature here is a function
-of the per-object value vectors ONLY (no pixel coordinates), so the kernels never
-branch on 2D vs 3D and the ``(1, Y, X)`` vs ``(H, W)`` divergence that affects the
-intensity backend cannot occur.
-
-Pixels are upcast to float64 before reduction. This is strictly more accurate
-than the numpy reference on integer-dtype input — where ``fi*si`` overflows in
-uint8 (Overlap/K can exceed 1) and the Pearson slope's ``lstsq`` runs in float32
-— but means the two backends can differ on genuine integer images. Real (float)
-intensity images are unaffected.
-
-``costes`` is also here (it runs a per-object iterative threshold search rather
-than the fused reduction, so it has its own kernel and runner).
+The public feature schema, label slots and per-object RWC scope are unchanged.
+Overlap remains a direct API, not an extra default bulk feature. Costes is owned
+by its stacked follow-up; no combined featurizer dispatch is introduced here.
 """
-
-from collections.abc import Iterable
 
 import numpy
 from numpy.typing import NDArray
 
+from cp_measure.core import measurecolocalization as reference
 from cp_measure.core.measurecolocalization import (
     F_CORRELATION_FORMAT,
-    F_COSTES_FORMAT,
     F_K_FORMAT,
     F_MANDERS_FORMAT,
     F_OVERLAP_FORMAT,
     F_RWC_FORMAT,
     F_SLOPE_FORMAT,
-    M_ACCURATE,
-    M_FAST,
-    M_FASTER,
-    infer_scale,
 )
 from cp_measure.core.numba._colocalization import coloc_per_object
-from cp_measure.core.numba._costes import costes_per_object
 from cp_measure.primitives._segment_numba import flatten_pairs_grouped
-from cp_measure.primitives.segment import labels_to_offsets
 from cp_measure.primitives.shapes import to_bzyx
 
-_COSTES_MODE = {M_FASTER: 0, M_FAST: 1, M_ACCURATE: 2}
 
+def _run(
+    masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc, compute_pearson=False
+):
+    """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
 
-def _flatten_image(masks_zyx, pixels_1_zyx, pixels_2_zyx):
-    """Normalise one ``(Z, Y, X)`` triple to grouped per-object value blocks.
-
-    Returns ``(g1, g2, offsets, n)``; an empty image (no objects) yields
-    ``(None, None, offsets, 0)``. Shared by every colocalization feature so the
-    mask-contiguity, ``labels_to_offsets`` and ``flatten_pairs_grouped`` chain
-    lives in one place.
+    Returns the nine per-object arrays from ``coloc_per_object``, or ``None`` when
+    the image holds no objects (the callers then emit empty feature arrays).
     """
     masks = numpy.ascontiguousarray(masks_zyx)
     if not numpy.issubdtype(masks.dtype, numpy.integer):
         masks = masks.astype(numpy.intp)
-    lut, n, offsets = labels_to_offsets(masks)
+    # Labels are contiguous 1..N by contract (see cp_measure._sanitize), so the
+    # segment index is label - 1 and the CSR block bounds are the cumulative
+    # per-label pixel counts — one bincount, no lookup table.
+    n = int(masks.max(initial=0))
     if n == 0:
-        return None, None, offsets, 0
+        return None
+    offsets = numpy.zeros(n + 1, dtype=numpy.int64)
+    # bincount rejects uint64 even when these bounded label IDs fit intp.
+    if masks.dtype == numpy.uint64:
+        masks = masks.astype(numpy.intp)
+    offsets[1:] = numpy.cumsum(numpy.bincount(masks.ravel(), minlength=n + 1)[1:])
     g1, g2 = flatten_pairs_grouped(
         masks,
         numpy.ascontiguousarray(pixels_1_zyx, dtype=numpy.float64),
         numpy.ascontiguousarray(pixels_2_zyx, dtype=numpy.float64),
-        lut,
         offsets,
     )
-    return g1, g2, offsets, n
+    means = None
+    if compute_pearson:
+        # NumPy's pairwise mean reduction matters for constant and high-offset
+        # signals: a serial JIT sum can turn an undefined correlation finite.
+        # Reuse exactly that reduction, without changing the other fused metrics.
+        means = numpy.zeros((2, n))
+        for k in range(n):
+            lo, hi = offsets[k : k + 2]
+            if hi > lo:
+                means[0, k] = numpy.mean(g1[lo:hi])
+                means[1, k] = numpy.mean(g2[lo:hi])
+    return coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means)
 
 
-_EMPTY = numpy.empty(0)
+def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **kwargs):
+    """Normalise the triple via ``to_bzyx`` and map each image through ``build``.
 
-
-# The five single-feature functions are thin, gated wrappers over ``get_correlation_all`` (single
-# source of truth for the kernel + feature-key assembly). Each computes only its tier: the cheap
-# functions skip RWC's rank sort and the Costes kernel; ``rwc`` adds the rank sort; ``costes`` runs
-# only the iterative kernel. Calling several separately still runs the kernel per call (the library
-# is stateless) — pass the set to ``get_correlation_all`` to collapse them into one pass.
+    ``build(result)`` turns the kernel tuple (or ``None`` for an empty image) into
+    one image's feature dict. ``unwrap`` then collapses a single image to that
+    dict, or returns the list for a batch — matching the numba intensity backend.
+    """
+    # to_bzyx promotes 2D and singleton-Z inputs to the same shape and does not
+    # validate spatial extents. Check the original triple before unchecked JIT
+    # indexing; never broadcast masks or silently discard intensity planes.
+    shape = numpy.asarray(masks).shape
+    if numpy.asarray(pixels_1).shape != shape or numpy.asarray(pixels_2).shape != shape:
+        raise ValueError("colocalization images and masks must have the same shape")
+    frac = threshold / 100.0
+    masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
+    _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
+    results = []
+    for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list):
+        if p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
+            result = ref(p1, p2, m, **kwargs)
+        else:
+            result = build(
+                _run(
+                    m,
+                    p1,
+                    p2,
+                    frac,
+                    compute_rwc,
+                    compute_pearson=ref is reference.get_correlation_pearson,
+                )
+            )
+            if any(not numpy.isfinite(values).all() for values in result.values()):
+                result = ref(p1, p2, m, **kwargs)
+        results.append(result)
+    return unwrap(results)
 
 
 def get_correlation_pearson(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
-) -> dict[str, NDArray[numpy.floating]]:
-    return get_correlation_all(pixels_1, pixels_2, masks, features=("pearson",))
+) -> dict[str, list[float]]:
+    def build(res):
+        if res is None:
+            return {F_CORRELATION_FORMAT: [], F_SLOPE_FORMAT: []}
+        corr, slope = res[0].tolist(), res[1].tolist()
+        return {F_CORRELATION_FORMAT: corr, F_SLOPE_FORMAT: slope}
+
+    return _featurize(
+        pixels_1, pixels_2, masks, 15, False, build, reference.get_correlation_pearson
+    )
 
 
 def get_correlation_manders_fold(
@@ -101,9 +128,22 @@ def get_correlation_manders_fold(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
-) -> dict[str, NDArray[numpy.floating]]:
-    return get_correlation_all(
-        pixels_1, pixels_2, masks, features=("manders_fold",), thr=thr
+) -> dict[str, list[float]]:
+    def build(res):
+        if res is None:
+            return {f"{F_MANDERS_FORMAT}_1": [], f"{F_MANDERS_FORMAT}_2": []}
+        m1, m2 = res[2].tolist(), res[3].tolist()
+        return {f"{F_MANDERS_FORMAT}_1": m1, f"{F_MANDERS_FORMAT}_2": m2}
+
+    return _featurize(
+        pixels_1,
+        pixels_2,
+        masks,
+        thr,
+        False,
+        build,
+        reference.get_correlation_manders_fold,
+        thr=thr,
     )
 
 
@@ -112,8 +152,23 @@ def get_correlation_rwc(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
-) -> dict[str, NDArray[numpy.floating]]:
-    return get_correlation_all(pixels_1, pixels_2, masks, features=("rwc",), thr=thr)
+) -> dict[str, list[float]]:
+    def build(res):
+        if res is None:
+            return {f"{F_RWC_FORMAT}_1": [], f"{F_RWC_FORMAT}_2": []}
+        rwc1, rwc2 = res[7].tolist(), res[8].tolist()
+        return {f"{F_RWC_FORMAT}_1": rwc1, f"{F_RWC_FORMAT}_2": rwc2}
+
+    return _featurize(
+        pixels_1,
+        pixels_2,
+        masks,
+        thr,
+        True,
+        build,
+        reference.get_correlation_rwc,
+        thr=thr,
+    )
 
 
 def get_correlation_overlap(
@@ -121,103 +176,28 @@ def get_correlation_overlap(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
-) -> dict[str, NDArray[numpy.floating]]:
-    return get_correlation_all(
-        pixels_1, pixels_2, masks, features=("overlap",), thr=thr
-    )
+) -> dict[str, list[float]]:
+    def build(res):
+        if res is None:
+            return {
+                F_OVERLAP_FORMAT: [],
+                f"{F_K_FORMAT}_1": [],
+                f"{F_K_FORMAT}_2": [],
+            }
+        overlap, k1, k2 = res[4].tolist(), res[5].tolist(), res[6].tolist()
+        return {
+            F_OVERLAP_FORMAT: overlap,
+            f"{F_K_FORMAT}_1": k1,
+            f"{F_K_FORMAT}_2": k2,
+        }
 
-
-def get_correlation_costes(
-    pixels_1: NDArray[numpy.floating],
-    pixels_2: NDArray[numpy.floating],
-    masks: NDArray[numpy.integer],
-    fast_costes: str = M_FASTER,
-    thr: int = 15,
-) -> dict[str, NDArray[numpy.floating]]:
-    """Costes automated-threshold Manders coefficients C1/C2.
-
-    ``thr`` is accepted for signature parity but has no effect (in the reference it
-    only fed the dead ``calculate_threshold`` call). ``scale`` is dtype-derived via
-    ``infer_scale`` on ``pixels_1``, so float input gives ``scale == 1``.
-    """
-    return get_correlation_all(
+    return _featurize(
         pixels_1,
         pixels_2,
         masks,
-        features=("costes",),
+        thr,
+        False,
+        build,
+        reference.get_correlation_overlap,
         thr=thr,
-        fast_costes=fast_costes,
     )
-
-
-_GROUPS = ("pearson", "manders_fold", "rwc", "overlap", "costes")
-_CHEAP_GROUPS = frozenset({"pearson", "manders_fold", "rwc", "overlap"})
-
-
-def get_correlation_all(
-    pixels_1: NDArray[numpy.floating],
-    pixels_2: NDArray[numpy.floating],
-    masks: NDArray[numpy.integer],
-    features: Iterable[str] | None = None,
-    thr: int = 15,
-    fast_costes: str = M_FASTER,
-) -> dict[str, NDArray[numpy.floating]]:
-    """Colocalization features from ONE flatten + ONE fused kernel pass per image.
-
-    ``features`` selects which groups to return — any of ``pearson`` / ``manders_fold`` / ``rwc`` /
-    ``overlap`` / ``costes`` — or ``None`` for all. The shared ``coloc_per_object`` kernel runs once
-    for the cheap block (Pearson + slope, Manders, Overlap, K); the two expensive paths are gated by
-    the request: RWC's rank sort runs only if ``rwc`` is asked for, the Costes iterative kernel only
-    if ``costes`` is. This is the efficient entry point for any caller wanting several coloc features
-    at once (the single-feature functions delegate here). Stateless: collapsing N features into one
-    pass means requesting them in one call.
-    """
-    want = set(_GROUPS) if features is None else set(features)
-    unknown = want - set(_GROUPS)
-    if unknown:
-        raise ValueError(f"unknown correlation feature group(s): {sorted(unknown)}")
-    need_cheap = bool(want & _CHEAP_GROUPS)
-    need_rwc = "rwc" in want
-    need_costes = "costes" in want
-    frac = thr / 100.0
-    mode = _COSTES_MODE[fast_costes]
-    masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
-    _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
-
-    def run(masks_zyx, p1_zyx, p2_zyx):
-        g1, g2, offsets, n = _flatten_image(masks_zyx, p1_zyx, p2_zyx)
-        out: dict[str, NDArray[numpy.floating]] = {}
-        if need_cheap or need_rwc:
-            if n == 0:
-                corr = slope = m1 = m2 = overlap = k1 = k2 = rwc1 = rwc2 = _EMPTY
-            else:
-                corr, slope, m1, m2, overlap, k1, k2, rwc1, rwc2 = coloc_per_object(
-                    g1, g2, offsets, n, frac, need_rwc
-                )
-            if "pearson" in want:
-                out[F_CORRELATION_FORMAT] = corr
-                out[F_SLOPE_FORMAT] = slope
-            if "manders_fold" in want:
-                out[f"{F_MANDERS_FORMAT}_1"] = m1
-                out[f"{F_MANDERS_FORMAT}_2"] = m2
-            if "overlap" in want:
-                out[F_OVERLAP_FORMAT] = overlap
-                out[f"{F_K_FORMAT}_1"] = k1
-                out[f"{F_K_FORMAT}_2"] = k2
-            if need_rwc:
-                out[f"{F_RWC_FORMAT}_1"] = rwc1
-                out[f"{F_RWC_FORMAT}_2"] = rwc2
-        if need_costes:
-            if n == 0:
-                c1 = c2 = _EMPTY
-            else:
-                scale = float(infer_scale(numpy.asarray(p1_zyx)))
-                c1, c2 = costes_per_object(g1, g2, offsets, n, scale, mode)
-            out[f"{F_COSTES_FORMAT}_1"] = c1
-            out[f"{F_COSTES_FORMAT}_2"] = c2
-        return out
-
-    results = [
-        run(m, p1, p2) for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list)
-    ]
-    return unwrap(results)

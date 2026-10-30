@@ -1,5 +1,5 @@
 <div align="center">
-<img src="./logos/cpm.svg" width="150px">
+<img src="https://raw.githubusercontent.com/afermg/cp_measure/main/logos/cpm.svg" width="150px">
 </div>
 
 # cp_measure: Morphological features for imaging data
@@ -28,6 +28,8 @@ Do you need to use [CellProfiler](https://github.com/CellProfiler) features, but
 
 ## Installation
 
+Requires **Python 3.11 or newer**.
+
 ```bash
 pip install cp-measure
 ```
@@ -42,61 +44,92 @@ We provide three entry points: (Featurizer) We orchestrate the images x combinat
 
 The simplest way to extract all features from an image and its masks:
 
+Image axes are **(Batch, Channel, Y, X)**; mask axes are **(Batch, Mask type, Y, X)**. Keep the batch axis even for one image (`Batch=1`).
+
 ```python
 import numpy as np
-from cp_measure.featurizer import featurize
+from cp_measure.featurizer import featurize, make_featurizer_config
 
-# image: (C, H, W) float array, masks: (N_masks, H, W) integer labels
-image = np.random.default_rng(42).random((2, 240, 240))
-masks = np.zeros((1, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1
-masks[0, 150:200, 150:200] = 2
+# B = batch size, C = channels; a single image has B=1.
+# Dimensionality is declared with is_3d (default False), never inferred from shape.
+image = np.random.default_rng(42).random((1, 2, 240, 240))
+masks = np.zeros((1, 1, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1
+masks[0, 0, 150:200, 150:200] = 2
 
-data, columns, rows = featurize(image, masks)
+# Choose a 255-step threshold grid for this synthetic example.
+# For real normalized images, use their acquisition scale instead.
+config = make_featurizer_config(correlation_costes_params={"scale_max": 255})
+data, columns, rows = featurize(image, masks, config)  # is_3d=False
 # data:    np.ndarray of shape (n_objects, n_features)
 # columns: feature names (e.g. "Area", "Intensity_MeanIntensity__ch0", ...)
-# rows:    [(None, "object", 1), (None, "object", 2)]  — (image_id, object_name, label) per row
+# rows:    [(0, "object", 1), (0, "object", 2)]  — (image_id, object_name, label) per row
+#          image_id defaults to the batch index; pass image_ids=[...] for your own ids
 ```
 
-To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's first axis and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
+To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's channel axis (axis 1) and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
 
 ```python
 import numpy as np
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 # Recreate variables from previous examples for this block to run in isolation
-image = np.random.default_rng(42).random((2, 240, 240))
-masks = np.zeros((1, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1
-masks[0, 150:200, 150:200] = 2
+image = np.random.default_rng(42).random((1, 2, 240, 240))
+masks = np.zeros((1, 1, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1
+masks[0, 0, 150:200, 150:200] = 2
 
 # Disable texture features, name channels explicitly
-config = make_featurizer_config(["DNA", "ER"], texture=False)
+config = make_featurizer_config(
+    ["DNA", "ER"], texture=False,
+    correlation_costes_params={"scale_max": 255},
+)
 data, columns, rows = featurize(image, masks, config)
 ```
 
-Multiple mask types (e.g. nuclei and cells) are supported by stacking them along the first axis:
+Multiple mask types (e.g. nuclei and cells) are supported by stacking them along the mask-type axis (axis 1):
 
 ```python
 import numpy as np
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 # Recreate variables from previous examples for this block to run in isolation
-image = np.random.default_rng(42).random((2, 240, 240))
+image = np.random.default_rng(42).random((1, 2, 240, 240))
 
-config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
+config = make_featurizer_config(
+    ["DNA", "ER"], objects=["nuclei", "cells"],
+    correlation_costes_params={"scale_max": 255},
+)
 
-masks = np.zeros((2, 240, 240), dtype=np.int32)
-masks[0, 50:100, 50:100] = 1    # nucleus 1
-masks[1, 40:110, 40:110] = 1    # cell 1
-masks[1, 150:200, 150:200] = 2  # cell 2
-masks[1, 175:180, 180:210] = 2  # Minor asymmetries on bottom right edge of cells
+masks = np.zeros((1, 2, 240, 240), dtype=np.int32)
+masks[0, 0, 50:100, 50:100] = 1    # nucleus 1
+masks[0, 1, 40:110, 40:110] = 1    # cell 1
+masks[0, 1, 150:200, 150:200] = 2  # cell 2
+masks[0, 1, 175:180, 180:210] = 2  # Minor asymmetries on bottom right edge of cells
 
 data, columns, rows = featurize(image, masks, config)
-# rows: [(None, "nuclei", 1), (None, "cells", 1), (None, "cells", 2)]
+# rows: [(0, "nuclei", 1), (0, "cells", 1), (0, "cells", 2)]
 ```
 
-Volumetric `(C, Z, H, W)` data is supported. The featurizer automatically skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`). All other features (`intensity`, `sizeshape`, `texture`, `granularity`, correlations) work for both 2D and 3D.
+Single- and multichannel volumes are supported: pass images shaped `(B, C, Z, Y, X)` and masks shaped `(B, M, Z, Y, X)` with `is_3d=True`. Here `M` is the number of mask types (e.g. nuclei and cells), not the number of labelled objects. Batch size and all spatial dimensions must match exactly. **The featurizer does not repeat or broadcast masks automatically**, including singleton Z axes. Inputs are not modified.
+
+If you want a 2D label map to span a volume, repeat it yourself before calling `featurize`, as below. Each repeated label then represents one 3D object, not one object per slice. The featurizer skips 2D-only features (`radial_distribution`, `radial_zernikes`, `zernike`, `feret`) with a warning. See the [single-slice size/shape limitation](docs/measurement-notes.md#3d-size-and-shape).
+
+```python
+import numpy as np
+from cp_measure.featurizer import featurize, make_featurizer_config
+
+volume = np.random.default_rng(42).random((1, 1, 4, 32, 32))  # B, C, Z, Y, X
+masks_2d = np.zeros((1, 1, 32, 32), dtype=np.int32)  # B, M, Y, X
+masks_2d[0, 0, 8:24, 12:20] = 42
+# Explicit caller-side conversion; featurize does not add or repeat this axis.
+masks_3d = np.repeat(masks_2d[:, :, None], volume.shape[2], axis=2)
+config = make_featurizer_config(["DNA"])
+data, columns, rows = featurize(volume, masks_3d, config, is_3d=True)
+assert rows == [(0, "object", 42)]  # one object spanning all four slices
+```
+
+**Migrating from the single-image API:** add a batch axis to both arrays: `featurize(image[None], masks[None], config)`. For volumes, also pass `is_3d=True`. Replace `image_id="sample"` with `image_ids=["sample"]`. Previously, omitting `image_id` produced `None` in row metadata; now `image_ids=None` produces zero-based batch indices, so a single-image batch produces `0`.
 
 The output is plain numpy + lists, so converting to a DataFrame is straightforward:
 
@@ -189,19 +222,21 @@ measurecolocalization.get_correlation_overlap
 
 ### Important notes
 
-- **Contiguous labels**: The input labels must be sequential (e.g., `[1,2,3]`, not `[1,3,4]`). You can use `skimage.segmentation.relabel_sequential` to ensure compliance.
-- **Fidelity**: If you need to match CellProfiler measurements 1:1, you must convert your image arrays to float values between 0 and 1. For instance, if you have an array of data type uint16, you must divide them all by 65535. This is important for radial distribution measurements.
-- **Speed**: The Granularity measurement is particularly slow (~80% of the compute time). Skip this one it if speed is of utmost importance.
+- **Labels**: Use positive integers for objects and `0` for background. `featurize` and the bulk registries relabel non-contiguous IDs internally without modifying your array; `featurize` reports the original IDs. Raw measurement functions require contiguous `1..N` labels; wrap them with `cp_measure._sanitize.sanitize` when needed.
+- **Image shapes**: `featurize` requires dense `(B, C, *spatial)` images and `(B, M, *spatial)` masks. A single image still needs `B=1`. Ragged (differently-sized) batches are not supported; normalise to a common shape and stack first.
+- **Fidelity**: Use float intensities in `[0, 1]` to match CellProfiler's input convention (e.g. divide uint16 values by `65535`). Matching the original intensity quantile measurements also requires `legacy=True`; see the [legacy percentile convention](docs/measurement-notes.md#legacy-percentile-convention).
+- **Costes scale (breaking correction)**: Float inputs to `get_correlation_costes` and `get_correlation_costes_ind` must be normalized to `[0, 1]` **and** specify `scale_max` (e.g. `65535` for normalized 16-bit data). It controls the threshold grid; it is not the observed image maximum. Both matching unsigned-integer dtypes infer their storage maximum and are normalized internally. For 12-bit data stored in `uint16`, pass `scale_max=4095` explicitly; signed or mixed-dtype arrays also require a scale. Through the featurizer, use `correlation_costes_params={"scale_max": 65535}` or disable Costes. cp_measure fits thresholds per object, whereas CellProfiler's object workflow fits across the image.
+- **Speed**: v0.2.0 speeds up the default NumPy/SciPy implementation without adding required runtime dependencies; see the [performance report](benchmarks/releases/v0.2.0.md). Optional Numba and JAX backends remain under development and are not yet supported.
 
-### Known limitations
-
-- Some features produce a minor (1e-16) discrepancy when using one vs multiple mask in some features. The issue lies upstream ([centrosome](https://github.com/afermg/cp_measure/issues/18#issuecomment-4593709963), [scipy](https://github.com/scipy/scipy/issues/25279)), and does not significantly impact my use-cases.
+See [Measurement notes](docs/measurement-notes.md) for texture quantization, percentile formulas, radial-distribution centers, and floating-point caveats.
 
 ## Similar projects
 
 - [spacr](https://github.com/EinarOlafsson/spacr): Library to analyse screens, it provides measurements (independent implementation) and a GUI.
 - [ScaleFEX](https://github.com/NYSCF/ScaleFEx): Python pipeline that includes measurements, designed for the cloud.
+- [CharmFeatures](https://gitlab.com/iggman/charm-features): Library, Python module, and command-line utility for extracting Wnd-Charm image features from large TIFF collections.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
+- [CellProfiler Library](https://github.com/CellProfiler/CellProfiler/tree/main/src/subpackages/library): WIP library that isolates CellProfiler image-processing functions from its frontend.
 
 <details>
 <summary>Current work</summary>

@@ -1,6 +1,6 @@
 import nox
 
-PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+PYTHON_VERSIONS = ["3.11", "3.12", "3.13", "3.14"]
 
 nox.options.default_venv_backend = "uv"
 
@@ -13,7 +13,6 @@ def tests(session: nox.Session) -> None:
             "pytest",
             "pytest-cov",
             "pytest-markdown-docs",
-            "six",  # centrosome runtime dep, not declared in its metadata
             ".[numba]",  # exercise the numba backend + correctness harness in CI
         )
     except Exception:

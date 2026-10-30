@@ -1,12 +1,12 @@
-"""Backend correctness harness: numba `intensity` must match the numpy backend.
+"""Backend correctness harness: a numba backend must match its numpy counterpart.
 
-Compares ``cp_measure.core.numba.get_intensity`` against the reference
-``cp_measure.core.get_intensity`` key-by-key on continuous random pixels (no
-exact ties, so ``Location_MaxIntensity_*`` is unambiguous), for 2D and 3D input
-with edge measurements on and off. Also checks the dispatch wiring: under
-``set_accelerator("numba")`` the core registry composes the numba intensity with
-the numpy implementations of every other feature, and an absent numba backend
-raises rather than silently falling back.
+Compares ``intensity`` key-by-key on continuous random pixels (no exact ties, so
+``Location_MaxIntensity_*`` is unambiguous), for 2D and 3D input with edge
+measurements on and off; per-feature value comparisons for the other backends
+live in their own ``test_<feature>_backend`` modules. Also checks the dispatch
+wiring for every ported feature: under ``set_accelerator("numba")`` the core
+registry composes the numba implementations with the numpy ones for everything
+else, and an absent numba backend raises rather than silently falling back.
 """
 
 import numpy as np
@@ -50,15 +50,53 @@ def _assert_dicts_match(ref, got):
 
 
 @requires_numba
+@pytest.mark.parametrize("legacy", [False, True], ids=["new", "legacy"])
 @pytest.mark.parametrize("edge", [True, False], ids=["edge", "noedge"])
 @pytest.mark.parametrize("dim", ["2d", "3d"])
-def test_numba_intensity_matches_numpy(dim, edge):
-    from cp_measure.core.numba import get_intensity as intensity_numba
+def test_numba_intensity_matches_numpy(dim, edge, legacy):
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as intensity_numba,
+    )
 
     mask, pixels = _mask_pixels_2d() if dim == "2d" else _mask_pixels_3d()
-    ref = intensity_numpy(mask, pixels, edge_measurements=edge)
-    got = intensity_numba(mask, pixels, edge_measurements=edge)
+    ref = intensity_numpy(mask, pixels, edge_measurements=edge, legacy=legacy)
+    got = intensity_numba(mask, pixels, edge_measurements=edge, legacy=legacy)
     _assert_dicts_match(ref, got)
+
+
+def test_legacy_flag_anchor():
+    """Pin both backends to known numerical conventions on a tiny anchor case."""
+    mask = np.array([[1, 1, 1, 1]], dtype=np.int32)
+    pixels = np.array([[0.0, 1.0, 2.0, 3.0]])
+    new = intensity_numpy(mask, pixels, edge_measurements=False, legacy=False)
+    legacy = intensity_numpy(mask, pixels, edge_measurements=False, legacy=True)
+    # np.percentile defaults
+    np.testing.assert_allclose(new["Intensity_LowerQuartileIntensity"], [0.75])
+    np.testing.assert_allclose(new["Intensity_MedianIntensity"], [1.5])
+    np.testing.assert_allclose(new["Intensity_UpperQuartileIntensity"], [2.25])
+    # legacy: pos = n * q on a sorted segment
+    np.testing.assert_allclose(legacy["Intensity_LowerQuartileIntensity"], [1.0])
+    np.testing.assert_allclose(legacy["Intensity_MedianIntensity"], [2.0])
+    np.testing.assert_allclose(legacy["Intensity_UpperQuartileIntensity"], [3.0])
+
+
+@requires_numba
+@pytest.mark.parametrize("sub", [1.0, 0.25], ids=["fullres", "subsampled"])
+def test_numba_granularity_matches_numpy(sub):
+    from cp_measure.core.measuregranularity import get_granularity as gran_numpy
+    from cp_measure.core.numba.measuregranularity import (
+        get_granularity as gran_numba,
+    )
+
+    mask, pixels = _mask_pixels_2d()
+    ref = gran_numpy(mask, pixels, subsample_size=sub, image_sample_size=sub)
+    got = gran_numba(mask, pixels, subsample_size=sub, image_sample_size=sub)
+    # bit-exact morphology; per-object mean is a float reduction -> small tol, nan-aware
+    assert set(got) == set(ref)
+    for key in ref:
+        np.testing.assert_allclose(
+            got[key], ref[key], rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
+        )
 
 
 @requires_numba
@@ -69,22 +107,48 @@ def test_set_accelerator_numba_composes_with_numpy():
         assert core["intensity"].__module__ == (
             "cp_measure.core.numba.measureobjectintensity"
         )
-        # The colocalization features route to the numba backend too.
+        assert core["texture"].__module__ == "cp_measure.core.numba.measuretexture"
+        assert core["feret"].__module__ == "cp_measure.core.numba._feret"
+        assert core["granularity"].__module__ == (
+            "cp_measure.core.numba.measuregranularity"
+        )
+        assert core["zernike"].__module__ == (
+            "cp_measure.core.numba.measureobjectsizeshape"
+        )
+        assert core["radial_zernikes"].__module__ == (
+            "cp_measure.core.numba.measureobjectintensitydistribution"
+        )
         corr = cp_measure.bulk.get_correlation_measurements()
-        for feature in ("pearson", "manders_fold", "rwc", "costes", "overlap"):
+        assert list(corr) == ["costes", "pearson", "manders_fold", "rwc"]
+        for feature in ("pearson", "manders_fold", "rwc"):
             assert corr[feature].__module__ == (
                 "cp_measure.core.numba.measurecolocalization"
-            ), feature
+            )
+        assert corr["costes"].__module__ == "cp_measure.core.measurecolocalization"
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
-        assert core["texture"].__module__ == "cp_measure.core.measuretexture"
     finally:
         cp_measure.set_accelerator(None)
 
     restored = cp_measure.bulk.get_core_measurements()
     assert restored["intensity"].__module__ == "cp_measure.core.measureobjectintensity"
-    # overlap is numba-only; the default registry does not expose it.
-    assert "overlap" not in cp_measure.bulk.get_correlation_measurements()
+    assert restored["feret"].__module__ == "cp_measure.core.measureobjectsizeshape"
+    assert restored["granularity"].__module__ == "cp_measure.core.measuregranularity"
+
+
+@requires_numba
+@pytest.mark.parametrize(
+    "feature,mask_name", [("zernike", "masks"), ("radial_zernikes", "labels")]
+)
+def test_numba_accepts_numpy_keyword_names(feature, mask_name):
+    """Switching the accelerator must not break callers using numpy's keywords."""
+    masks, pixels = _mask_pixels_2d()
+    cp_measure.set_accelerator("numba")
+    try:
+        numba_fn = cp_measure.bulk.get_core_measurements()[feature]
+        assert numba_fn(**{mask_name: masks, "pixels": pixels})
+    finally:
+        cp_measure.set_accelerator(None)
 
 
 def test_set_accelerator_numba_absent_raises(monkeypatch):

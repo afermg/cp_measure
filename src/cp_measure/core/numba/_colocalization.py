@@ -40,8 +40,8 @@ def _dense_rank(vals):
     return ranks, r
 
 
-@njit(cache=True)
-def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
+@njit(cache=True, error_model="numpy")
+def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
     """Per-object colocalization features over grouped value blocks.
 
     ``g1``/``g2`` hold both channels' intensities with object ``k`` in
@@ -50,6 +50,9 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
     sort for RWC is gated by ``compute_rwc`` so the three rank-free features skip
     it. Returns nine length-``n`` arrays:
     ``(corr, slope, m1, m2, overlap, k1, k2, rwc1, rwc2)``.
+
+    The public Pearson wrapper supplies NumPy-reduced ``means`` (shape ``(2, n)``)
+    to preserve its pairwise summation semantics, especially for constant signals.
 
     Threshold-derived features default to ``0.0`` for an object with no pixel
     above the combined threshold (matching the reference's initialised values);
@@ -70,8 +73,7 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
         hi = offsets[k + 1]
         cnt = hi - lo
         if cnt == 0:
-            corr[k] = np.nan
-            slope[k] = np.nan
+            # Current main retains missing label slots as zero for every feature.
             continue
 
         # Pass 1: means + per-channel maxima.
@@ -84,25 +86,12 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
             v2 = g2[i]
             s1 += v1
             s2 += v2
-            if v1 > mx1:
+            if np.isnan(v1) or v1 > mx1:
                 mx1 = v1
-            if v2 > mx2:
+            if np.isnan(v2) or v2 > mx2:
                 mx2 = v2
-        mean1 = s1 / cnt
-        mean2 = s2 / cnt
-
-        # Pass 2: centred second moments → Pearson r + regression slope.
-        c11 = 0.0
-        c22 = 0.0
-        c12 = 0.0
-        for i in range(lo, hi):
-            d1 = g1[i] - mean1
-            d2 = g2[i] - mean2
-            c11 += d1 * d1
-            c22 += d2 * d2
-            c12 += d1 * d2
-        corr[k] = c12 / np.sqrt(c11 * c22)
-        slope[k] = c12 / c11
+        mean1 = s1 / cnt if means is None else means[0, k]
+        mean2 = s2 / cnt if means is None else means[1, k]
 
         tff = thr_frac * mx1
         tss = thr_frac * mx2
@@ -114,7 +103,13 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
             rmax = r1max if r1max > r2max else r2max
             R = rmax + 1
 
-        # Pass 3: threshold-gated accumulations.
+        # Pass 2: the centred second moments (Pearson r + slope) and the
+        # threshold-gated accumulations are INDEPENDENT given pass 1's means and
+        # maxima, so they share one sweep over the block (each accumulator's
+        # add-order is unchanged -> bit-identical to two separate passes).
+        c11 = 0.0
+        c22 = 0.0
+        c12 = 0.0
         tot_fi = 0.0
         tot_si = 0.0
         sum_fi_c = 0.0
@@ -128,6 +123,11 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
         for i in range(lo, hi):
             v1 = g1[i]
             v2 = g2[i]
+            d1 = v1 - mean1
+            d2 = v2 - mean2
+            c11 += d1 * d1
+            c22 += d2 * d2
+            c12 += d1 * d2
             above1 = v1 >= tff
             above2 = v2 >= tss
             if above1:
@@ -149,6 +149,10 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc):
                     w = (R - diff) / R
                     sum_fiw_c += v1 * w
                     sum_siw_c += v2 * w
+        # corrcoef normalizes sequentially and clips finite rounding excursions.
+        value = (c12 / np.sqrt(c11)) / np.sqrt(c22)
+        corr[k] = min(1.0, max(-1.0, value)) if np.isfinite(value) else value
+        slope[k] = c12 / c11
 
         if n_comb > 0:
             m1[k] = sum_fi_c / tot_fi
