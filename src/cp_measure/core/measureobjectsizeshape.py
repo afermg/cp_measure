@@ -13,6 +13,7 @@ from cp_measure.primitives._moments import (
     moment_feature_dict,
     spatial_moments_2d,
 )
+from cp_measure.primitives.shapes import as_2d
 from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
@@ -961,12 +962,14 @@ def get_zernike(
     pixels: NDArray[numpy.floating] | None,
     zernike_numbers: int = 9,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """Per-object Zernike shape features (2D only). ``pixels`` is unused: these are shape moments.
+    """Zernike shape features (including singleton-Z volumes); pixels are unused.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
-    if masks.ndim == 3:
+    measured_masks = as_2d(masks)
+    if measured_masks is None:
         return {}
+    masks = measured_masks
     zernike_indexes = zernike.get_zernike_indexes(zernike_numbers + 1)
 
     real_sums, imag_sums, radii, _counts = _zernike_scores(masks, zernike_indexes)
@@ -990,12 +993,14 @@ def _zernike_features(
 def get_feret(
     masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
 ) -> dict[str, NDArray[numpy.floating]]:
-    """Per-object Feret diameter features (2D only).
+    """Feret diameters (2D calculations, including singleton-Z volumes).
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
-    if masks.ndim == 3:
+    measured_masks = as_2d(masks)
+    if measured_masks is None:
         return {}
+    masks = measured_masks
     ijv = masks_to_ijv(masks)
     indices = numpy.arange(1, int(masks.max()) + 1)  # contiguous 1..N
     chulls, chull_counts = centrosome.cpmorphology.convex_hull_ijv(ijv, indices)

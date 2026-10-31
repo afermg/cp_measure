@@ -4,6 +4,7 @@ import numpy
 import numpy.ma
 import scipy.sparse
 from centrosome import zernike
+from cp_measure.primitives.shapes import as_2d_pair
 from cp_measure.utils import _zernike_scores
 from numpy.typing import NDArray
 
@@ -125,7 +126,7 @@ def get_radial_distribution(
     maximum_radius: int = 100,
 ) -> dict[str, NDArray[numpy.floating]]:
     """
-    Radial features (2D only)
+    Radial features (2D calculations, including singleton-Z volumes).
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     When several pixels are tied for the greatest distance from an object's edge,
@@ -167,11 +168,16 @@ def get_radial_distribution(
         radius will be counted in an overflow bin. The radius is measured in pixels.
     """
 
-    if labels.ndim == 3:
+    measured = as_2d_pair(labels, pixels)
+    if measured is None:
         return {}
+    labels, pixels = measured
 
     if labels.dtype == bool:
         labels = labels.astype(numpy.int64)
+    # The histograms below sum in the pixel dtype, so integer images would wrap
+    # around (uint8: 300 x 200 sums to 96) and float32 would lose precision.
+    pixels = numpy.asarray(pixels, dtype=numpy.float64)
 
     nobjects = int(labels.max())
     d_to_edge = centrosome.cpmorphology.distance_to_edge(labels)
@@ -335,12 +341,14 @@ def get_radial_zernikes(
     pixels: NDArray[numpy.floating],
     zernike_degree: int = 9,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """Per-object radial Zernike features (2D only).
+    """Per-object radial Zernikes (2D calculations, including singleton-Z volumes).
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
-    if labels.ndim == 3:
+    measured = as_2d_pair(labels, pixels)
+    if measured is None:
         return {}
+    labels, pixels = measured
     zernike_indexes = zernike.get_zernike_indexes(zernike_degree + 1)
 
     # Intensity-weighted moment sums via the shared helper (pixels as the per-pixel weight);

@@ -4,7 +4,7 @@
 not the featurizer or the sanitized bulk wrapper. Tests distinguish raw backend
 math, Numba list-batch dispatch, and the public bulk wrapper's label cleanup.
 Feret ignores pixel values and supports only 2D masks. Both raw backends retain
-the existing ``{}`` result for 3D volumes, including single-slice volumes.
+the ``{}`` result for multi-slice volumes and 2D results for singleton-Z inputs.
 """
 
 import numpy as np
@@ -131,14 +131,15 @@ def test_feret_numba_batch_matches_individual_numba_calls(batch_type):
 
 
 @requires_numba
-def test_feret_single_slice_volume_returns_empty():
-    """A Z axis of length 1 still denotes a volume, not a 2D image."""
+def test_feret_single_slice_volume_uses_2d_measurement():
+    """A singleton-Z volume is eligible for the 2D Feret measurement."""
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
     masks = _rich_mask()[np.newaxis]  # (1, 80, 80)
     pixels = get_rng().random(masks.shape)
-    assert feret_nb(masks, pixels) == {}
-    assert feret_numpy(masks, pixels) == {}
+    expected = feret_numpy(masks[0], pixels[0])
+    _assert_match(feret_nb(masks, pixels), expected)
+    _assert_match(feret_numpy(masks, pixels), expected)
 
 
 @requires_numba
@@ -190,10 +191,16 @@ def test_feret_through_bulk_wrapper_sanitizes_each_image():
 
 @requires_numba
 @pytest.mark.parametrize("depth", [1, 3])
-def test_feret_4d_batch_contains_volumes_not_2d_images(depth):
-    """(B, Z, Y, X) returns one empty dictionary per unsupported 3D volume."""
+def test_feret_4d_batch_uses_each_volumes_z_depth(depth):
+    """A batch uses the same sole-slice eligibility rule as individual volumes."""
     from cp_measure.core.numba._feret import get_feret as feret_nb
 
     masks = np.repeat(_rich_mask()[None, None], 2, axis=0)
     masks = np.repeat(masks, depth, axis=1)
-    assert feret_nb(masks, None) == [{}, {}]
+    got = feret_nb(masks, None)
+    assert len(got) == 2
+    for result, mask in zip(got, masks):
+        if depth == 1:
+            _assert_match(result, feret_numpy(mask[0], None))
+        else:
+            assert result == {}

@@ -159,7 +159,7 @@ def test_batch_4d_matches_per_image_baseline():
     pixels = numpy.stack([p[numpy.newaxis] for _, p in scenes])
     out = gran_numba(masks, pixels)
     assert isinstance(out, list) and len(out) == 3
-    for (m, p), got in zip(scenes, out):
+    for m, p, got in zip(masks, pixels, out):
         _assert_same(got, gran_numpy(m, p))
 
 
