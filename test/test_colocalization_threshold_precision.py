@@ -25,10 +25,18 @@ def inputs(dtype=np.float32):
 
 
 @pytest.mark.parametrize("metric", ["manders_fold", "overlap", "rwc"])
-@pytest.mark.parametrize("single", [False, True], ids=["multi-label", "single-mask"])
-def test_float32_threshold_boundary_matches_cellprofiler(metric, single):
+@pytest.mark.parametrize(
+    "backend,single",
+    [("numpy", False), ("numpy", True), ("numba", False)],
+    ids=["multi-label", "single-mask", "numba-multi-label"],
+)
+def test_float32_threshold_boundary_matches_cellprofiler(metric, backend, single):
     first, second, labels = inputs()
-    function = getattr(coloc, "get_correlation_" + metric + ("_ind" if single else ""))
+    module = coloc
+    if backend == "numba":
+        pytest.importorskip("numba")
+        from cp_measure.core.numba import measurecolocalization as module
+    function = getattr(module, "get_correlation_" + metric + ("_ind" if single else ""))
     result = function(first, second, labels.astype(bool) if single else labels, thr=15)
     for key, values in result.items():
         if key.endswith("_1"):
