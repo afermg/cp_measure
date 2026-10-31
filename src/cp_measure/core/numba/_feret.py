@@ -29,7 +29,7 @@ from cp_measure.core.measureobjectsizeshape import (
     F_MAX_FERET_DIAMETER,
     F_MIN_FERET_DIAMETER,
 )
-from cp_measure.primitives.shapes import _stack
+from cp_measure.primitives.shapes import _stack, as_2d
 
 
 @njit(cache=True)
@@ -111,12 +111,9 @@ def _feret_2d(masks_2d: NDArray[numpy.integer]) -> dict[str, NDArray[numpy.float
 def _feret_image(
     masks: NDArray[numpy.integer],
 ) -> dict[str, NDArray[numpy.floating]]:
-    """Measure a 2D mask; return {} for a 3D volume, matching raw NumPy Feret.
-
-    A single-slice (1, Y, X) volume is still 3D. Keep this compatibility behavior
-    here; the featurizer already excludes Feret when measuring volumes.
-    """
-    return {} if numpy.ndim(masks) == 3 else _feret_2d(masks)
+    """Measure 2D or singleton-Z masks; skip other volumes, matching NumPy."""
+    measured_masks = as_2d(masks)
+    return {} if measured_masks is None else _feret_2d(measured_masks)
 
 
 def get_feret(
@@ -124,15 +121,11 @@ def get_feret(
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Feret diameters (2D only); a single image, or a batch -> list of dicts.
 
-    A batch is a list/tuple of images or a 4D ``(B, Z, Y, X)`` array; 3D volumes
-    yield ``{}``, as in the baseline. ``pixels`` is ignored — Feret is shape-only
-    — and kept only to match the ``(masks, pixels)`` measurement signature. Images
-    are dispatched by ``ndim`` rather than through ``to_bzyx``: normalising would
-    make a 2D image indistinguishable from a single-slice volume, which the
-    baseline measures differently (Feret vs ``{}``).
-
-    So a batch of 2D images must be a *list* of ``(Y, X)`` arrays: a ``(B, 1, Y, X)``
-    array is a batch of single-slice *volumes* and yields ``[{}, ...]``.
+    A batch is a list/tuple of images or a 4D ``(B, Z, Y, X)`` array. Singleton-Z
+    volumes use the 2D measurements; other volumes yield ``{}``, as in NumPy.
+    ``pixels`` is ignored — Feret is shape-only — and kept only to match the
+    ``(masks, pixels)`` measurement signature. The same Z-depth rule applies to
+    individual inputs and every batch entry.
     """
     masks_batched = isinstance(masks, (list, tuple)) or numpy.ndim(masks) == 4
     if not masks_batched:

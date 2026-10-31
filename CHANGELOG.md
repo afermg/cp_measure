@@ -4,6 +4,12 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `radial_distribution` sums intensities in float64. Integer images no longer
+  wrap around (uint8/uint16 results were wrong), and float32 results gain
+  precision (relative changes up to ~2e-4).
+
 ### Changed
 
 - **Breaking:** require Python 3.11 or newer. Remove the project's Python upper
