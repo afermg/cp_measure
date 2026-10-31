@@ -139,11 +139,17 @@ def test_noncontiguous_inputs(ref_fn, got_fn, dtype):
 
 @pytest.mark.parametrize("ref_fn,got_fn", BACKENDS, ids=["shape", "radial"])
 @pytest.mark.parametrize("depth", [1, 3])
-def test_raw_volume_including_singleton_is_empty(ref_fn, got_fn, depth):
+def test_volume_eligibility_depends_on_z_depth(ref_fn, got_fn, depth):
     mask = np.repeat(mask_scene("square")[None], depth, axis=0)
     pixels = np.ones(mask.shape)
-    assert ref_fn(mask, pixels) == got_fn(mask, pixels) == {}
-    assert got_fn([mask], [pixels]) == [{}]
+    if depth == 1:
+        expected = ref_fn(mask[0], pixels[0])
+        assert_same(expected, ref_fn(mask, pixels))
+        assert_same(expected, got_fn(mask, pixels))
+        assert_same(expected, got_fn([mask], [pixels])[0])
+    else:
+        assert ref_fn(mask, pixels) == got_fn(mask, pixels) == {}
+        assert got_fn([mask], [pixels]) == [{}]
 
 
 @pytest.mark.parametrize("feature", ["zernike", "radial_zernikes"])

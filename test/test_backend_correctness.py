@@ -118,6 +118,15 @@ def test_set_accelerator_numba_composes_with_numpy():
         assert core["radial_zernikes"].__module__ == (
             "cp_measure.core.numba.measureobjectintensitydistribution"
         )
+        assert core["radial_distribution"].__module__ == (
+            "cp_measure.core.numba.measureobjectintensitydistribution"
+        )
+        corr = cp_measure.bulk.get_correlation_measurements()
+        assert list(corr) == ["costes", "pearson", "manders_fold", "rwc"]
+        for feature in ("pearson", "manders_fold", "rwc", "costes"):
+            assert corr[feature].__module__ == (
+                "cp_measure.core.numba.measurecolocalization"
+            )
         # Every other feature stays on the numpy backend.
         assert core["sizeshape"].__module__ == "cp_measure.core.measureobjectsizeshape"
     finally:
@@ -131,7 +140,12 @@ def test_set_accelerator_numba_composes_with_numpy():
 
 @requires_numba
 @pytest.mark.parametrize(
-    "feature,mask_name", [("zernike", "masks"), ("radial_zernikes", "labels")]
+    "feature,mask_name",
+    [
+        ("zernike", "masks"),
+        ("radial_zernikes", "labels"),
+        ("radial_distribution", "labels"),
+    ],
 )
 def test_numba_accepts_numpy_keyword_names(feature, mask_name):
     """Switching the accelerator must not break callers using numpy's keywords."""

@@ -50,6 +50,7 @@ def get_granularity(
     channel axes. Output arrays are indexed densely by label ``1..max(mask)``.
     """
     masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
+    is_sequence = isinstance(masks, (list, tuple))
     results = [
         _granularity_one(
             m,
@@ -58,17 +59,27 @@ def get_granularity(
             image_sample_size,
             element_size,
             granular_spectrum_length,
+            spatial_ndim=(
+                numpy.ndim(masks[i]) if is_sequence else min(numpy.ndim(masks), 3)
+            ),
         )
-        for m, p in zip(masks_zyx, pixels_zyx)
+        for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx))
     ]
     return unwrap(results)
 
 
 def _granularity_one(
-    mask_zyx, pixels_zyx, subsample_size, image_sample_size, element_size, ng
+    mask_zyx,
+    pixels_zyx,
+    subsample_size,
+    image_sample_size,
+    element_size,
+    ng,
+    *,
+    spatial_ndim,
 ):
-    """Dispatch one ``(Z, Y, X)`` element: numba 2D path, else numpy baseline (3D)."""
-    if mask_zyx.shape[0] == 1:  # Z == 1 -> 2D image
+    """Preserve original spatial rank, including singleton-Z volumes (NumPy 3D)."""
+    if spatial_ndim == 2:
         return _granularity_2d(
             mask_zyx[0],
             pixels_zyx[0],
