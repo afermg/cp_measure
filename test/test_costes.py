@@ -6,6 +6,7 @@ import warnings
 
 import numpy as np
 import pytest
+from skimage.util import img_as_float
 
 from cp_measure.core import measurecolocalization as cp
 
@@ -46,22 +47,89 @@ def test_integer_float_and_single_multi_agree_without_mutation(case):
     mask = np.ones(a.shape, dtype=bool)
     kwargs = {"fast_costes": case["mode"]}
     integer = cp.get_correlation_costes_ind(a, b, mask, **kwargs)
-    floating = cp.get_correlation_costes_ind(
-        a.astype(float) / case["scale_max"],
-        b.astype(float) / case["scale_max"],
-        mask,
-        scale_max=case["scale_max"],
-        **kwargs,
-    )
+    for first, second in (
+        (a.astype(float) / case["scale_max"], b.astype(float) / case["scale_max"]),
+        (img_as_float(a), img_as_float(b)),
+    ):
+        floating = cp.get_correlation_costes_ind(
+            first, second, mask, scale_max=case["scale_max"], **kwargs
+        )
+        np.testing.assert_allclose(
+            list(integer.values()), list(floating.values()), rtol=1e-12
+        )
     multiple = cp.get_correlation_costes(a, b, mask.astype(int), **kwargs)
-    np.testing.assert_allclose(
-        list(integer.values()), list(floating.values()), rtol=1e-12
-    )
     np.testing.assert_allclose(
         list(integer.values()), np.array(list(multiple.values())).ravel(), rtol=1e-12
     )
     np.testing.assert_array_equal(a, before_a)
     np.testing.assert_array_equal(b, before_b)
+
+
+@pytest.mark.parametrize(
+    "public", [cp.get_correlation_costes_ind, cp.get_correlation_costes]
+)
+def test_equivalent_normalizations_do_not_change_costes(public):
+    # Reduced from #113: round-off alone changed finite coefficients from (0, 0)
+    # to approximately (0.503, 0.123) with the default threshold search.
+    a = np.array(
+        [43, 85, 88, 36, 90, 36, 61, 81, 89, 88, 79, 79, 48, 54], dtype=np.uint8
+    ).reshape(2, 7)
+    b = np.array([8, 8, 8, 8, 9, 9, 8, 8, 9, 9, 9, 9, 9, 10], dtype=np.uint8).reshape(
+        2, 7
+    )
+    mask = np.ones(
+        a.shape, dtype=bool if public is cp.get_correlation_costes_ind else int
+    )
+    expected = list(public(a, b, mask).values())
+    assert np.isfinite(expected).all()
+    for first, second in ((a / 255, b / 255), (img_as_float(a), img_as_float(b))):
+        first.setflags(write=False)
+        second.setflags(write=False)
+        got = public(first, second, mask, scale_max=255)
+        np.testing.assert_array_equal(list(got.values()), expected)
+        # Unrelated off-grid/nonfinite background must not disable normalization.
+        padded = public(
+            np.pad(first, 1, constant_values=0.123456),
+            np.pad(second, 1, constant_values=np.nan),
+            np.pad(mask, 1),
+            scale_max=255,
+        )
+        np.testing.assert_array_equal(list(padded.values()), expected)
+
+
+@pytest.mark.parametrize("scale", [255, 4095, 65535, 2**32 - 1])
+def test_float_grid_normalization_matches_integer_division(scale):
+    levels = np.array([0, 1, 33, 61, scale // 3, scale // 2, scale - 1, scale])
+    divided = levels / scale
+    multiplied = levels * (1.0 / scale)
+    multiplied.setflags(write=False)
+    np.testing.assert_array_equal(cp._canonical_costes_pixels(divided, scale), divided)
+    np.testing.assert_array_equal(
+        cp._canonical_costes_pixels(multiplied, scale), divided
+    )
+
+
+def test_float_grid_normalization_does_not_round_other_values():
+    # Even the next float beyond both encodings is not an exact encoding match.
+    nearby = np.nextafter(max(43 / 255, 43 * (1.0 / 255)), np.inf)
+    values = np.array(
+        [
+            0.123456,
+            nearby,
+            1e-320,
+            -0.1,
+            1.1,
+            np.finfo(float).max,
+            np.nan,
+            np.inf,
+            -np.inf,
+        ]
+    )
+    before = values.copy()
+    values.setflags(write=False)
+    with np.errstate(all="raise"):
+        got = cp._canonical_costes_pixels(values, 255)
+    np.testing.assert_array_equal(got, before)
 
 
 @pytest.mark.parametrize(

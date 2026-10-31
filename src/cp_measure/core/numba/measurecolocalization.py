@@ -212,12 +212,9 @@ def get_correlation_overlap(
 
 
 def _costes_pair(fi, si, scale, mode):
-    """Keep reference reductions and diagnostics around the compiled search.
-
-    When #118 lands, apply its shared per-object canonicalization here too,
-    before validation/regression/search; image-scale preparation alone does not
-    inherit that policy. Until then each encoding must match current main.
-    """
+    """Share canonicalization, reductions and diagnostics with the reference."""
+    fi = reference._canonical_costes_pixels(fi, scale)
+    si = reference._canonical_costes_pixels(si, scale)
     if not reference._valid_costes_pixels(fi, si):
         return numpy.nan, numpy.nan
     a, b = _regression_ab(fi, si, 0, fi.size)
@@ -258,8 +255,7 @@ def get_correlation_costes(
     preserve threshold inclusion. Undefined/near-constant searches use the
     reference implementation for diagnostics. See the NumPy API for details.
     """
-    # Share acquisition-scale preparation. The separate #118 per-object
-    # canonicalization belongs in _costes_pair when that change is integrated.
+    # Share acquisition-scale preparation; _costes_pair canonicalizes each object.
     first, second, scale = reference._prepare_costes_inputs(
         pixels_1, pixels_2, scale_max
     )

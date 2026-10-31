@@ -18,6 +18,14 @@ Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim 
 
 `legacy=True` restores the original intensity quantile conventions; the default uses NumPy's linear quartiles and the usual median absolute deviation. See the [`get_intensity` docstring](../src/cp_measure/core/measureobjectintensity.py#L139-L163) for formulas, including the different legacy MAD convention in 3D.
 
+## Costes integer-to-float normalization
+
+For integer images, Costes divides by `scale_max`; normalized floats require the same scale explicitly. Equivalent floating-point expressions such as `level / scale_max` and `level * (1 / scale_max)` can differ at round-off, which can otherwise change threshold decisions substantially (see [#117](https://github.com/afermg/cp_measure/issues/117)).
+
+Both public Costes functions recognize **exact** reciprocal-multiply encodings of integer acquisition-grid levels, as produced by `img_as_float`, and map them to the existing division encoding before fitting thresholds and computing coefficients. This is performed per object, without modifying caller inputs. Other float values are left unchanged: there is no blanket quantization or epsilon-based snapping of nearby values. Explicit lower-bit-depth scales, such as `4095` for 12-bit images in `uint16`, use the same rule.
+
+This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes. Existing threshold comparisons and undefined-result/NaN rules are unchanged.
+
 ## Singleton-Z measurement eligibility
 
 The 2D-only families (`radial_distribution`, `radial_zernikes`, shape `zernike`, and `feret`) use their 2D calculations when there is exactly one Z slice. They are not computed when there is more than one Z slice.
@@ -101,16 +109,11 @@ by the reference to preserve precise diagnostics. Near-constant subsets and
 correlations within a reduction-error bound of a search decision also use this
 compatibility path; no correlation is rounded or search cutoff moved.
 
-The pending [#118](https://github.com/afermg/cp_measure/pull/118) normalization
-canonicalization is **not** included. Each encoding currently matches NumPy,
-without promising equality between division and reciprocal-multiplication
-encodings. Both backends share image-scale preparation, but #118 canonicalizes
-inside its per-object `_costes_pair`, **not** `_prepare_costes_inputs`. Its
-integration must call the same canonicalization helper in the Numba
-`_costes_pair` before validation/regression/search; merging only #118's NumPy
-change would leave finite accelerated searches on the old policy. That
-propagation is already requested, not a new policy decision. Its regression
-case is checked against current main in the accelerator tests.
+Both backends call the same per-object normalization canonicalization before
+validation, regression and threshold search. Exact reciprocal-multiply
+acquisition-grid encodings therefore follow the same division encoding in the
+NumPy and Numba paths; arbitrary off-grid floats are unchanged. This is the
+normalization rule described above, not an epsilon-based threshold adjustment.
 
 No fused `get_correlation_all` dispatch is introduced. Costes supports matching
 2D, singleton-Z and true 3D inputs, and the existing explicit batch convention;
