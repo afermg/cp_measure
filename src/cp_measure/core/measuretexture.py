@@ -122,12 +122,20 @@ images represent two views of the same vectors. Images made in `GeoGebra`_.
 Technical notes
 ^^^^^^^^^^^^^^^
 
-To calculate the Haralick features, **MeasureTexture** normalizes the
-co-occurrence matrix at the per-object level by basing the intensity
-levels of the matrix on the maximum and minimum intensity observed
-within each object. This is beneficial for images in which the maximum
-intensities of the objects vary substantially because each object will
-have the full complement of levels.
+**MeasureTexture** quantizes intensities before extracting objects, using
+one fixed mapping for the whole image. It does not stretch the observed
+image or per-object minimum and maximum to fill the available gray levels.
+This follows the intensity-quantization convention in
+`CellProfiler 4.2.8 <https://github.com/CellProfiler/CellProfiler/blob/v4.2.8/cellprofiler/modules/measuretexture.py#L589-L607>`_.
+Each object's co-occurrence counts are normalized to probabilities, but
+that is distinct from rescaling its intensity range.
+
+Dim or low-contrast objects can therefore lose intensity variation during
+quantization. Zero-valued pixels, including foreground pixels quantized
+to zero, are excluded from co-occurrence pairs. A single retained nonzero
+level can yield finite features with zero contrast; a direction with no
+valid pairs makes all texture features for that object NaN. The requested
+number of gray levels does not guarantee that every object occupies them.
 
 References
 ^^^^^^^^^^
@@ -154,20 +162,85 @@ InverseDifferenceMoment SumAverage SumVariance SumEntropy Entropy
 DifferenceVariance DifferenceEntropy InfoMeas1 InfoMeas2""".split()
 
 
+def _prep(
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating],
+    scale: int,
+    gray_levels: int,
+) -> tuple[list, int]:
+    """Host preparation shared by every texture backend.
+
+    Returns ``(props, n_directions)``: the per-object crops, and how many
+    directions this image has (4 in 2D, 13 in 3D). Resolving the dimensionality
+    here keeps that rule in one place — a backend must not re-derive it from an
+    array it has already normalised, or a 2D image and a single-slice volume
+    become indistinguishable.
+    """
+    if scale < 1:
+        raise ValueError(f"scale must be at least 1 pixel, got {scale}")
+    if masks.shape != pixels.shape:
+        raise ValueError(
+            f"masks and pixels must have the same shape, got {masks.shape} "
+            f"and {pixels.shape}"
+        )
+    n_directions = 13 if pixels.ndim > 2 else 4
+
+    # mahotas.features.haralick bricks itself when provided a
+    # dtype larger than uint8 (version 1.4.3)
+    pixels = skimage.util.img_as_ubyte(pixels, force_copy=True)
+    pixels[~masks.astype(bool)] = 0
+    if gray_levels != 256:
+        pixels = skimage.exposure.rescale_intensity(
+            pixels, in_range=(0, 255), out_range=(0, gray_levels - 1)
+        ).astype(numpy.uint8)
+    return skimage.measure.regionprops(masks, pixels), n_directions
+
+
+def _pack(
+    features: NDArray[numpy.floating], scale: int, gray_levels: int
+) -> dict[str, NDArray[numpy.floating]]:
+    """``(n_directions, 13, n_objects)`` -> ``{Feature_scale_direction_levels: values}``."""
+    return {
+        "{}_{:d}_{:02d}_{:d}".format(name, scale, direction_i, gray_levels): values
+        for direction_i, direction_features in enumerate(features)
+        for name, values in zip(F_HARALICK, direction_features)
+    }
+
+
 def get_texture(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     scale: int = 3,
     gray_levels: int = 256,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """
+    """Per-object Haralick texture features.
+
+    Haralick features measure how often brightness values appear next to one
+    another inside each object:
+
+    1. Quantize the whole intensity image (see Notes), then crop the object.
+    2. Choose a direction and distance — for example, "3 pixels to the right".
+    3. For every valid pixel pair, record the brightness of the first pixel and
+       the brightness of the neighbouring pixel.
+    4. Store those counts in a table, the gray-level co-occurrence matrix (GLCM).
+    5. Turn that table into 13 summary measurements describing properties such as
+       contrast, uniformity, randomness/entropy and correlation.
+    6. Repeat for 4 directions in 2D, 13 directions in 3D.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+
     Parameters
     ----------
+    masks : integer array, 2D ``(Y, X)`` or 3D ``(Z, Y, X)``
+        Label image, contiguous ``1..N``, same shape as ``pixels``.
+    pixels : float array, same shape as ``masks``
+        Intensity image. Its dimensionality selects the directions measured:
+        4 in 2D, 13 in 3D.
     gray_levels : int, optional (default is 256)
-        Number of gray levels. Measuring at more levels gives you _potentially_
-        more detailed information about your image, but at the cost of somewhat
-        decreased processing speed (default is 256).
-    texture_scale : int, optional (default is 3)
+        Number of possible quantized levels, including zero, which is excluded
+        from co-occurrence pairs. Objects may occupy fewer levels. More levels
+        can retain finer intensity differences, at increased computational cost.
+    scale : int, optional (default is 3)
         You can specify the scale of texture to be measured, in pixel units; the
         texture scale is the distance between correlated intensities in the
         image. A higher number for the scale of texture measures larger patterns
@@ -184,55 +257,39 @@ def get_texture(
 
     Notes
     -----
-    Before processing, your image will be rescaled from its current pixel values
-    to 0 - [gray levels - 1]. The texture features will then be calculated.
+    Intensities are converted to uint8 with ``skimage.util.img_as_ubyte``
+    before objects are extracted. Nonnegative float values in ``[0, 1]`` are
+    mapped to ``[0, 255]``; other dtypes follow scikit-image's conversion rules.
+    For ``gray_levels != 256``, these uint8 values are then rescaled from the
+    fixed input range ``[0, 255]`` to ``[0, gray_levels - 1]`` and cast to uint8.
+    Neither step uses the observed image or per-object minimum and maximum.
+
+    Co-occurrence pairs containing zero are excluded, including foreground
+    pixels whose intensities quantize to zero. Dim or low-contrast objects can
+    collapse to a single nonzero level and return finite but uninformative
+    texture features (e.g. zero contrast). If any measured direction has no
+    valid pairs at the requested scale, all texture features for that object
+    are NaN. A genuinely uniform object with a nonzero quantized intensity
+    and valid pairs in every direction instead returns finite features,
+    including zero contrast and an angular second moment of one.
 
     In all CellProfiler 2 versions, this value was fixed at 8; in all
     CellProfiler 3 versions it was fixed at 256.  The minimum number of levels is
     2, the maximum is 256.
     """
-    unique_labels = numpy.unique(masks)
-    unique_labels = unique_labels[unique_labels > 0]
-
-    # Modified to use the number of dimensions in pixels to determine the number of directions
-    n_directions = 13 if pixels.ndim > 2 else 4
-
     # MODIFIED: We assume that the mask provided has the same shape
     # as pixels, thus no cropping is performed
+    props, n_directions = _prep(masks, pixels, scale, gray_levels)
 
-    # mahotas.features.haralick bricks itself when provided a
-    # dtype larger than uint8 (version 1.4.3)
-    pixels = skimage.util.img_as_ubyte(pixels, force_copy=True)
-    pixels[~masks.astype(bool)] = 0
-    if gray_levels != 256:
-        pixels = skimage.exposure.rescale_intensity(
-            pixels, in_range=(0, 255), out_range=(0, gray_levels - 1)
-        ).astype(numpy.uint8)
-    props = skimage.measure.regionprops(masks, pixels)
-
-    features = numpy.empty((n_directions, 13, len(unique_labels)))
-
+    features = numpy.empty((n_directions, 13, len(props)))
     for index, prop in enumerate(props):
-        label_data = prop["intensity_image"]
         try:
             features[:, :, index] = mahotas.features.haralick(
-                label_data, distance=scale, ignore_zeros=True
+                prop.image_intensity, distance=scale, ignore_zeros=True
             )
         except ValueError:
             features[:, :, index] = numpy.nan
 
     # MODIFIED: Reconstructed name:
     # Texture_{X}_{scale}_{direction_id}_{graylevels}
-    results = {}
-    for direction_i, direction_features in enumerate(features):
-        for feature_name, values in zip(F_HARALICK, direction_features):
-            results[
-                "{}_{:d}_{:02d}_{:d}".format(
-                    feature_name,
-                    scale,
-                    direction_i,
-                    gray_levels,
-                )
-            ] = values
-
-    return results
+    return _pack(features, scale, gray_levels)

@@ -3,8 +3,10 @@ Wrapper to fetch measurement functions in bulk. We are keeping the ugly filename
 match the original names. This may change in the future.
 """
 
+from functools import partial
 from typing import Callable
 
+from cp_measure._sanitize import sanitize as _sanitize
 from cp_measure.core import (
     measurecolocalization,
     measuregranularity,
@@ -48,17 +50,54 @@ _3D_FEATURES = ("intensity", "sizeshape", "texture", "granularity")
 def _numba_registries() -> dict[str, dict[str, Callable]]:
     """Registries for the 'numba' accelerator.
 
-    Composes the numba implementations (currently ``intensity`` only) with the
-    numpy implementations of every other feature — a single global "numba"
-    selection still yields a full, working feature set, accelerated where a
-    numba backend exists. This is explicit per-function composition, NOT an
-    error-driven fallback.
+    Composes the numba implementations (``intensity``, ``texture``, ``feret``,
+    ``granularity``, ``zernike``, ``radial_zernikes``, ``radial_distribution``,
+    ``pearson``, ``manders_fold``, ``rwc``, ``costes``) with the numpy implementations
+    of every other feature — a
+    single global "numba" selection still yields a full, working feature set,
+    accelerated where a numba backend exists. This is explicit per-function
+    composition, NOT an error-driven fallback.
     """
-    from cp_measure.core.numba import get_intensity as _numba_intensity
+    from cp_measure.core.numba.measurecolocalization import (
+        get_correlation_costes as _numba_costes,
+        get_correlation_manders_fold as _numba_manders_fold,
+        get_correlation_pearson as _numba_pearson,
+        get_correlation_rwc as _numba_rwc,
+    )
+    from cp_measure.core.numba._feret import get_feret as _numba_feret
+    from cp_measure.core.numba.measuregranularity import (
+        get_granularity as _numba_granularity,
+    )
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as _numba_intensity,
+    )
+    from cp_measure.core.numba.measureobjectintensitydistribution import (
+        get_radial_distribution as _numba_radial_distribution,
+        get_radial_zernikes as _numba_radial_zernikes,
+    )
+    from cp_measure.core.numba.measureobjectsizeshape import (
+        get_zernike as _numba_zernike,
+    )
+    from cp_measure.core.numba.measuretexture import get_texture as _numba_texture
 
     return {
-        "core": {**_CORE, "intensity": _numba_intensity},
-        "correlation": _CORRELATION,
+        "core": {
+            **_CORE,
+            "intensity": _numba_intensity,
+            "texture": _numba_texture,
+            "feret": _numba_feret,
+            "granularity": _numba_granularity,
+            "zernike": _numba_zernike,
+            "radial_zernikes": _numba_radial_zernikes,
+            "radial_distribution": _numba_radial_distribution,
+        },
+        "correlation": {
+            **_CORRELATION,
+            "pearson": _numba_pearson,
+            "manders_fold": _numba_manders_fold,
+            "rwc": _numba_rwc,
+            "costes": _numba_costes,
+        },
     }
 
 
@@ -88,18 +127,58 @@ def _dispatch(name: str) -> dict[str, Callable]:
     )
 
 
-def get_core_measurements() -> dict[str, Callable]:
-    return _dispatch("core")
+# Features whose result honours the ``legacy`` percentile convention (see
+# cp_measure.core.measureobjectintensity.get_intensity). Extend as more
+# features gain a legacy/new split.
+_LEGACY_FEATURES = ("intensity",)
 
 
-def get_core_measurements_3d() -> dict[str, Callable]:
-    """Return only measurements that support 3D input."""
-    core = _dispatch("core")
-    return {k: core[k] for k in _3D_FEATURES}
+def _apply_legacy(core: dict[str, Callable], legacy: bool) -> dict[str, Callable]:
+    """Bind ``legacy=True`` into the features that honour it; no-op when False."""
+    if not legacy:
+        return core
+    return {
+        name: (partial(fn, legacy=True) if name in _LEGACY_FEATURES else fn)
+        for name, fn in core.items()
+    }
 
 
-def get_correlation_measurements() -> dict[str, Callable]:
-    return _dispatch("correlation")
+def _maybe_sanitize(funcs: dict[str, Callable], sanitize: bool) -> dict[str, Callable]:
+    """Wrap each function to relabel arbitrary IDs to ``1..N``; no-op when False."""
+    if not sanitize:
+        return funcs
+    return {name: _sanitize(fn) for name, fn in funcs.items()}
+
+
+def get_core_measurements(
+    legacy: bool = False, sanitize: bool = True
+) -> dict[str, Callable]:
+    """Core per-object measurement functions.
+
+    ``legacy`` (default False) selects the original CellProfiler ``n*q`` percentile
+    convention for the intensity quartile/MAD features instead of the default
+    ``numpy.percentile`` ``(n-1)*q``; see
+    :func:`cp_measure.core.measureobjectintensity.get_intensity`.
+
+    ``sanitize`` (default True) wraps each function so non-contiguous label IDs
+    (gaps or arbitrary values) are relabelled to ``1..N`` before the call. Set
+    False only when the caller has already guaranteed contiguous labels.
+    """
+    core = _apply_legacy(_dispatch("core"), legacy)
+    return _maybe_sanitize(core, sanitize)
+
+
+def get_core_measurements_3d(
+    legacy: bool = False, sanitize: bool = True
+) -> dict[str, Callable]:
+    """Return only measurements that support 3D input (see ``legacy``/``sanitize`` above)."""
+    core = {k: _dispatch("core")[k] for k in _3D_FEATURES}
+    return _maybe_sanitize(_apply_legacy(core, legacy), sanitize)
+
+
+def get_correlation_measurements(sanitize: bool = True) -> dict[str, Callable]:
+    """Correlation/colocalization measurement functions (see ``sanitize`` above)."""
+    return _maybe_sanitize(_dispatch("correlation"), sanitize)
 
 
 def get_multimask_measurements() -> dict[str, Callable]:

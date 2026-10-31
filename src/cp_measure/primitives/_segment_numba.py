@@ -1,9 +1,9 @@
 """Numba segment kernels (single-threaded, cached).
 
 These are the numba implementation of the segment-reduce / segment-quantile
-primitives. They loop over the flat ``(values, seg0, coords)`` arrays produced
-by :mod:`cp_measure.primitives.segment` — no image shape, no batch axis — so one
-kernel set covers 2D, 3D, and (future) batched inputs unchanged.
+primitives. They loop over the flat ``(values, seg0, coords)`` arrays that
+:func:`flatten_numba` builds — no image shape, no batch axis — so one kernel set
+covers 2D, 3D, and (future) batched inputs unchanged.
 
 All kernels are ``@njit(cache=True)`` and serial: no ``prange``/``nogil``.
 Parallelism is the job of the (future) batch layer over images, not the kernel.
@@ -14,12 +14,14 @@ from numba import njit
 
 
 @njit(cache=True)
-def flatten_numba(masks, pixels, lut):
+def flatten_numba(masks, pixels):
     """Flatten a labeled (Z, Y, X) image to ``(values, seg0, xc, yc, zc)``.
 
     Two grid scans (count, then fill) replace the numpy ``(masks>0)&isfinite``
     mask + ``numpy.nonzero`` + fancy-index gathers; coordinates are the loop
     indices. Background and non-finite pixels are dropped, in C (raster) order.
+    Labels are the contiguous ``1..N`` cp_measure guarantees (see
+    :mod:`cp_measure._sanitize`), so the segment index is ``label - 1``.
     ``masks`` and ``pixels`` must be C-contiguous; ``pixels`` may be any float
     dtype (kept values are upcast into the float64 ``values`` output).
     """
@@ -46,7 +48,7 @@ def flatten_numba(masks, pixels, lut):
                 if not np.isfinite(v):
                     continue
                 values[i] = v
-                seg0[i] = lut[L]
+                seg0[i] = L - 1
                 xc[i] = x
                 yc[i] = y
                 zc[i] = z
@@ -168,13 +170,14 @@ def segment_resid_sumsq(values, seg0, n, mean):
 
 
 @njit(cache=True)
-def _interp(sorted_seg, n, frac):
-    """Linear interpolation at position ``n * frac`` within a sorted segment.
+def _interp(sorted_seg, n, frac, legacy):
+    """Linear interpolation within a sorted segment at the chosen convention.
 
-    Matches the reference's ``cumsum(areas)``-offset interpolation: the local
-    position is ``count * frac``; clamp the upper neighbour at the last element.
+    ``legacy=True`` uses ``pos = n * frac`` (the CellProfiler / cumsum-offset
+    convention); ``legacy=False`` uses ``pos = (n - 1) * frac``
+    (``numpy.percentile`` 'linear'). Upper neighbour clamped at the last element.
     """
-    pos = n * frac
+    pos = n * frac if legacy else (n - 1) * frac
     lo = int(pos)
     if lo > n - 1:
         lo = n - 1
@@ -186,12 +189,14 @@ def _interp(sorted_seg, n, frac):
 
 
 @njit(cache=True)
-def segment_quantiles(values, seg0, counts, n, mad_frac):
+def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
     """Per-segment quartiles/median + MAD via scatter-into-segments + sort.
 
     Builds CSR offsets from ``counts``, scatters values into one flat buffer,
-    sorts each segment slice in place, and interpolates. MAD reuses the sorted
-    absolute deviations from the median at ``mad_frac`` (= 1 / original ndim).
+    sorts each segment slice in place, and interpolates with the convention
+    selected by ``legacy`` (see :func:`_interp`). MAD reuses the sorted absolute
+    deviations from the median: in legacy mode at ``mad_frac`` (= 1 / original
+    ndim), otherwise the textbook median.
     """
     starts = np.zeros(n, np.int64)
     acc = 0
@@ -219,10 +224,44 @@ def segment_quantiles(values, seg0, counts, n, mad_frac):
         s = starts[k]
         seg = buf[s : s + cnt]
         seg.sort()
-        lq[k] = _interp(seg, cnt, 0.25)
-        med[k] = _interp(seg, cnt, 0.5)
-        uq[k] = _interp(seg, cnt, 0.75)
+        lq[k] = _interp(seg, cnt, 0.25, legacy)
+        med[k] = _interp(seg, cnt, 0.5, legacy)
+        uq[k] = _interp(seg, cnt, 0.75, legacy)
         ad = np.abs(seg - med[k])
         ad.sort()
-        mad[k] = _interp(ad, cnt, mad_frac)
+        mad[k] = _interp(ad, cnt, mad_frac if legacy else 0.5, legacy)
     return lq, med, uq, mad
+
+
+@njit(cache=True)
+def flatten_pairs_grouped(masks, pix1, pix2, offsets):
+    """Flatten two co-registered ``(Z, Y, X)`` channels to per-object blocks.
+
+    Returns ``(g1, g2)`` where object ``k`` owns the contiguous slices
+    ``g1[offsets[k] : offsets[k + 1]]`` and ``g2[...]``. Both channels are
+    gathered at every ``masks > 0`` pixel in one raster scan, so ``g1`` and
+    ``g2`` stay aligned. Unlike :func:`flatten_numba`, non-finite pixels are
+    KEPT — this mirrors the colocalization reference's ``pixels[mask]``
+    extraction, which applies no finiteness filter.
+
+    A SINGLE scatter scan: ``offsets`` (the CSR block bounds, length ``n + 1``)
+    is precomputed from a ``bincount``, so the count scan this kernel used to do
+    is gone. Labels are the contiguous ``1..N`` cp_measure guarantees (see
+    :mod:`cp_measure._sanitize`), so the segment index is ``label - 1`` — no
+    lookup table. ``masks`` must be C-contiguous integer.
+    """
+    Z, Y, X = masks.shape
+    g1 = np.empty(offsets[-1], np.float64)
+    g2 = np.empty(offsets[-1], np.float64)
+    fill = offsets[:-1].copy()
+    for z in range(Z):
+        for y in range(Y):
+            for x in range(X):
+                L = masks[z, y, x]
+                if L > 0:
+                    k = L - 1
+                    p = fill[k]
+                    g1[p] = pix1[z, y, x]
+                    g2[p] = pix2[z, y, x]
+                    fill[k] = p + 1
+    return g1, g2

@@ -3,11 +3,18 @@ from typing import Optional
 from numpy.typing import NDArray
 
 import centrosome.cpmorphology
-import centrosome.zernike
 import numpy
 import scipy.ndimage
 import skimage.measure
-from cp_measure.utils import masks_to_ijv, _ensure_np_scalar
+from centrosome import zernike
+from cp_measure.primitives._moments import (
+    axes_eccentricity_orientation,
+    inertia_2d,
+    moment_feature_dict,
+    spatial_moments_2d,
+)
+from cp_measure.primitives.shapes import as_2d
+from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
 MeasureObjectSizeShape
@@ -573,7 +580,10 @@ def get_sizeshape(
     new_features: bool = True,
     spacing: Optional[tuple[float, ...]] = None,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """Compute the measurements for multiple object masks."""
+    """Compute the size/shape measurements for multiple object masks.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
     # Properties available for both 2d and 3d
     desired_properties = [
         "image",
@@ -585,39 +595,25 @@ def get_sizeshape(
         "centroid",
         "euler_number",
         "extent",
-        "axis_major_length",
-        "axis_minor_length",
     ]
 
     # Features not in CellProfiler 4
     if new_features:
         desired_properties += ["area_filled"]
 
-    # 2d specific properties
     if masks.ndim == 2:
-        desired_properties += [
-            "eccentricity",
-            "orientation",
-            "perimeter",
-            "solidity",
-        ]
+        # 2D requests NOTHING moment-related from regionprops: the spatial / central / normalized
+        # / Hu moments, the inertia tensor, AND the axis lengths / eccentricity / orientation are
+        # all derived from the `spatial_moments_2d` central moments below (option B), so
+        # regionprops never runs its per-region moment einsum.
+        desired_properties += ["perimeter", "solidity"]
         if new_features:
             desired_properties += ["perimeter_crofton"]
-
-    if calculate_advanced:
-        if masks.ndim == 2:
-            desired_properties += [
-                "inertia_tensor",
-                "inertia_tensor_eigvals",
-                "moments",
-                "moments_hu",
-                "moments_central",
-                "moments_normalized",
-            ]
-
-        else:
+    else:
+        # 3D: axis lengths still come from regionprops (3D moments are out of scope here).
+        desired_properties += ["axis_major_length", "axis_minor_length"]
+        if calculate_advanced:
             desired_properties += ["solidity"]
-
             # These advanced props were not in CP4 for 3D images
             if new_features:
                 desired_properties += [
@@ -629,11 +625,20 @@ def get_sizeshape(
                 ]
 
     labels = masks
-    nobjects = (numpy.unique(masks) > 0).sum()
+    nobjects = int(masks.max())  # contiguous 1..N (see cp_measure._sanitize)
     results: dict[str, NDArray[numpy.floating]] = {}
     if labels.ndim == 2:
         props = skimage.measure.regionprops_table(
             labels, pixels, properties=desired_properties
+        )
+
+        # Option B: every moment-derived 2D feature (spatial / central / normalized / Hu moments,
+        # the inertia tensor, AND axis lengths / eccentricity / orientation) comes from this one
+        # batched-moment pass, so regionprops above ran no moment einsum.
+        raw, central, normalized, hu = spatial_moments_2d(labels)
+        inertia = inertia_2d(central)
+        axis_major, axis_minor, eccentricity, orientation = (
+            axes_eccentricity_orientation(inertia)
         )
 
         formfactor = 4.0 * numpy.pi * props["area"] / props["perimeter"] ** 2
@@ -644,21 +649,14 @@ def get_sizeshape(
         median_radius = numpy.zeros(nobjects)
         mean_radius = numpy.zeros(nobjects)
         for index, mini_image in enumerate(props["image"]):
-            # Pad image to assist distance tranform
+            # Pad image to assist distance transform
             mini_image = numpy.pad(mini_image, 1)
             distances = scipy.ndimage.distance_transform_edt(mini_image)
 
-            max_radius[index] = _ensure_np_scalar(
-                scipy.ndimage.maximum(distances, mini_image)
-            )
-            mean_radius[index] = _ensure_np_scalar(
-                scipy.ndimage.mean(distances, mini_image)
-            )
-            median_radius[index] = _ensure_np_scalar(
-                centrosome.cpmorphology.median_of_labels(
-                    distances, mini_image.astype("int"), [1]
-                )
-            )
+            inside = distances[mini_image]
+            max_radius[index] = inside.max()
+            mean_radius[index] = inside.mean()
+            median_radius[index] = numpy.median(inside)
 
         results |= {
             F_AREA: props["area"],
@@ -666,10 +664,10 @@ def get_sizeshape(
             F_CONVEX_AREA: props["area_convex"],
             F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
             F_PERIMETER: props["perimeter"],
-            F_MAJOR_AXIS_LENGTH: props["axis_major_length"],
-            F_MINOR_AXIS_LENGTH: props["axis_minor_length"],
-            F_ECCENTRICITY: props["eccentricity"],
-            F_ORIENTATION: props["orientation"] * (180 / numpy.pi),
+            F_MAJOR_AXIS_LENGTH: axis_major,
+            F_MINOR_AXIS_LENGTH: axis_minor,
+            F_ECCENTRICITY: eccentricity,
+            F_ORIENTATION: orientation * (180 / numpy.pi),
             F_CENTER_X: props["centroid-1"],
             F_CENTER_Y: props["centroid-0"],
             F_MIN_X: props["bbox-1"],
@@ -693,61 +691,10 @@ def get_sizeshape(
             }
 
         if calculate_advanced:
-            results |= {
-                F_SPATIAL_MOMENT_0_0: props["moments-0-0"],
-                F_SPATIAL_MOMENT_0_1: props["moments-0-1"],
-                F_SPATIAL_MOMENT_0_2: props["moments-0-2"],
-                F_SPATIAL_MOMENT_0_3: props["moments-0-3"],
-                F_SPATIAL_MOMENT_1_0: props["moments-1-0"],
-                F_SPATIAL_MOMENT_1_1: props["moments-1-1"],
-                F_SPATIAL_MOMENT_1_2: props["moments-1-2"],
-                F_SPATIAL_MOMENT_1_3: props["moments-1-3"],
-                F_SPATIAL_MOMENT_2_0: props["moments-2-0"],
-                F_SPATIAL_MOMENT_2_1: props["moments-2-1"],
-                F_SPATIAL_MOMENT_2_2: props["moments-2-2"],
-                F_SPATIAL_MOMENT_2_3: props["moments-2-3"],
-                F_CENTRAL_MOMENT_0_0: props["moments_central-0-0"],
-                F_CENTRAL_MOMENT_0_1: props["moments_central-0-1"],
-                F_CENTRAL_MOMENT_0_2: props["moments_central-0-2"],
-                F_CENTRAL_MOMENT_0_3: props["moments_central-0-3"],
-                F_CENTRAL_MOMENT_1_0: props["moments_central-1-0"],
-                F_CENTRAL_MOMENT_1_1: props["moments_central-1-1"],
-                F_CENTRAL_MOMENT_1_2: props["moments_central-1-2"],
-                F_CENTRAL_MOMENT_1_3: props["moments_central-1-3"],
-                F_CENTRAL_MOMENT_2_0: props["moments_central-2-0"],
-                F_CENTRAL_MOMENT_2_1: props["moments_central-2-1"],
-                F_CENTRAL_MOMENT_2_2: props["moments_central-2-2"],
-                F_CENTRAL_MOMENT_2_3: props["moments_central-2-3"],
-                F_NORMALIZED_MOMENT_0_0: props["moments_normalized-0-0"],
-                F_NORMALIZED_MOMENT_0_1: props["moments_normalized-0-1"],
-                F_NORMALIZED_MOMENT_0_2: props["moments_normalized-0-2"],
-                F_NORMALIZED_MOMENT_0_3: props["moments_normalized-0-3"],
-                F_NORMALIZED_MOMENT_1_0: props["moments_normalized-1-0"],
-                F_NORMALIZED_MOMENT_1_1: props["moments_normalized-1-1"],
-                F_NORMALIZED_MOMENT_1_2: props["moments_normalized-1-2"],
-                F_NORMALIZED_MOMENT_1_3: props["moments_normalized-1-3"],
-                F_NORMALIZED_MOMENT_2_0: props["moments_normalized-2-0"],
-                F_NORMALIZED_MOMENT_2_1: props["moments_normalized-2-1"],
-                F_NORMALIZED_MOMENT_2_2: props["moments_normalized-2-2"],
-                F_NORMALIZED_MOMENT_2_3: props["moments_normalized-2-3"],
-                F_NORMALIZED_MOMENT_3_0: props["moments_normalized-3-0"],
-                F_NORMALIZED_MOMENT_3_1: props["moments_normalized-3-1"],
-                F_NORMALIZED_MOMENT_3_2: props["moments_normalized-3-2"],
-                F_NORMALIZED_MOMENT_3_3: props["moments_normalized-3-3"],
-                F_HU_MOMENT_0: props["moments_hu-0"],
-                F_HU_MOMENT_1: props["moments_hu-1"],
-                F_HU_MOMENT_2: props["moments_hu-2"],
-                F_HU_MOMENT_3: props["moments_hu-3"],
-                F_HU_MOMENT_4: props["moments_hu-4"],
-                F_HU_MOMENT_5: props["moments_hu-5"],
-                F_HU_MOMENT_6: props["moments_hu-6"],
-                F_INERTIA_TENSOR_0_0: props["inertia_tensor-0-0"],
-                F_INERTIA_TENSOR_0_1: props["inertia_tensor-0-1"],
-                F_INERTIA_TENSOR_1_0: props["inertia_tensor-1-0"],
-                F_INERTIA_TENSOR_1_1: props["inertia_tensor-1-1"],
-                F_INERTIA_TENSOR_EIGENVALUES_0: props["inertia_tensor_eigvals-0"],
-                F_INERTIA_TENSOR_EIGENVALUES_1: props["inertia_tensor_eigvals-1"],
-            }
+            # Spatial / central / normalized / Hu moments and the inertia tensor all come from the
+            # batched `central` + the single `inertia_2d` computed above — regionprops ran no
+            # moment einsum. moment_feature_dict owns the 53 feature names / orders.
+            results |= moment_feature_dict(raw, central, normalized, hu, inertia)
 
         if new_features:
             results |= {
@@ -1015,34 +962,47 @@ def get_zernike(
     pixels: NDArray[numpy.floating] | None,
     zernike_numbers: int = 9,
 ) -> dict[str, NDArray[numpy.floating]]:
-    #
-    # Zernike features (2D only)
-    #
-    if masks.ndim == 3:
+    """Zernike shape features (including singleton-Z volumes); pixels are unused.
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
+    measured_masks = as_2d(masks)
+    if measured_masks is None:
         return {}
-    unique_indices = numpy.unique(masks)
-    unique_indices = unique_indices[unique_indices > 0]
-    indices = list(range(1, len(unique_indices) + 1))
-    labels = masks
-    zernike_numbers = centrosome.zernike.get_zernike_indexes(zernike_numbers + 1)
+    masks = measured_masks
+    zernike_indexes = zernike.get_zernike_indexes(zernike_numbers + 1)
 
-    zf_l = centrosome.zernike.zernike(zernike_numbers, labels, indices)
-    results = {}
-    for (n, m), z in zip(zernike_numbers, zf_l.transpose()):  # type: ignore[call-overload]
-        results[f"Zernike_{n}_{m}"] = z
+    real_sums, imag_sums, radii, _counts = _zernike_scores(masks, zernike_indexes)
+    return _zernike_features(real_sums, imag_sums, radii, zernike_indexes)
 
-    return results
+
+def _zernike_features(
+    real_sums: NDArray[numpy.floating],
+    imag_sums: NDArray[numpy.floating],
+    radii: NDArray[numpy.floating],
+    zernike_indexes: NDArray[numpy.integer],
+) -> dict[str, NDArray[numpy.floating]]:
+    """Name and normalise the moment sums; shared with the numba backend."""
+    areas = numpy.pi * radii * radii
+    with numpy.errstate(divide="ignore", invalid="ignore"):
+        score = numpy.sqrt(real_sums**2 + imag_sums**2) / areas[:, numpy.newaxis]
+
+    return {f"Zernike_{n}_{m}": score[:, i] for i, (n, m) in enumerate(zernike_indexes)}
 
 
 def get_feret(
     masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
 ) -> dict[str, NDArray[numpy.floating]]:
-    # Feret diameter (2D only)
-    if masks.ndim == 3:
+    """Feret diameters (2D calculations, including singleton-Z volumes).
+
+    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    """
+    measured_masks = as_2d(masks)
+    if measured_masks is None:
         return {}
+    masks = measured_masks
     ijv = masks_to_ijv(masks)
-    indices = numpy.unique(ijv[:, 2])
-    indices = indices[indices > 0]
+    indices = numpy.arange(1, int(masks.max()) + 1)  # contiguous 1..N
     chulls, chull_counts = centrosome.cpmorphology.convex_hull_ijv(ijv, indices)
     #
     # Feret diameter

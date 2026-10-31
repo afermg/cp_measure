@@ -39,7 +39,6 @@ from cp_measure.core.measureobjectintensity import (
     STD_INTENSITY_EDGE,
     UPPER_QUARTILE_INTENSITY,
 )
-from cp_measure.primitives.segment import label_to_idx_lut
 from cp_measure.primitives.shapes import to_bzyx
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
@@ -55,6 +54,7 @@ def get_intensity(
     masks,
     pixels,
     edge_measurements: bool = True,
+    legacy: bool = False,
 ):
     """Per-object intensity features; accepts a single image/volume or a batch.
 
@@ -63,10 +63,17 @@ def get_intensity(
     :func:`cp_measure.primitives.shapes.to_bzyx` for the accepted shapes; a single
     image is the ``B == 1`` case of one batched code path.
     """
+    if isinstance(pixels, (list, tuple)):
+        spatial_ndims = [numpy.asarray(p).ndim for p in pixels]
+    else:
+        pixels_array = numpy.asarray(pixels)
+        spatial_ndims = (
+            [3] * len(pixels_array) if pixels_array.ndim == 4 else [pixels_array.ndim]
+        )
     masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
     results = [
-        _intensity_volume(m, p, edge_measurements)
-        for m, p in zip(masks_zyx, pixels_zyx)
+        _intensity_volume(m, p, edge_measurements, legacy, spatial_ndim)
+        for m, p, spatial_ndim in zip(masks_zyx, pixels_zyx, spatial_ndims)
     ]
     return unwrap(results)
 
@@ -75,18 +82,21 @@ def _intensity_volume(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
+    legacy: bool = False,
+    spatial_ndim: int = 3,
 ) -> dict[str, NDArray[numpy.floating]]:
     """Intensity features for one ``(Z, Y, X)`` volume (a 2D image is ``Z == 1``).
 
     ``masks`` is a labeled array where 0 is background. A ``(1, Y, X)`` mask paired
     with a ``(Z, Y, X)`` image is the 2D-mask-on-stack broadcast (preserved from the
-    original backend). The MAD fraction follows the input dimensionality — 1/2 for a
-    2D image (``Z == 1``), 1/3 for a true volume — matching the numpy baseline's
-    ``1 / pixels.ndim``.
+    original backend). ``spatial_ndim`` preserves whether the caller supplied a
+    2D image or a 3D volume after both are normalized to ``(Z, Y, X)``; in
+    particular, a genuine singleton-Z volume retains the NumPy baseline's 1/3
+    legacy MAD fraction rather than being treated as 2D.
     """
-    orig_ndim = 2 if pixels.shape[0] == 1 else 3
+    orig_ndim = spatial_ndim
 
-    lut, nobjects = label_to_idx_lut(masks)
+    nobjects = int(masks.max())
 
     integrated_intensity = numpy.zeros(nobjects)
     mean_intensity = numpy.zeros(nobjects)
@@ -108,7 +118,6 @@ def _intensity_volume(
     values, seg0, xc, yc, zc = flatten_numba(
         numpy.ascontiguousarray(masks),
         numpy.ascontiguousarray(pixels),
-        lut,
     )
     has_objects = values.size > 0
 
@@ -152,7 +161,7 @@ def _intensity_volume(
             median_intensity,
             upper_quartile_intensity,
             mad_intensity,
-        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim)
+        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim, legacy)
 
     if edge_measurements:
         integrated_intensity_edge = numpy.zeros(nobjects)
@@ -168,7 +177,7 @@ def _intensity_volume(
         else:
             emask = skimage.segmentation.find_boundaries(masks, mode="inner") > 0
         e_values = pixels[emask].astype(numpy.float64)
-        e_seg0 = lut[masks[emask]]
+        e_seg0 = masks[emask] - 1
 
         if e_values.size > 0:
             ecount, esum, emin, emax = segment_stats(e_values, e_seg0, nobjects)
