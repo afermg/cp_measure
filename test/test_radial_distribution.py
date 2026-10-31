@@ -67,3 +67,16 @@ def test_radial_distribution_is_independent_of_other_labels(scaled, maximum_radi
     for key, actual in together.items():
         expected = numpy.concatenate([result[key] for result in separate])
         numpy.testing.assert_array_equal(actual, expected, err_msg=key)
+
+
+@pytest.mark.parametrize("dtype", [numpy.uint8, numpy.uint16, numpy.float32])
+def test_radial_distribution_sums_in_float64(dtype):
+    """Integer images must not wrap around in the per-bin sums."""
+    labels = numpy.zeros((40, 40), numpy.int32)
+    labels[2:38, 2:38] = 1
+    pixels = numpy.full(labels.shape, 200, dtype)
+    pixels[::3] = 7
+    got = get_radial_distribution(labels, pixels)
+    expected = get_radial_distribution(labels, pixels.astype(numpy.float64))
+    for key in expected:
+        numpy.testing.assert_allclose(got[key], expected[key], rtol=1e-12, err_msg=key)

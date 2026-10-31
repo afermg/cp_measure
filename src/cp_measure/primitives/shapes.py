@@ -34,6 +34,29 @@ import numpy
 from numpy.typing import NDArray
 
 
+def as_2d(masks: NDArray) -> NDArray | None:
+    """View the only Z slice for a 2D-only measurement; skip other volumes.
+
+    This is a measurement eligibility rule, not a change to input dimensionality.
+    Genuinely 3D measurements must retain the caller's spatial rank.
+    """
+    if masks.ndim == 3:
+        return masks[0] if masks.shape[0] == 1 else None
+    if masks.ndim != 2:
+        raise ValueError("expected one 2D image or 3D volume")
+    return masks
+
+
+def as_2d_pair(masks: NDArray, pixels: NDArray) -> tuple[NDArray, NDArray] | None:
+    """Apply :func:`as_2d` to matching labels/intensities without broadcasting."""
+    measured_masks = as_2d(masks)
+    if measured_masks is None:
+        return None
+    if masks.shape != pixels.shape:
+        raise ValueError("labels and pixels must have matching shapes")
+    return measured_masks, pixels[0] if pixels.ndim == 3 else pixels
+
+
 def _to_zyx(arr: NDArray) -> NDArray:
     """Promote a single 2D/3D image to ``(Z, Y, X)`` (2D gets a unit Z axis)."""
     a = numpy.asarray(arr)
