@@ -69,18 +69,17 @@ def get_radial_distribution(
 
     Matches the NumPy reference; each object is processed on its own crop. Single
     image/volume or batch; 2D only. Measured entries require matching label and
-    intensity shapes and spatial rank, before axis promotion. A raw 3D volume
-    (including Z=1) returns {}; a 4D batch measures Z=1 entries as 2D.
+    intensity shapes and spatial rank, before axis promotion. Singleton-Z
+    volumes use the 2D measurements; other volumes return {}, including in batches.
     """
-    # Volumes give {} as in NumPy, including Z=1, as for the numba Zernikes.
     is_sequence = isinstance(labels, (list, tuple))
-    if not is_sequence and numpy.ndim(labels) == 3:
+    if not is_sequence and numpy.ndim(labels) == 3 and labels.shape[0] != 1:
         return {}
     masks_zyx, pixels_zyx, unwrap = to_bzyx(labels, pixels)
     results: list[dict[str, NDArray[numpy.floating]]] = []
     for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx)):
         mask_ndim = numpy.ndim(labels[i] if is_sequence else labels)
-        if mask_ndim == 3 or m.shape[0] > 1:
+        if m.shape[0] != 1:
             results.append({})
             continue
         pixel_ndim = numpy.ndim(pixels[i] if is_sequence else pixels)

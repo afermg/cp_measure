@@ -110,12 +110,18 @@ def test_numba_multi_equals_numpy_isolated(scaled):
 
 @requires_numba
 @pytest.mark.parametrize("depth", [1, 3])
-def test_3d_volume_returns_empty(depth):
+def test_volume_eligibility_depends_on_z_depth(depth):
     vol = np.zeros((depth, 32, 32), np.int32)
     vol[:, 5:15, 5:15] = 1
     pix = np.random.default_rng(0).random((depth, 32, 32))
-    assert _numba()(vol, pix) == ref(vol, pix) == {}
-    assert _numba()([vol], [pix]) == [{}]
+    if depth == 1:
+        expected = ref(vol[0], pix[0])
+        _assert_close_dict(ref(vol, pix), expected)
+        _assert_close_dict(_numba()(vol, pix), expected)
+        _assert_close_dict(_numba()([vol], [pix])[0], expected)
+    else:
+        assert _numba()(vol, pix) == ref(vol, pix) == {}
+        assert _numba()([vol], [pix]) == [{}]
 
 
 @requires_numba
@@ -284,10 +290,12 @@ def test_exceptional_radius_preserves_validation_and_empty_paths(
             backend.get_radial_distribution(labels, pixels, bin_count=4.5, **kwargs)
     empty = backend.get_radial_distribution(masks * 0, pixels, **kwargs)
     assert len(empty) == 15 and all(value.shape == (0,) for value in empty.values())
-    assert backend.get_radial_distribution(masks[None], pixels[None], **kwargs) == {}
-    assert backend.get_radial_distribution([masks[None]], [pixels[None]], **kwargs) == [
-        {}
-    ]
+    volume_masks = np.repeat(masks[None], 2, axis=0)
+    volume_pixels = np.repeat(pixels[None], 2, axis=0)
+    assert backend.get_radial_distribution(volume_masks, volume_pixels, **kwargs) == {}
+    assert backend.get_radial_distribution(
+        [volume_masks], [volume_pixels], **kwargs
+    ) == [{}]
 
 
 @requires_numba

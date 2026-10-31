@@ -147,16 +147,16 @@ def zernike_per_image(labels, pixels, degree, features):
     """Batch driver shared by the numba ``get_zernike`` and ``get_radial_zernikes``.
 
     Accepts a single 2D image or a batch (list/tuple of images, or a 4D
-    ``(B, Z, Y, X)`` array) and returns a dict or a list of dicts. Volumes give
-    ``{}`` as in NumPy: a raw 3D array (including Z=1), a 3D element of a list, or
-    Z > 1 in a 4D batch, whose Z=1 entries are measured as 2D images. ``pixels``
-    is ``None`` for the unweighted shape moments. For measured 2D entries, weighted
+    ``(B, Z, Y, X)`` array) and returns a dict or a list of dicts. Singleton-Z
+    volumes use the 2D measurements; other volumes give ``{}``, consistently for
+    individual inputs and batches. ``pixels`` is ``None`` for the unweighted
+    shape moments. For measured entries, weighted
     inputs must have matching shapes and dimensionality, before axis promotion.
     ``features(vr, vi, radii, counts, zernike_indexes)`` names and normalises one
     image's moment sums.
     """
     is_sequence = isinstance(labels, (list, tuple))
-    if not is_sequence and np.ndim(labels) == 3:
+    if not is_sequence and np.ndim(labels) == 3 and labels.shape[0] != 1:
         return {}
     weighted = pixels is not None
     masks_bzyx, pixels_bzyx, unwrap = to_bzyx(labels, pixels if weighted else labels)
@@ -166,7 +166,7 @@ def zernike_per_image(labels, pixels, degree, features):
     results = []
     for i, (masks_zyx, pixels_zyx) in enumerate(zip(masks_bzyx, pixels_bzyx)):
         mask_ndim = np.ndim(labels[i] if is_sequence else labels)
-        if mask_ndim == 3 or masks_zyx.shape[0] > 1:
+        if masks_zyx.shape[0] != 1:
             results.append({})
             continue
         if weighted:
