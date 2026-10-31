@@ -78,7 +78,18 @@ def _run(
     return coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means)
 
 
-def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **kwargs):
+def _featurize(
+    pixels_1,
+    pixels_2,
+    masks,
+    threshold,
+    compute_rwc,
+    build,
+    ref,
+    *,
+    force_reference=False,
+    **kwargs,
+):
     """Normalise the triple via ``to_bzyx`` and map each image through ``build``.
 
     ``build(result)`` turns the kernel tuple (or ``None`` for an empty image) into
@@ -96,7 +107,7 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
     _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
     results = []
     for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list):
-        if p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
+        if force_reference or p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
             result = ref(p1, p2, m, **kwargs)
         else:
             result = build(
@@ -160,7 +171,13 @@ def get_correlation_rwc(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    rank_scope: str = "object",
 ) -> dict[str, list[float]]:
+    """Object-local ranks are accelerated; object-set ranks use the reference."""
+    if rank_scope not in ("object", "object_set"):
+        raise ValueError("rank_scope must be 'object' or 'object_set'")
+
     def build(res):
         if res is None:
             return {f"{F_RWC_FORMAT}_1": [], f"{F_RWC_FORMAT}_2": []}
@@ -175,7 +192,9 @@ def get_correlation_rwc(
         True,
         build,
         reference.get_correlation_rwc,
+        force_reference=rank_scope == "object_set",
         thr=thr,
+        rank_scope=rank_scope,
     )
 
 

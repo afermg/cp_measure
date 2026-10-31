@@ -14,6 +14,16 @@ The existing `sizeshape` measurement uses a surface-area calculation that requir
 
 Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim variation can disappear, and pairs containing zero are excluded. See the [#100 explanation](https://github.com/afermg/cp_measure/issues/100#issuecomment-5939719548) and [`get_texture` Notes](../src/cp_measure/core/measuretexture.py) for CellProfiler compatibility and zero/NaN behavior.
 
+## RWC ranking scope
+
+`get_correlation_rwc` defaults to `rank_scope="object"`: each object's channel intensities are ranked independently. This preserves existing results and keeps an object's RWC independent of other objects in the image.
+
+Use `rank_scope="object_set"` for CellProfiler 4.2.8's ranking definition: compute zero-based dense ranks over all foreground pixels of the supplied object set, excluding background, then reduce the weighted intensities per object. The maximum rank count is shared across the object set, so changing other objects can change an object's coefficient. This is **not** image-wide ranking that includes background, nor a change to the default.
+
+The option is available through the bulk function and `make_featurizer_config(..., correlation_rwc_params={"rank_scope": "object_set"})`. Each supplied mask type/image is its own object set. The binary single-mask API has only one object and needs no scope selection. Raw multi-label calls expect contiguous IDs; the bulk/featurizer sanitization handles noncontiguous labels.
+
+Object-set mode requires finite foreground intensities (nonfinite background is ignored). Existing CPM conventions remain: absent objects or objects with no jointly above-threshold pixels return zero; a zero total signal with qualifying pixels yields NaN. This mode reproduces CP's ranking definition for ordinary finite inputs, not all of its image-mask or degenerate-export policies. The existing object-local threshold path is unchanged by this option; #122 separately addresses float32 threshold precision.
+
 ## Legacy percentile convention
 
 `legacy=True` restores the original intensity quantile conventions; the default uses NumPy's linear quartiles and the usual median absolute deviation. See the [`get_intensity` docstring](../src/cp_measure/core/measureobjectintensity.py#L139-L163) for formulas, including the different legacy MAD convention in 3D.
@@ -70,18 +80,19 @@ singleton-Z inputs are supported. Direct functions require contiguous labels;
 bulk sanitation handles arbitrary IDs. Missing raw label slots retain NumPy's
 zero values.
 
-Two independent follow-ups are deliberately not included here:
+Float32 threshold arithmetic remains an independent follow-up:
 
 - [#124](https://github.com/afermg/cp_measure/pull/124) restores array-valued
   float32 threshold arithmetic. Its boundary fixture currently retains the
   installed NumPy generation's baseline result in both backends. Once that fix
   lands, the dtype compatibility path will inherit it without a separate JIT
   threshold policy.
-- [#126](https://github.com/afermg/cp_measure/pull/126) adds an opt-in
-  `rank_scope="object_set"`. This backend retains the current signature and
-  ordinary object-local default; that follow-up will also need to add keyword
-  forwarding to the Numba wrapper (with a reference path for the new scope, or
-  a separately validated implementation). It must not silently change the default.
+
+Both backends accept `rank_scope="object_set"`. The Numba wrapper delegates this
+opt-in scope to the NumPy reference per image, including in explicit batches;
+it does not rank across batch items. The default `rank_scope="object"` retains
+its accelerated object-local calculation. Bulk and featurizer calls forward
+the explicit scope without changing the default.
 
 ### Costes
 
