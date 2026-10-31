@@ -283,7 +283,9 @@ def featurize(
     Image dimensionality is *declared* via ``is_3d``, never inferred from shape, so
     a single-channel volume ``(1, 1, Z, Y, X)`` is never mistaken for a multichannel
     2D image. To use a 2D mask through a volume, the caller must explicitly repeat
-    it along Z before calling this function. Inputs are not modified.
+    it along Z before calling this function. Inputs are not modified. For Z=1,
+    2D-only families may measure the sole slice; for Z>1 they are skipped. This
+    exception does not change the spatial rank passed to 3D-capable features.
 
     Images whose mask stack has no labelled objects are skipped before any
     measurement runs; the number skipped is reported via a warning.
@@ -342,7 +344,13 @@ def featurize(
     )
     corr_funcs = get_correlation_measurements(sanitize=False)
     if is_3d:
-        _warn_2d_only_in_3d(config)
+        if image.shape[2] == 1:
+            # Only the 2D-only families opt into sole-slice calculations. Keep
+            # full spatial rank for genuinely 3D features and correlation.
+            all_core_funcs = get_core_measurements(legacy=legacy, sanitize=False)
+            core_funcs.update({name: all_core_funcs[name] for name in _2D_ONLY})
+        else:
+            _warn_2d_only_in_3d(config)
     shape_feats = _collect_shape_features(config, core_funcs)
     channel_feats = _collect_channel_features(config, core_funcs)
     corr_feats = _collect_correlation_features(config, corr_funcs, len(channels))
@@ -510,7 +518,7 @@ def _collect_shape_features(config: dict, core_funcs: dict) -> list[_Feature]:
 
 
 def _warn_2d_only_in_3d(config: dict) -> None:
-    """Warn if the config enables any 2D-only feature for 3D input."""
+    """Warn if the config enables 2D-only features for a multi-slice volume."""
     requested = sorted(name for name in _2D_ONLY if config.get(name, False))
     if requested:
         warnings.warn(
