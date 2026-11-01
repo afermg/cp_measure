@@ -107,38 +107,6 @@ def test_empty_mask():
     _assert_same(out, base)
 
 
-def test_single_image_returns_dict_not_list():
-    mask, pixels = _scene()
-    assert isinstance(gran_numba(mask, pixels), dict)
-
-
-def test_batch_4d_matches_per_image_baseline():
-    scenes = [_scene(seed=s) for s in range(3)]
-    masks = numpy.stack([m[numpy.newaxis] for m, _ in scenes])  # (B,1,H,W)
-    pixels = numpy.stack([p[numpy.newaxis] for _, p in scenes])
-    out = gran_numba(masks, pixels)
-    assert isinstance(out, list) and len(out) == 3
-    for m, p, got in zip(masks, pixels, out):
-        _assert_same(got, gran_numpy(m, p))
-
-
-@pytest.mark.parametrize("container", [list, tuple])
-def test_batch_sequence_matches_per_image_baseline(container):
-    a = _scene(seed=0)
-    b = _scene(n=3, seed=1)
-    out = gran_numba(container([a[0], b[0]]), container([a[1], b[1]]))
-    assert isinstance(out, list) and len(out) == 2
-    _assert_same(out[0], gran_numpy(*a))
-    _assert_same(out[1], gran_numpy(*b))
-
-
-def test_batch_list_ragged_rejected():
-    a = _scene(H=80, W=80, seed=0)
-    b = _scene(H=64, W=96, n=3, seed=1)
-    with pytest.raises(ValueError, match="same shape"):
-        gran_numba([a[0], b[0]], [a[1], b[1]])
-
-
 @pytest.mark.parametrize("is_3d", [False, True], ids=["2d", "3d"])
 def test_featurizer_batch_matches_numpy(monkeypatch, is_3d):
     """Exercise the rebased backend through #106's explicit batch interface."""

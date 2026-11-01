@@ -39,6 +39,7 @@ from cp_measure.core.measureobjectintensity import (
     STD_INTENSITY_EDGE,
     UPPER_QUARTILE_INTENSITY,
 )
+from cp_measure.primitives.shapes import to_bzyx
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
     inner_boundary,
@@ -50,29 +51,82 @@ from cp_measure.primitives._segment_numba import (
 
 
 def get_intensity(
+    masks,
+    pixels,
+    edge_measurements: bool = True,
+    legacy: bool = False,
+):
+    """Per-object intensity features; accepts a single image/volume or a batch.
+
+    Returns a single feature dict for a lone 2D image or 3D volume, or a list of
+    such dicts for a batch (4D ``(B, Z, Y, X)`` array or a list of images). See
+    :func:`cp_measure.primitives.shapes.to_bzyx` for the accepted shapes; a single
+    image is the ``B == 1`` case of one batched code path. Labels must be contiguous
+    ``1..N``; bulk wrappers sanitize arbitrary positive IDs. Labels and pixels must
+    match in shape and rank for each image: no mask broadcasting is performed.
+    ``legacy=True`` retains the original quartiles and rank-dependent MAD, so a
+    singleton-Z volume remains 3D even when its pixels fit in one plane.
+    """
+    masks_is_seq = isinstance(masks, (list, tuple))
+    pixels_is_seq = isinstance(pixels, (list, tuple))
+    if masks_is_seq != pixels_is_seq:
+        raise ValueError("masks and pixels must both be sequences, or both arrays")
+    if pixels_is_seq:
+        if len(masks) != len(pixels):
+            raise ValueError("masks and pixels must have matching batch sizes")
+        if any(numpy.shape(m) != numpy.shape(p) for m, p in zip(masks, pixels)):
+            raise ValueError("labels and pixels must have matching shapes and rank")
+    elif numpy.shape(masks) != numpy.shape(pixels):
+        raise ValueError("labels and pixels must have matching shapes and rank")
+
+    is_batch = pixels_is_seq or numpy.ndim(pixels) == 4
+    if is_batch:
+        if len(pixels) == 0:
+            raise ValueError("intensity batches must not be empty")
+        if pixels_is_seq and any(
+            numpy.shape(p) != numpy.shape(pixels[0]) for p in pixels
+        ):
+            raise ValueError("all images in a batch must have the same shape")
+        pairs = zip(masks, pixels)
+    else:
+        pairs = zip([masks], [pixels])
+
+    results = []
+    for mask, image in pairs:
+        spatial_ndim = numpy.ndim(image)
+        if spatial_ndim not in (2, 3):
+            raise ValueError("expected a 2D or 3D image per batch item")
+        # Normalize one image at a time: these are views, not whole-batch copies.
+        # The per-volume kernel is serial, so materializing a stack buys nothing.
+        masks_zyx, pixels_zyx, _ = to_bzyx(mask, image)
+        results.append(
+            _intensity_volume(
+                masks_zyx[0],
+                pixels_zyx[0],
+                edge_measurements,
+                legacy,
+                spatial_ndim=spatial_ndim,
+            )
+        )
+    return results if is_batch else results[0]
+
+
+def _intensity_volume(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
     legacy: bool = False,
+    *,
+    spatial_ndim: int,
 ) -> dict[str, NDArray[numpy.floating]]:
-    """masks is a labeled array where 0 are background.
+    """Intensity features for one ``(Z, Y, X)`` volume (a 2D image is ``Z == 1``).
 
-    Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
-
-    ``legacy`` mirrors the numpy backend: False (default) uses ``numpy.percentile``
-    'linear' quartiles + textbook median MAD; True reproduces the original
-    CellProfiler ``n*q`` quartiles + ``(1/ndim)``-quantile MAD.
+    ``masks`` is a labeled array where 0 is background and its shape matches
+    ``pixels``. ``spatial_ndim`` preserves whether the caller supplied a
+    2D image or a 3D volume after both are normalized to ``(Z, Y, X)``; in
+    particular, a genuine singleton-Z volume retains the NumPy baseline's 1/3
+    legacy MAD fraction rather than being treated as 2D.
     """
-    orig_ndim = pixels.ndim
-
-    masked_image = pixels
-    if pixels.ndim == 2:
-        masked_image = pixels.reshape(1, *pixels.shape)
-        if masks.ndim == 2:
-            masks = masks.reshape(1, *masks.shape)
-    elif pixels.ndim == 3 and masks.ndim == 2:  # 3D image, 2D mask
-        masks = masks.reshape(1, *masks.shape)
-
     nobjects = int(masks.max())
 
     integrated_intensity = numpy.zeros(nobjects)
@@ -94,7 +148,7 @@ def get_intensity(
 
     values, seg0, xc, yc, zc = flatten_numba(
         numpy.ascontiguousarray(masks),
-        numpy.ascontiguousarray(masked_image),
+        numpy.ascontiguousarray(pixels),
     )
     has_objects = values.size > 0
 
@@ -138,7 +192,7 @@ def get_intensity(
             median_intensity,
             upper_quartile_intensity,
             mad_intensity,
-        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim, legacy)
+        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / spatial_ndim, legacy)
 
     if edge_measurements:
         integrated_intensity_edge = numpy.zeros(nobjects)
@@ -153,7 +207,7 @@ def get_intensity(
             emask = inner_boundary(numpy.ascontiguousarray(masks[0]))[numpy.newaxis] > 0
         else:
             emask = skimage.segmentation.find_boundaries(masks, mode="inner") > 0
-        e_values = masked_image[emask].astype(numpy.float64)
+        e_values = pixels[emask].astype(numpy.float64)
         e_seg0 = masks[emask] - 1
 
         if e_values.size > 0:

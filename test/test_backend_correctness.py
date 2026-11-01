@@ -100,6 +100,57 @@ def test_numba_granularity_matches_numpy(sub):
 
 
 @requires_numba
+@pytest.mark.parametrize("shape", [(6, 7), (1, 6, 7), (2, 6, 7)])
+@pytest.mark.parametrize("kind", ["list", "tuple", "stacked"])
+def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
+    from cp_measure.core.numba import measureobjectintensity as accelerated
+
+    masks = [np.ones(shape, dtype=np.int32) for _ in range(2)]
+    pixels = [np.full(shape, float(i)) for i in range(2)]
+    if kind == "stacked":
+        masks, pixels = (
+            np.stack([a.reshape((-1, *shape[-2:])) for a in group])
+            for group in (masks, pixels)
+        )
+    elif kind == "tuple":
+        masks, pixels = tuple(masks), tuple(pixels)
+    seen = []
+
+    def volume(mask, image, *args, spatial_ndim):
+        i = len(seen)
+        assert spatial_ndim == pixels[i].ndim
+        assert np.shares_memory(mask, masks[i])
+        assert np.shares_memory(image, pixels[i])
+        seen.append(i)
+        return {"index": np.array([i])}
+
+    monkeypatch.setattr(accelerated, "_intensity_volume", volume)
+    result = accelerated.get_intensity(masks, pixels)
+    assert seen == [0, 1] and len(result) == 2
+
+
+@requires_numba
+def test_numba_intensity_singleton_z_retains_3d_legacy_mad():
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as intensity_numba,
+    )
+
+    mask = np.ones((2, 3), dtype=np.int32)
+    pixels = np.arange(6, dtype=float).reshape(mask.shape)
+    two_d = intensity_numba(mask, pixels, edge_measurements=False, legacy=True)
+    three_d = intensity_numba(
+        mask[np.newaxis], pixels[np.newaxis], edge_measurements=False, legacy=True
+    )
+    reference = intensity_numpy(
+        mask[np.newaxis], pixels[np.newaxis], edge_measurements=False, legacy=True
+    )
+    _assert_dicts_match(reference, three_d)
+    assert not np.array_equal(
+        two_d["Intensity_MADIntensity"], three_d["Intensity_MADIntensity"]
+    )
+
+
+@requires_numba
 def test_set_accelerator_numba_composes_with_numpy():
     cp_measure.set_accelerator("numba")
     try:
