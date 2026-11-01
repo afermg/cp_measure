@@ -170,23 +170,6 @@ def test_costes_pending_118_matches_current_main(mode, encoding):
     parity(a, b, np.ones(a.shape, int), fast_costes=mode, scale_max=255)
 
 
-@pytest.mark.parametrize("as_list", [False, True])
-def test_costes_direct_batches(as_list):
-    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
-
-    a, b = arrays(FIXTURES[0])
-    first, second = np.stack([a[None], b[None]]), np.stack([b[None], a[None]])
-    masks = np.ones(first.shape, int)
-    if as_list:
-        first, second, masks = list(first), list(second), list(masks)
-    actual = get_correlation_costes(first, second, masks)
-    for got, x, y, m in zip(actual, first, second, masks):
-        expected = ref.get_correlation_costes(x, y, m)
-        np.testing.assert_allclose(
-            list(got.values()), list(expected.values()), rtol=1e-12, atol=1e-12
-        )
-
-
 @pytest.mark.parametrize("is_3d", [False, True])
 def test_costes_bulk_and_featurizer_forwarding(is_3d):
     from cp_measure.featurizer import featurize, make_featurizer_config

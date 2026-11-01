@@ -101,7 +101,11 @@ def get_intensity(
         masks_zyx, pixels_zyx, _ = to_bzyx(mask, image)
         results.append(
             _intensity_volume(
-                masks_zyx[0], pixels_zyx[0], edge_measurements, legacy, spatial_ndim
+                masks_zyx[0],
+                pixels_zyx[0],
+                edge_measurements,
+                legacy,
+                spatial_ndim=spatial_ndim,
             )
         )
     return results if is_batch else results[0]
@@ -112,7 +116,8 @@ def _intensity_volume(
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
     legacy: bool = False,
-    spatial_ndim: int = 3,
+    *,
+    spatial_ndim: int,
 ) -> dict[str, NDArray[numpy.floating]]:
     """Intensity features for one ``(Z, Y, X)`` volume (a 2D image is ``Z == 1``).
 
@@ -122,8 +127,6 @@ def _intensity_volume(
     particular, a genuine singleton-Z volume retains the NumPy baseline's 1/3
     legacy MAD fraction rather than being treated as 2D.
     """
-    orig_ndim = spatial_ndim
-
     nobjects = int(masks.max())
 
     integrated_intensity = numpy.zeros(nobjects)
@@ -189,7 +192,7 @@ def _intensity_volume(
             median_intensity,
             upper_quartile_intensity,
             mad_intensity,
-        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / orig_ndim, legacy)
+        ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / spatial_ndim, legacy)
 
     if edge_measurements:
         integrated_intensity_edge = numpy.zeros(nobjects)

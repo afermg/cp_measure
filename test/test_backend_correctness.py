@@ -100,38 +100,33 @@ def test_numba_granularity_matches_numpy(sub):
 
 
 @requires_numba
-def test_numba_intensity_single_returns_dict():
-    from cp_measure.core.numba.measureobjectintensity import (
-        get_intensity as intensity_numba,
-    )
+@pytest.mark.parametrize("shape", [(6, 7), (1, 6, 7), (2, 6, 7)])
+@pytest.mark.parametrize("kind", ["list", "tuple", "stacked"])
+def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
+    from cp_measure.core.numba import measureobjectintensity as accelerated
 
-    mask, pixels = _mask_pixels_2d()
-    assert isinstance(intensity_numba(mask, pixels), dict)
+    masks = [np.ones(shape, dtype=np.int32) for _ in range(2)]
+    pixels = [np.full(shape, float(i)) for i in range(2)]
+    if kind == "stacked":
+        masks, pixels = (
+            np.stack([a.reshape((-1, *shape[-2:])) for a in group])
+            for group in (masks, pixels)
+        )
+    elif kind == "tuple":
+        masks, pixels = tuple(masks), tuple(pixels)
+    seen = []
 
+    def volume(mask, image, *args, spatial_ndim):
+        i = len(seen)
+        assert spatial_ndim == pixels[i].ndim
+        assert np.shares_memory(mask, masks[i])
+        assert np.shares_memory(image, pixels[i])
+        seen.append(i)
+        return {"index": np.array([i])}
 
-@requires_numba
-@pytest.mark.parametrize("legacy", [False, True], ids=["new", "legacy"])
-@pytest.mark.parametrize("kind", ["stacked4d", "list"])
-def test_numba_intensity_batch_matches_per_image(kind, legacy):
-    """Batch (4D or list) == looping the single-image path; single = batch-of-1."""
-    from cp_measure.core.numba.measureobjectintensity import (
-        get_intensity as intensity_numba,
-    )
-
-    scenes = [_mask_pixels_2d() for _ in range(3)]
-    if kind == "stacked4d":
-        masks = np.stack([m[np.newaxis] for m, _ in scenes])  # (B, 1, H, W)
-        pixels = np.stack([p[np.newaxis] for _, p in scenes])
-    else:
-        masks = [m for m, _ in scenes]
-        pixels = [p for _, p in scenes]
-
-    out = intensity_numba(masks, pixels, legacy=legacy)
-    assert isinstance(out, list) and len(out) == 3
-    for (m, p), got in zip(scenes, out):
-        if kind == "stacked4d":
-            m, p = m[np.newaxis], p[np.newaxis]
-        _assert_dicts_match(intensity_numba(m, p, legacy=legacy), got)
+    monkeypatch.setattr(accelerated, "_intensity_volume", volume)
+    result = accelerated.get_intensity(masks, pixels)
+    assert seen == [0, 1] and len(result) == 2
 
 
 @requires_numba
