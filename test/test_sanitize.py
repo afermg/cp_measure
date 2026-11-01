@@ -45,6 +45,28 @@ def test_no_mutation_and_copy_policy():
     assert np.array_equal(gapped, before)  # input untouched
 
 
+@pytest.mark.parametrize("labels", [(1, 2, 3), (1, 17, 5)])
+@pytest.mark.parametrize("layout", ["contiguous", "transposed", "reversed"])
+def test_readonly_labels_preserve_values_and_copy_policy(labels, layout):
+    mask = _three_objects(labels)
+    if layout == "transposed":
+        mask = mask.T
+    elif layout == "reversed":
+        mask = mask[::-1]
+    before = mask.copy()
+    expected, ids = sanitize_masks(before.copy())
+    mask.setflags(write=False)
+    actual, actual_ids = sanitize_masks(mask)
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(actual_ids, ids)
+    np.testing.assert_array_equal(mask, before)
+    assert not mask.flags.writeable
+    if labels == (1, 2, 3):
+        assert actual is mask
+    else:
+        assert not np.shares_memory(actual, mask)
+
+
 @pytest.mark.parametrize("bad", [np.array([[0, -1, 2]]), np.array([[1.0, 2.0]])])
 def test_invalid_input_raises(bad):
     with pytest.raises(ValueError):
@@ -122,13 +144,20 @@ def _labels_per_image(masks, pixels=None):
     return [sorted(set(np.unique(m)) - {0}) for m in masks]
 
 
+@pytest.mark.parametrize("readonly", [False, True])
 @pytest.mark.parametrize("stacked", [False, True], ids=["list", "4d"])
-def test_sanitize_relabels_each_image_of_a_batch(stacked):
+def test_sanitize_relabels_each_image_of_a_batch(stacked, readonly):
     # A batch (list, or a 4D (B, Z, Y, X) array) is sanitized per image: every
     # image must arrive as 1..N on its own, since results are per image.
     a, b = _batch_pair()
     batch = np.stack([a[np.newaxis], b[np.newaxis]]) if stacked else [a, b]
+    before = [m.copy() for m in batch]
+    if readonly:
+        for array in [batch] if stacked else batch:
+            array.setflags(write=False)
     assert sanitize(_labels_per_image)(batch) == [[1, 2], [1]]
+    for actual, original in zip(batch, before):
+        np.testing.assert_array_equal(actual, original)
 
 
 def test_sanitize_dense_batch_is_not_copied():
