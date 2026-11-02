@@ -167,7 +167,8 @@ def _granularity_2d(
         return results
 
     flat_pos = numpy.flatnonzero(in_obj)
-    labels_in = flat_mask[flat_pos]
+    # bincount otherwise recasts int32 labels on every spectrum step.
+    labels_in = flat_mask[flat_pos].astype(numpy.intp, copy=False)
     counts = numpy.bincount(labels_in, minlength=max_label + 1)[1:].astype(
         numpy.float64
     )
@@ -194,7 +195,7 @@ def _granularity_2d(
                 sums / counts
             )  # 0/0 -> nan for absent labels, matching scipy.ndimage.mean
 
-    orig_valid = orig_pixels.ravel()[flat_pos].astype(numpy.float64)
+    orig_valid = orig_pixels.ravel()[flat_pos].astype(numpy.float64, copy=False)
     current_mean = _label_mean(orig_valid)
     start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
 
