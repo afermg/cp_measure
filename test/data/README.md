@@ -7,13 +7,25 @@ CellProfiler 4.2.8 modules for float32 threshold boundaries and object-set RWC
 ranking. Inputs, normalization and dependency versions are recorded in the file.
 The regression tests consume only this JSON; CellProfiler is not a test dependency.
 The float32 boundary outputs remain historical CellProfiler evidence. The explicit
-float64 policy now checks CPM against independent scalar-double arithmetic on the
-same stored float32 inputs and asserts the intentional departure from those CP
-outputs. The fixture has not been rewritten to conceal that difference.
+opt-in float64 policy checks CPM against independent scalar-double arithmetic on
+the same stored float32 inputs and asserts its intentional departure. Default/input
+mode retains historical boundary membership (Manders' final float32 division
+rounding is tested separately from CP's double-valued coefficient). The fixture
+has not been rewritten to conceal differences.
 
 CellProfiler-dependent regeneration lives in **cpm_benchmark**, not cp_measure:
 [generator](https://github.com/afermg/cpm_benchmark/blob/fe22662b38ab31649b4855c8453bc3c976210b6a/benchmarks/make_colocalization_reference.py)
 and [pinned-environment instructions](https://github.com/afermg/cpm_benchmark/blob/fe22662b38ab31649b4855c8453bc3c976210b6a/docs/equivalent-pipeline.md#regenerating-cp_measure-colocalization-references).
+
+## Pre-policy granularity fixture
+
+`granularity_input_precision_reference.json` records the NumPy and Numba outputs
+separately at main commit `8513bf33a17f78c056ca1891ba485b2d7c80e2f7`, immediately
+before #129. The full uint16 image, float32 normalization and measurement settings
+are embedded. It checks preservation of default/`precision="input"` behavior,
+including existing float32 differences between backends; it is **not** a
+CellProfiler or cross-backend parity oracle. Float64-mode tests instead use
+explicitly widened reference inputs. No live CellProfiler dependency is needed.
 
 ## Costes reference fixtures
 

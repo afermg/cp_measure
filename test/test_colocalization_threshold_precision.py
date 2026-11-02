@@ -57,7 +57,8 @@ def double_reference(first, second, metric):
     [("numpy", False), ("numpy", True), ("numba", False)],
     ids=["multi-label", "single-mask", "numba-multi-label"],
 )
-def test_float32_boundary_uses_explicit_double_arithmetic(metric, backend, single):
+@pytest.mark.parametrize("precision", [None, "input", "float64"])
+def test_float32_boundary_precision_modes(metric, backend, single, precision):
     first, second, labels = inputs()
     expected = double_reference(first, second, metric)
     first.setflags(write=False)
@@ -68,21 +69,34 @@ def test_float32_boundary_uses_explicit_double_arithmetic(metric, backend, singl
         from cp_measure.core.numba import measurecolocalization as module
     function = getattr(module, "get_correlation_" + metric + ("_ind" if single else ""))
     result = function(
-        first, second, labels.astype(bool) if single else labels, thr=np.float32(15)
+        first,
+        second,
+        labels.astype(bool) if single else labels,
+        thr=np.float32(15),
+        **({} if precision is None else {"precision": precision}),
     )
     for (key, values), value in zip(result.items(), expected, strict=True):
-        np.testing.assert_allclose(
-            np.asarray(values).reshape(-1), [value], rtol=1e-12, atol=1e-12
-        )
         expected_key = (
             key[:-2] + ("_A_B" if key.endswith("_1") else "_B_A")
             if key.endswith(("_1", "_2"))
             else key + "_A_B"
         )
-        # Retain the real CP fixture as evidence of the intentional departure.
-        assert not np.allclose(
-            [value], CASE["expected"][expected_key], rtol=1e-7, atol=1e-10
+        historical = CASE["expected"][expected_key]
+        # Pre-#129 Manders sums/division round in float32, whereas CP's stored
+        # final coefficient is double. Preserve that distinction explicitly.
+        input_expected = (
+            np.asarray(historical, np.float32)
+            if metric == "manders_fold"
+            else historical
         )
+        np.testing.assert_allclose(
+            np.asarray(values).reshape(-1),
+            [value] if precision == "float64" else input_expected,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        # The two policies must actually distinguish this boundary fixture.
+        assert not np.allclose([value], historical, rtol=1e-7, atol=1e-10)
 
 
 @pytest.mark.parametrize("backend", ["numpy", "numba"])
@@ -94,7 +108,7 @@ def test_float32_products_do_not_overflow_or_underflow(backend, scale):
         from cp_measure.core.numba import measurecolocalization as module
     pixels = np.array([[scale, 2 * scale]], dtype=np.float32)
     result = module.get_correlation_overlap(
-        pixels, pixels, np.ones(pixels.shape, np.int32)
+        pixels, pixels, np.ones(pixels.shape, np.int32), precision="float64"
     )
     np.testing.assert_allclose(
         list(result.values()), [[1.0]] * 3, rtol=1e-12, atol=1e-12
@@ -104,15 +118,20 @@ def test_float32_products_do_not_overflow_or_underflow(backend, scale):
 @pytest.mark.parametrize(
     "dtype", [np.float16, np.float32, np.float64, np.longdouble, np.uint16]
 )
-def test_precision_promotion_is_exact_and_preserves_copy_policy(dtype):
+@pytest.mark.parametrize("precision", ["input", "float64"])
+def test_precision_promotion_is_exact_and_preserves_copy_policy(dtype, precision):
     from cp_measure._precision import promote_float_pixels
 
     pixels = np.array([1, 2, 3], dtype=dtype)
     pixels.setflags(write=False)
-    result = promote_float_pixels(pixels)
+    result = promote_float_pixels(pixels, precision)
     np.testing.assert_array_equal(result, pixels)
     assert not pixels.flags.writeable
-    if pixels.dtype.kind == "f" and pixels.dtype.itemsize < 8:
+    if (
+        precision == "float64"
+        and pixels.dtype.kind == "f"
+        and pixels.dtype.itemsize < 8
+    ):
         assert result.dtype == np.float64
         assert not np.shares_memory(result, pixels)
     else:

@@ -1,7 +1,8 @@
 """Numba-backed colocalization, with current NumPy semantics.
 
 One grouped flatten and a fused per-object kernel handle float64 images.
-Percentage-threshold metrics promote float16/32 before arithmetic, matching NumPy.
+Percentage-threshold metrics opt into float16/32 promotion with precision="float64".
+The default precision="input" retains the pre-policy dtype paths.
 Pearson's dtype policy is unchanged. Integer/wider-float inputs use reference
 reductions, retaining their existing semantics. Undefined kernel results also use
 reference evaluation to preserve warnings and errors, including zero-denominator
@@ -16,7 +17,7 @@ no combined featurizer dispatch is introduced here.
 import numpy
 from numpy.typing import NDArray
 
-from cp_measure._precision import promote_float_pixels
+from cp_measure._precision import Precision, promote_float_pixels, validate_precision
 from cp_measure.core import measurecolocalization as reference
 from cp_measure.core.measurecolocalization import (
     F_CORRELATION_FORMAT,
@@ -90,6 +91,8 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
     # to_bzyx promotes 2D and singleton-Z inputs to the same shape and does not
     # validate spatial extents. Check the original triple before unchecked JIT
     # indexing; never broadcast masks or silently discard intensity planes.
+    precision = kwargs.get("precision", "input")
+    validate_precision(precision)
     shape = numpy.asarray(masks).shape
     if numpy.asarray(pixels_1).shape != shape or numpy.asarray(pixels_2).shape != shape:
         raise ValueError("colocalization images and masks must have the same shape")
@@ -99,7 +102,10 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
     results = []
     for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list):
         if ref is not reference.get_correlation_pearson:
-            p1, p2 = promote_float_pixels(p1), promote_float_pixels(p2)
+            p1, p2 = (
+                promote_float_pixels(p1, precision),
+                promote_float_pixels(p2, precision),
+            )
         if p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
             result = ref(p1, p2, m, **kwargs)
         else:
@@ -140,6 +146,8 @@ def get_correlation_manders_fold(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     def build(res):
         if res is None:
@@ -156,6 +164,7 @@ def get_correlation_manders_fold(
         build,
         reference.get_correlation_manders_fold,
         thr=thr,
+        precision=precision,
     )
 
 
@@ -164,6 +173,8 @@ def get_correlation_rwc(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     def build(res):
         if res is None:
@@ -180,6 +191,7 @@ def get_correlation_rwc(
         build,
         reference.get_correlation_rwc,
         thr=thr,
+        precision=precision,
     )
 
 
@@ -188,6 +200,8 @@ def get_correlation_overlap(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     def build(res):
         if res is None:
@@ -212,6 +226,7 @@ def get_correlation_overlap(
         build,
         reference.get_correlation_overlap,
         thr=thr,
+        precision=precision,
     )
 
 

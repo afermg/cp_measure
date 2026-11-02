@@ -22,7 +22,7 @@ import numpy
 import scipy.ndimage
 from numpy.typing import NDArray
 
-from cp_measure._precision import promote_float_pixels
+from cp_measure._precision import Precision, promote_float_pixels, validate_precision
 from cp_measure.core.measuregranularity import get_granularity as _get_granularity_numpy
 from cp_measure.core.numba._granularity import (
     bilinear_gather,
@@ -41,6 +41,8 @@ def get_granularity(
     image_sample_size: float = 0.25,
     element_size: int = 10,
     granular_spectrum_length: int = 16,
+    *,
+    precision: Precision = "input",
 ):
     """Granularity spectrum per object; accepts a single image/volume or a batch.
 
@@ -49,7 +51,10 @@ def get_granularity(
     of same-shaped images). Ragged batches are rejected by the shared normalizer.
     These raw/bulk shapes are distinct from the featurizer's explicit batch and
     channel axes. Output arrays are indexed densely by label ``1..max(mask)``.
+    ``precision="input"`` retains the pre-policy mixed-precision path;
+    ``"float64"`` widens float16/32 before resampling/background operations.
     """
+    validate_precision(precision)
     masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
     is_sequence = isinstance(masks, (list, tuple))
     results = [
@@ -60,6 +65,7 @@ def get_granularity(
             image_sample_size,
             element_size,
             granular_spectrum_length,
+            precision=precision,
             spatial_ndim=(
                 numpy.ndim(masks[i]) if is_sequence else min(numpy.ndim(masks), 3)
             ),
@@ -78,11 +84,12 @@ def _granularity_one(
     ng,
     *,
     spatial_ndim,
+    precision: Precision = "input",
 ):
     """Preserve original spatial rank, including singleton-Z volumes (NumPy 3D)."""
     # Per image, before interpolation and background operations; no batch-wide
     # float64 copy and no changes to labels or dimensional dispatch.
-    pixels_zyx = promote_float_pixels(pixels_zyx)
+    pixels_zyx = promote_float_pixels(pixels_zyx, precision)
     if spatial_ndim == 2:
         return _granularity_2d(
             mask_zyx[0],
@@ -93,7 +100,13 @@ def _granularity_one(
             ng,
         )
     return _get_granularity_numpy(
-        mask_zyx, pixels_zyx, subsample_size, image_sample_size, element_size, ng
+        mask_zyx,
+        pixels_zyx,
+        subsample_size,
+        image_sample_size,
+        element_size,
+        ng,
+        precision=precision,
     )
 
 

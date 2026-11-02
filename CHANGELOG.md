@@ -12,11 +12,12 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
-- Manders, overlap/K, RWC and granularity now widen float16/float32 inputs to
-  float64 before measurement arithmetic in both NumPy and Numba. This deliberately
-  changes float32 threshold membership and granularity rounding relative to
-  CellProfiler; stored acquisition values and input arrays are preserved. Integer
-  arithmetic and other measurement families are unchanged. See
+- Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
+  (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
+  widening of float16/float32 before arithmetic in both backends). Opting in can
+  change threshold membership and granularity rounding; original arrays and
+  stored values are preserved. Featurizer parameter dictionaries record the
+  selected mode. Integer pixel dtypes and other measurement families are unchanged. See
   [measurement notes](docs/measurement-notes.md#percentage-of-maximum-colocalization-thresholds).
 - **Breaking:** require Python 3.11 or newer. Remove the project's Python upper
   bound; CI covers Python 3.11–3.14 on Ubuntu and macOS.

@@ -47,15 +47,36 @@ Backend parity tests compare finite moments' phases only when their magnitude ex
 
 ## Percentage-of-maximum colocalization thresholds
 
-Manders, overlap/K and RWC promote float16/float32 pixel values to float64 **before** threshold calculation, comparison, products and sums. This is an explicit shared NumPy/Numba policy, independent of NumPy 1.x/2.x scalar-promotion rules. Stored pixel values are widened exactly, not renormalized from acquisition integers; inputs are not mutated. Float64 inputs need no promotion, and wider floating inputs are not narrowed by this policy.
+Manders, overlap/K and RWC accept keyword-only `precision="input"` (default) or `precision="float64"`, including NumPy's single-mask `_ind` APIs and Numba batches. Unknown modes raise `ValueError`, even without objects.
 
-This intentionally supersedes #124's CellProfiler float32-rounding compatibility policy: boundary pixels may change membership, with potentially substantial coefficient differences. Comparisons remain `>=`; there is no epsilon, clipping, final rounding or tolerance relaxation. RWC remains object-local. Integer-input arithmetic, Pearson, Costes scale handling, and unrelated measurement families are not changed by this policy. True zero-denominator/error conventions remain; artifacts caused by float32 product overflow or underflow can disappear.
+`"input"` retains the dtype/arithmetic paths immediately before #129 (main `8513bf3`, including #124). This is **not** a promise of exact released-0.3.0 or universal CellProfiler parity. It does not force every intermediate to the input dtype. Threshold maxima remain array-valued as in #124; stored float32 values retain float32 threshold rounding.
+
+`"float64"` opts into widening float16/float32 pixels **before** threshold calculation, comparison, products and sums. Explicit threshold-scalar conversion avoids NumPy 1.x/2.x promotion ambiguities in this mode. Stored values are widened exactly, not renormalized from acquisition integers; inputs are not mutated. Float64 inputs need no promotion, and wider floats are not narrowed. Integer pixels are not promoted; their product/reduction dtype conventions remain unchanged.
+
+Opting in may change boundary membership substantially: the documented float32 fixture's Manders coefficient changes from approximately 1/3 to 1. Comparisons remain `>=`; there is no epsilon, clipping or final rounding. RWC remains object-local. Pearson, Costes and unrelated families are unaffected. True undefined/zero-denominator conventions remain; artifacts caused solely by float32 product overflow/underflow can disappear in float64 mode.
 
 ## Granularity intermediate precision
 
-Both backends widen float16/float32 inputs to float64 before any image resampling, background morphology, interpolation, subtraction or per-object reduction. This is not a final-output cast, and it deliberately does not implement #125's cast back to float32. Float64 calculations and original dimensional dispatch are unchanged, including singleton-axis undefined spectra. No mismatched-shape validation policy is bundled here.
+Granularity accepts the same keyword-only `precision` option. The default `"input"` preserves each backend's pre-#129 path, including existing NumPy/Numba float32 differences: Numba's path was already mixed-precision. This mode does **not** incorporate #125's proposed float32 cast-back or promise new cross-backend/CellProfiler parity.
 
-Higher precision does not recover information lost during acquisition/normalization or establish biological accuracy. It reduces arithmetic rounding and float32 overflow/underflow, at the cost of float64 working storage (eight bytes per promoted pixel) and workload-dependent runtime. Batch promotion is per image, not an additional whole-batch float64 stack. Integer-input conventions are unchanged. Exact CellProfiler float32 output parity is no longer promised for these calculations.
+With `precision="float64"`, both backends widen float16/float32 inputs before the first resampling, background morphology, interpolation or subtraction. This is not a final-output cast. The option also reaches the NumPy 3D fallback. Original dimensional dispatch, singleton-axis undefined spectra, and integer-pixel handling are unchanged. No new shape-validation policy is bundled here.
+
+Higher precision does not recover acquisition information or establish biological accuracy. It reduces arithmetic rounding and float32 overflow/underflow, at the cost of float64 working buffers (eight bytes per promoted pixel, possibly alongside retained source arrays) and workload-dependent runtime. Numba batch promotion is per image, not a whole-batch float64 stack. Float64 mode intentionally does not reproduce all CellProfiler float32 outputs.
+
+### Selecting and recording precision
+
+Direct and bulk calls accept the option, for example `get_granularity(mask, pixels, precision="float64")`. Through the featurizer, use the existing per-feature parameter dictionaries:
+
+```python
+config = make_featurizer_config(
+    channels=["DNA", "AGP"],
+    granularity_params={"precision": "float64"},
+    correlation_manders_fold_params={"precision": "float64"},
+    correlation_rwc_params={"precision": "float64"},
+)
+```
+
+`make_featurizer_config` records an explicit `"input"` default in these dictionaries when the option is omitted, without modifying caller-owned dictionaries. Save the config alongside results, package/dependency versions, backend and input provenance. Existing manually constructed configs without this key still use input mode. No output columns or global accelerator settings are changed. Overlap remains direct-API-only; the option is independent of intensity's `legacy` percentile flag.
 
 ## Floating-point differences
 
@@ -70,9 +91,10 @@ not change these ranks.
 
 The accelerated float64 path groups paired pixels once per measurement and uses
 a fused kernel. Pearson retains NumPy's mean reductions, including their behavior
-for constant signals. Percentage-threshold metrics promote float16/float32 inputs
-per image and use the same float64 kernel. Pearson's non-float64 inputs and integer
-or wider-float inputs retain the NumPy reference path. Undefined outputs also use
+for constant signals. With `precision="float64"`, percentage-threshold metrics
+promote float16/float32 inputs per image and use the same float64 kernel. With
+`precision="input"`, they keep their existing dtype-based reference fallbacks.
+Pearson's non-float64 inputs and integer or wider-float inputs retain the reference path. Undefined outputs also use
 the reference to preserve warnings and errors (including the existing true
 zero-denominator Overlap/K error). Reference fallbacks are not advertised as
 accelerated.
@@ -83,10 +105,11 @@ singleton-Z inputs are supported. Direct functions require contiguous labels;
 bulk sanitation handles arbitrary IDs. Missing raw label slots retain NumPy's
 zero values.
 
-Both backends are checked against an independent scalar-double calculation on
-the same stored float32 boundary values. The original CellProfiler fixture is
-retained unchanged as evidence of the intentional difference, not relabelled as
-a new high-precision reference. No separate JIT threshold policy is introduced.
+Both backends' float64 mode is checked against independent scalar-double
+calculations on the same stored float32 boundary values. Default/input mode is
+checked against the historical boundary behavior. The original CellProfiler
+fixture remains unchanged; the float64 expectation is a separate oracle, not a
+rewritten reference. No separate JIT threshold policy is introduced.
 
 Object-set RWC remains an independent follow-up:
 

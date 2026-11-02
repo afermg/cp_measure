@@ -42,7 +42,7 @@ def test_2d_matches_baseline(sub, img, dtype):
     mask, pixels = _scene()
     pixels = pixels.astype(dtype)
     pixels.setflags(write=False)
-    params = dict(subsample_size=sub, image_sample_size=img)
+    params = dict(subsample_size=sub, image_sample_size=img, precision="float64")
     expected = gran_numpy(mask, pixels.astype(numpy.float64), **params)
     actual = gran_numpy(mask, pixels, **params)
     for key in expected:
@@ -128,13 +128,17 @@ def test_batch_4d_matches_per_image_baseline():
 
 
 @pytest.mark.parametrize("container", [list, tuple])
-def test_batch_sequence_matches_per_image_baseline(container):
-    a = _scene(seed=0)
-    b = _scene(n=3, seed=1)
-    out = gran_numba(container([a[0], b[0]]), container([a[1], b[1]]))
+@pytest.mark.parametrize("precision", ["input", "float64"])
+def test_batch_sequence_matches_per_image_baseline(container, precision):
+    scenes = [_scene(seed=0), _scene(n=3, seed=1)]
+    masks = container([m for m, _ in scenes])
+    pixels = container([p.astype(numpy.float32) for _, p in scenes])
+    out = gran_numba(masks, pixels, precision=precision)
     assert isinstance(out, list) and len(out) == 2
-    _assert_same(out[0], gran_numpy(*a))
-    _assert_same(out[1], gran_numpy(*b))
+    for m, p, got in zip(masks, pixels, out):
+        _assert_same(got, gran_numba(m, p, precision=precision))
+        if precision == "float64":
+            _assert_same(got, gran_numpy(m, p, precision=precision))
 
 
 def test_batch_list_ragged_rejected():
@@ -183,7 +187,8 @@ def test_featurizer_batch_matches_numpy(monkeypatch, is_3d):
     numpy.testing.assert_array_equal(masks, masks_before)
 
 
-def test_3d_volume_falls_back_to_numpy():
+@pytest.mark.parametrize("precision", ["input", "float64"])
+def test_3d_volume_falls_back_to_numpy(precision):
     # Z>1 dispatches to the numpy baseline. Use fullres to exercise morphology;
     # default subsampling would collapse Z and return NaNs instead.
     rng = numpy.random.default_rng(5)
@@ -191,10 +196,12 @@ def test_3d_volume_falls_back_to_numpy():
     mask = numpy.zeros((3, 40, 40), numpy.int32)
     mask[:, 10:25, 10:25] = 1
     _assert_same(
-        gran_numba(mask, pixels, subsample_size=1.0, image_sample_size=1.0),
+        gran_numba(
+            mask, pixels, subsample_size=1.0, image_sample_size=1.0, precision=precision
+        ),
         gran_numpy(
             mask,
-            pixels.astype(numpy.float64),
+            pixels if precision == "input" else pixels.astype(numpy.float64),
             subsample_size=1.0,
             image_sample_size=1.0,
         ),
