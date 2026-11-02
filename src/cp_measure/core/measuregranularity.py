@@ -58,6 +58,7 @@ import numpy
 import scipy.ndimage
 import scipy.sparse
 import skimage.morphology
+from cp_measure._precision import promote_float_pixels
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 
@@ -213,6 +214,9 @@ def get_granularity(
     Examples
 
     """
+    # Promote before every resampling/morphology/subtraction stage, not just
+    # the final reduction. Preserve the stored acquisition values exactly.
+    pixels = promote_float_pixels(pixels)
     #
     # Downsample the image and mask
     #

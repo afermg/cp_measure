@@ -1,10 +1,11 @@
 """Numba-backed colocalization, with current NumPy semantics.
 
 One grouped flatten and a fused per-object kernel handle float64 images.
-Other dtypes use the reference reductions explicitly: promoting float32 changes
-threshold inclusion (pending #124), and integer products can overflow in the
-reference. Undefined kernel results also use the reference to preserve warnings
-and errors, including the existing zero-denominator Overlap error.
+Percentage-threshold metrics promote float16/32 before arithmetic, matching NumPy.
+Pearson's dtype policy is unchanged. Integer/wider-float inputs use reference
+reductions, retaining their existing semantics. Undefined kernel results also use
+reference evaluation to preserve warnings and errors, including zero-denominator
+Overlap errors.
 
 The public feature schema, label slots and per-object RWC scope are unchanged.
 Overlap remains a direct API, not an extra default bulk feature. Costes keeps
@@ -15,6 +16,7 @@ no combined featurizer dispatch is introduced here.
 import numpy
 from numpy.typing import NDArray
 
+from cp_measure._precision import promote_float_pixels
 from cp_measure.core import measurecolocalization as reference
 from cp_measure.core.measurecolocalization import (
     F_CORRELATION_FORMAT,
@@ -91,11 +93,13 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
     shape = numpy.asarray(masks).shape
     if numpy.asarray(pixels_1).shape != shape or numpy.asarray(pixels_2).shape != shape:
         raise ValueError("colocalization images and masks must have the same shape")
-    frac = threshold / 100.0
+    frac = float(threshold) / 100.0
     masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
     _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
     results = []
     for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list):
+        if ref is not reference.get_correlation_pearson:
+            p1, p2 = promote_float_pixels(p1), promote_float_pixels(p2)
         if p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
             result = ref(p1, p2, m, **kwargs)
         else:

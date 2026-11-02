@@ -22,6 +22,7 @@ import numpy
 import scipy.ndimage
 from numpy.typing import NDArray
 
+from cp_measure._precision import promote_float_pixels
 from cp_measure.core.measuregranularity import get_granularity as _get_granularity_numpy
 from cp_measure.core.numba._granularity import (
     bilinear_gather,
@@ -79,6 +80,9 @@ def _granularity_one(
     spatial_ndim,
 ):
     """Preserve original spatial rank, including singleton-Z volumes (NumPy 3D)."""
+    # Per image, before interpolation and background operations; no batch-wide
+    # float64 copy and no changes to labels or dimensional dispatch.
+    pixels_zyx = promote_float_pixels(pixels_zyx)
     if spatial_ndim == 2:
         return _granularity_2d(
             mask_zyx[0],

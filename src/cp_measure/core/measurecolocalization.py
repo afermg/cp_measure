@@ -87,6 +87,8 @@ from numpy.typing import NDArray
 import scipy.ndimage
 import scipy.stats
 
+from cp_measure._precision import promote_float_pixels
+
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
 M_IMAGES_AND_OBJECTS = "Both"
@@ -164,15 +166,15 @@ def _pearson_pair(
 def _percentage_threshold(
     values: NDArray[numpy.floating], thr: float
 ) -> NDArray[numpy.floating]:
-    # Keep the maximum array-valued, as in CP's ndimage.maximum(..., indices).
-    # NumPy 1.x promotes Python-float * float32-scalar to float64, unlike the
-    # array operation. Rounding that product back can change boundary membership.
-    return (thr / 100) * values.max(keepdims=True)
+    # Pair functions promote floating pixels before comparison AND reduction.
+    # Explicit scalar conversion avoids NumPy 1/2 weak-scalar promotion rules.
+    return (float(thr) / 100.0) * values.max(keepdims=True)
 
 
 def _manders_pair(
     fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
 ) -> tuple[float, float]:
+    fi, si = promote_float_pixels(fi), promote_float_pixels(si)
     tff = _percentage_threshold(fi, thr)
     tss = _percentage_threshold(si, thr)
     combined = (fi >= tff) & (si >= tss)
@@ -190,6 +192,7 @@ def _manders_pair(
 def _overlap_pair(
     fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
 ) -> tuple[float, float, float]:
+    fi, si = promote_float_pixels(fi), promote_float_pixels(si)
     tff = _percentage_threshold(fi, thr)
     tss = _percentage_threshold(si, thr)
     combined = (fi >= tff) & (si >= tss)
@@ -211,6 +214,7 @@ def _overlap_pair(
 def _rwc_pair(
     fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
 ) -> tuple[float, float]:
+    fi, si = promote_float_pixels(fi), promote_float_pixels(si)
     Rank1 = numpy.lexsort([fi])
     Rank2 = numpy.lexsort([si])
     Rank1_U = numpy.hstack([[False], fi[Rank1[:-1]] != fi[Rank1[1:]]])

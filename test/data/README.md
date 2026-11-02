@@ -6,6 +6,10 @@
 CellProfiler 4.2.8 modules for float32 threshold boundaries and object-set RWC
 ranking. Inputs, normalization and dependency versions are recorded in the file.
 The regression tests consume only this JSON; CellProfiler is not a test dependency.
+The float32 boundary outputs remain historical CellProfiler evidence. The explicit
+float64 policy now checks CPM against independent scalar-double arithmetic on the
+same stored float32 inputs and asserts the intentional departure from those CP
+outputs. The fixture has not been rewritten to conceal that difference.
 
 CellProfiler-dependent regeneration lives in **cpm_benchmark**, not cp_measure:
 [generator](https://github.com/afermg/cpm_benchmark/blob/fe22662b38ab31649b4855c8453bc3c976210b6a/benchmarks/make_colocalization_reference.py)

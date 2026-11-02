@@ -37,12 +37,17 @@ def _assert_same(a, b):
 @pytest.mark.parametrize(
     "sub,img", [(1.0, 1.0), (0.25, 0.25), (0.5, 0.25), (0.25, 1.0)]
 )
-def test_2d_matches_baseline(sub, img):
+@pytest.mark.parametrize("dtype", [numpy.float16, numpy.float32, numpy.float64])
+def test_2d_matches_baseline(sub, img, dtype):
     mask, pixels = _scene()
-    _assert_same(
-        gran_numba(mask, pixels, subsample_size=sub, image_sample_size=img),
-        gran_numpy(mask, pixels, subsample_size=sub, image_sample_size=img),
-    )
+    pixels = pixels.astype(dtype)
+    pixels.setflags(write=False)
+    params = dict(subsample_size=sub, image_sample_size=img)
+    expected = gran_numpy(mask, pixels.astype(numpy.float64), **params)
+    actual = gran_numpy(mask, pixels, **params)
+    for key in expected:
+        numpy.testing.assert_array_equal(actual[key], expected[key])
+    _assert_same(gran_numba(mask, pixels, **params), expected)
 
 
 @pytest.mark.parametrize("shape", [(0, 17), (1, 17), (3, 17), (7, 17), (17, 7)])
@@ -182,10 +187,15 @@ def test_3d_volume_falls_back_to_numpy():
     # Z>1 dispatches to the numpy baseline. Use fullres to exercise morphology;
     # default subsampling would collapse Z and return NaNs instead.
     rng = numpy.random.default_rng(5)
-    pixels = rng.random((3, 40, 40))
+    pixels = rng.random((3, 40, 40)).astype(numpy.float32)
     mask = numpy.zeros((3, 40, 40), numpy.int32)
     mask[:, 10:25, 10:25] = 1
     _assert_same(
         gran_numba(mask, pixels, subsample_size=1.0, image_sample_size=1.0),
-        gran_numpy(mask, pixels, subsample_size=1.0, image_sample_size=1.0),
+        gran_numpy(
+            mask,
+            pixels.astype(numpy.float64),
+            subsample_size=1.0,
+            image_sample_size=1.0,
+        ),
     )

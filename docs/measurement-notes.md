@@ -47,9 +47,15 @@ Backend parity tests compare finite moments' phases only when their magnitude ex
 
 ## Percentage-of-maximum colocalization thresholds
 
-Manders, overlap/K and RWC use array-valued per-object maxima when calculating percentage thresholds. This preserves the historical CellProfiler float32 arithmetic under both NumPy 1.x and 2.x. Scalar promotion in NumPy 1.x could otherwise change a threshold by one float32 ULP and include or exclude boundary pixels (#122). Correcting it can change coefficients on such inputs; pixels themselves are not rounded or adjusted, and comparisons remain `>=`.
+Manders, overlap/K and RWC promote float16/float32 pixel values to float64 **before** threshold calculation, comparison, products and sums. This is an explicit shared NumPy/Numba policy, independent of NumPy 1.x/2.x scalar-promotion rules. Stored pixel values are widened exactly, not renormalized from acquisition integers; inputs are not mutated. Float64 inputs need no promotion, and wider floating inputs are not narrowed by this policy.
 
-This does not change RWC's ranking definition, introduce an epsilon, or change Costes threshold fitting/normalization. Float64 and integer-input threshold behavior and undefined-result conventions remain unchanged.
+This intentionally supersedes #124's CellProfiler float32-rounding compatibility policy: boundary pixels may change membership, with potentially substantial coefficient differences. Comparisons remain `>=`; there is no epsilon, clipping, final rounding or tolerance relaxation. RWC remains object-local. Integer-input arithmetic, Pearson, Costes scale handling, and unrelated measurement families are not changed by this policy. True zero-denominator/error conventions remain; artifacts caused by float32 product overflow or underflow can disappear.
+
+## Granularity intermediate precision
+
+Both backends widen float16/float32 inputs to float64 before any image resampling, background morphology, interpolation, subtraction or per-object reduction. This is not a final-output cast, and it deliberately does not implement #125's cast back to float32. Float64 calculations and original dimensional dispatch are unchanged, including singleton-axis undefined spectra. No mismatched-shape validation policy is bundled here.
+
+Higher precision does not recover information lost during acquisition/normalization or establish biological accuracy. It reduces arithmetic rounding and float32 overflow/underflow, at the cost of float64 working storage (eight bytes per promoted pixel) and workload-dependent runtime. Batch promotion is per image, not an additional whole-batch float64 stack. Integer-input conventions are unchanged. Exact CellProfiler float32 output parity is no longer promised for these calculations.
 
 ## Floating-point differences
 
@@ -64,11 +70,12 @@ not change these ranks.
 
 The accelerated float64 path groups paired pixels once per measurement and uses
 a fused kernel. Pearson retains NumPy's mean reductions, including their behavior
-for constant signals. Other pixel dtypes explicitly use the NumPy implementation:
-float32 threshold membership and integer multiplication overflow must not change
-just because an accelerator is selected. Undefined outputs also use the reference
-path to preserve warnings and errors (including the existing zero-denominator
-Overlap/K error). These compatibility paths are not advertised as accelerated.
+for constant signals. Percentage-threshold metrics promote float16/float32 inputs
+per image and use the same float64 kernel. Pearson's non-float64 inputs and integer
+or wider-float inputs retain the NumPy reference path. Undefined outputs also use
+the reference to preserve warnings and errors (including the existing true
+zero-denominator Overlap/K error). Reference fallbacks are not advertised as
+accelerated.
 
 All three inputs must have matching spatial ranks and extents. A 2D mask is not
 broadcast over Z, nor is the first intensity plane selected implicitly. Matching
@@ -76,9 +83,10 @@ singleton-Z inputs are supported. Direct functions require contiguous labels;
 bulk sanitation handles arbitrary IDs. Missing raw label slots retain NumPy's
 zero values.
 
-The float32 compatibility path inherits the array-valued threshold arithmetic
-from the NumPy reference. Both backends are checked against the same
-CellProfiler boundary fixture; no separate JIT threshold policy is introduced.
+Both backends are checked against an independent scalar-double calculation on
+the same stored float32 boundary values. The original CellProfiler fixture is
+retained unchanged as evidence of the intentional difference, not relabelled as
+a new high-precision reference. No separate JIT threshold policy is introduced.
 
 Object-set RWC remains an independent follow-up:
 
