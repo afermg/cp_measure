@@ -96,7 +96,9 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
     shape = numpy.asarray(masks).shape
     if numpy.asarray(pixels_1).shape != shape or numpy.asarray(pixels_2).shape != shape:
         raise ValueError("colocalization images and masks must have the same shape")
-    frac = float(threshold) / 100.0
+    # Preserve historical scalar division in input mode, including NumPy 2's
+    # float32 rounding. Only the opt-in mode widens before dividing.
+    frac = (float(threshold) if precision == "float64" else threshold) / 100.0
     masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
     _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
     results = []

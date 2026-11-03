@@ -26,7 +26,7 @@ def inputs(dtype=np.float32):
 
 
 def double_reference(first, second, metric):
-    # Independent scalar-double oracle on the *stored float32 values*, not
+    # Independent scalar-double oracle on the *stored pixel values*, not
     # renormalized acquisition integers or the production pair functions.
     a, b = ([float(x) for x in image.ravel()] for image in (first, second))
     ta, tb = 0.15 * max(a), 0.15 * max(b)
@@ -97,6 +97,37 @@ def test_float32_boundary_precision_modes(metric, backend, single, precision):
         )
         # The two policies must actually distinguish this boundary fixture.
         assert not np.allclose([value], historical, rtol=1e-7, atol=1e-10)
+
+
+@pytest.mark.parametrize("metric", ["manders_fold", "overlap", "rwc"])
+@pytest.mark.parametrize("precision", [None, "input", "float64"])
+@pytest.mark.parametrize(
+    "thr", [15, np.float32(15)], ids=["python-int", "numpy-float32"]
+)
+def test_float64_fast_path_preserves_threshold_scalar_policy(metric, precision, thr):
+    pytest.importorskip("numba")
+    from cp_measure.core.numba import measurecolocalization as accelerated
+
+    first = np.array([[3, 20, 10, 0]], dtype=np.float64)
+    second = np.array([[20, 3, 10, 0]], dtype=np.float64)
+    labels = np.ones(first.shape, np.int32)
+    # Input mode must retain the pre-#129 scalar division, including NumPy 2's
+    # float32 rounding. Only float64 mode opts out of that historical behavior.
+    fraction = (float(thr) if precision == "float64" else thr) / 100.0
+    expected = double_reference(first, second, metric)
+    if np.float64(3) < fraction * np.float64(20):
+        expected = [1.0] * 3 if metric == "overlap" else [1 / 3] * 2
+    kwargs = {} if precision is None else {"precision": precision}
+    for module in (coloc, accelerated):
+        result = getattr(module, "get_correlation_" + metric)(
+            first, second, labels, thr=thr, **kwargs
+        )
+        np.testing.assert_allclose(
+            list(result.values()),
+            np.asarray(expected)[:, None],
+            rtol=1e-12,
+            atol=1e-12,
+        )
 
 
 @pytest.mark.parametrize("backend", ["numpy", "numba"])
