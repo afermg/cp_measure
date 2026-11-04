@@ -1,0 +1,156 @@
+{
+  "versions": {
+    "CellProfiler": "4.2.8",
+    "cellprofiler-core": "4.2.8",
+    "numpy": "1.23.3",
+    "scipy": "1.9.1"
+  },
+  "normalization": "float32(raw) / float32(65535)",
+  "threshold_percent": 15,
+  "cases": [
+    {
+      "name": "float32_threshold_boundary",
+      "first": [
+        [
+          3,
+          20
+        ],
+        [
+          10,
+          0
+        ]
+      ],
+      "second": [
+        [
+          20,
+          3
+        ],
+        [
+          10,
+          0
+        ]
+      ],
+      "labels": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "expected": {
+        "Correlation_Correlation_A_B": [
+          -0.2206969376979937
+        ],
+        "Correlation_K_A_B": [
+          1.0
+        ],
+        "Correlation_K_B_A": [
+          1.0
+        ],
+        "Correlation_Manders_A_B": [
+          0.3333333333333333
+        ],
+        "Correlation_Manders_B_A": [
+          0.3333333333333333
+        ],
+        "Correlation_Overlap_A_B": [
+          1.0
+        ],
+        "Correlation_RWC_A_B": [
+          0.3333333333333333
+        ],
+        "Correlation_RWC_B_A": [
+          0.3333333333333333
+        ]
+      }
+    },
+    {
+      "name": "two_object_rank_scope",
+      "first": [
+        [
+          65535,
+          10,
+          20,
+          20,
+          40
+        ],
+        [
+          65535,
+          50,
+          60,
+          60,
+          90
+        ]
+      ],
+      "second": [
+        [
+          0,
+          40,
+          20,
+          10,
+          20
+        ],
+        [
+          0,
+          90,
+          60,
+          50,
+          60
+        ]
+      ],
+      "labels": [
+        [
+          0,
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          0,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "expected": {
+        "Correlation_Correlation_A_B": [
+          -0.4736842105263158,
+          -0.4444444444444445
+        ],
+        "Correlation_K_A_B": [
+          0.72,
+          0.9269662989925049
+        ],
+        "Correlation_K_B_A": [
+          0.72,
+          0.9269662989925049
+        ],
+        "Correlation_Manders_A_B": [
+          1.0,
+          1.0
+        ],
+        "Correlation_Manders_B_A": [
+          1.0,
+          1.0
+        ],
+        "Correlation_Overlap_A_B": [
+          0.72,
+          0.9269662989925049
+        ],
+        "Correlation_RWC_A_B": [
+          0.851851851851852,
+          0.8397435897435898
+        ],
+        "Correlation_RWC_B_A": [
+          0.7962962962962964,
+          0.8141025641025641
+        ]
+      }
+    }
+  ]
+}
