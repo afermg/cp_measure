@@ -25,6 +25,7 @@ from __future__ import annotations
 import itertools
 import warnings
 from collections.abc import Callable
+from typing import cast
 
 import numpy as np
 
@@ -97,7 +98,11 @@ def make_featurizer_config(
     Returns
     -------
     dict
-        Configuration dictionary accepted by :func:`featurize`.
+        Configuration dictionary accepted by :func:`featurize`. Granularity,
+        Manders and RWC parameter dictionaries explicitly record the default
+        ``precision="input"``; set ``precision="float64"`` in each feature's
+        params to opt in. Save the config with results for reproducibility.
+        Caller-owned parameter dictionaries are not modified.
 
     Raises
     ------
@@ -150,9 +155,7 @@ def make_featurizer_config(
         "texture": texture,
         "texture_params": texture_params if texture_params is not None else {},
         "granularity": granularity,
-        "granularity_params": granularity_params
-        if granularity_params is not None
-        else {},
+        "granularity_params": {"precision": "input", **(granularity_params or {})},
         "radial_distribution": radial_distribution,
         "radial_distribution_params": radial_distribution_params
         if radial_distribution_params is not None
@@ -172,13 +175,15 @@ def make_featurizer_config(
         if correlation_costes_params is not None
         else {},
         "correlation_manders_fold": correlation_manders_fold,
-        "correlation_manders_fold_params": correlation_manders_fold_params
-        if correlation_manders_fold_params is not None
-        else {},
+        "correlation_manders_fold_params": {
+            "precision": "input",
+            **(correlation_manders_fold_params or {}),
+        },
         "correlation_rwc": correlation_rwc,
-        "correlation_rwc_params": correlation_rwc_params
-        if correlation_rwc_params is not None
-        else {},
+        "correlation_rwc_params": {
+            "precision": "input",
+            **(correlation_rwc_params or {}),
+        },
     }
 
 
@@ -262,7 +267,8 @@ def _featurize_one(
 
         all_rows.extend((image_id, object_name, label) for label in ids)
 
-    return np.vstack(all_blocks), columns, all_rows
+    # Nonempty blocks imply columns was assigned; vstack rejects empty blocks.
+    return np.vstack(all_blocks), cast(list[str], columns), all_rows
 
 
 def featurize(
@@ -393,7 +399,7 @@ def featurize(
             stacklevel=2,
         )
 
-    return np.vstack(all_blocks), columns, all_rows
+    return np.vstack(all_blocks), cast(list[str], columns), all_rows
 
 
 def _validate_batch_inputs(image: np.ndarray, masks: np.ndarray, is_3d: bool) -> None:
