@@ -87,6 +87,8 @@ from numpy.typing import NDArray
 import scipy.ndimage
 import scipy.stats
 
+from cp_measure._precision import Precision, promote_float_pixels, validate_precision
+
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
 M_IMAGES_AND_OBJECTS = "Both"
@@ -162,19 +164,25 @@ def _pearson_pair(
 
 
 def _percentage_threshold(
-    values: NDArray[numpy.floating], thr: float
+    values: NDArray[numpy.floating], thr: float, precision: Precision = "input"
 ) -> NDArray[numpy.floating]:
-    # Keep the maximum array-valued, as in CP's ndimage.maximum(..., indices).
-    # NumPy 1.x promotes Python-float * float32-scalar to float64, unlike the
-    # array operation. Rounding that product back can change boundary membership.
+    # Keep the pre-policy scalar rules in input mode. Explicit scalar conversion
+    # and promoted pixels make float64 mode independent of weak-scalar rules.
+    if precision == "float64":
+        thr = float(thr)
     return (thr / 100) * values.max(keepdims=True)
 
 
 def _manders_pair(
-    fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    thr: float,
+    *,
+    precision: Precision = "input",
 ) -> tuple[float, float]:
-    tff = _percentage_threshold(fi, thr)
-    tss = _percentage_threshold(si, thr)
+    fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
+    tff = _percentage_threshold(fi, thr, precision)
+    tss = _percentage_threshold(si, thr, precision)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0
@@ -188,10 +196,15 @@ def _manders_pair(
 
 
 def _overlap_pair(
-    fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    thr: float,
+    *,
+    precision: Precision = "input",
 ) -> tuple[float, float, float]:
-    tff = _percentage_threshold(fi, thr)
-    tss = _percentage_threshold(si, thr)
+    fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
+    tff = _percentage_threshold(fi, thr, precision)
+    tss = _percentage_threshold(si, thr, precision)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0, 0.0
@@ -209,8 +222,13 @@ def _overlap_pair(
 
 
 def _rwc_pair(
-    fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    thr: float,
+    *,
+    precision: Precision = "input",
 ) -> tuple[float, float]:
+    fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
     Rank1 = numpy.lexsort([fi])
     Rank2 = numpy.lexsort([si])
     Rank1_U = numpy.hstack([[False], fi[Rank1[:-1]] != fi[Rank1[1:]]])
@@ -226,8 +244,8 @@ def _rwc_pair(
     Di = abs(Rank_im1 - Rank_im2)
     weight = (R - Di) * 1.0 / R
 
-    tff = _percentage_threshold(fi, thr)
-    tss = _percentage_threshold(si, thr)
+    tff = _percentage_threshold(fi, thr, precision)
+    tss = _percentage_threshold(si, thr, precision)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0
@@ -398,10 +416,12 @@ def get_correlation_manders_fold_ind(
     pixels_2: NDArray[numpy.floating],
     mask: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, float]:
     fi = pixels_1[mask]
     si = pixels_2[mask]
-    M1, M2 = _manders_pair(fi, si, thr)
+    M1, M2 = _manders_pair(fi, si, thr, precision=precision)
     return {f"{F_MANDERS_FORMAT}_1": M1, f"{F_MANDERS_FORMAT}_2": M2}
 
 
@@ -410,10 +430,12 @@ def get_correlation_rwc_ind(
     pixels_2: NDArray[numpy.floating],
     mask: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, float]:
     fi = pixels_1[mask]
     si = pixels_2[mask]
-    RWC1, RWC2 = _rwc_pair(fi, si, thr)
+    RWC1, RWC2 = _rwc_pair(fi, si, thr, precision=precision)
     return {f"{F_RWC_FORMAT}_1": RWC1, f"{F_RWC_FORMAT}_2": RWC2}
 
 
@@ -446,10 +468,12 @@ def get_correlation_overlap_ind(
     pixels_2: NDArray[numpy.floating],
     mask: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, float]:
     fi = pixels_1[mask]
     si = pixels_2[mask]
-    overlap, K1, K2 = _overlap_pair(fi, si, thr)
+    overlap, K1, K2 = _overlap_pair(fi, si, thr, precision=precision)
     return {
         F_OVERLAP_FORMAT: overlap,
         f"{F_K_FORMAT}_1": K1,
@@ -685,11 +709,16 @@ def get_correlation_manders_fold(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     """Per-object Manders fold coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    ``precision="input"`` preserves the pre-policy dtype path; ``"float64"``
+    widens float16/32 before arithmetic (see measurement notes).
     """
+    validate_precision(precision)
     m1_list: list[float] = []
     m2_list: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -697,7 +726,7 @@ def get_correlation_manders_fold(
             m1_list.append(0.0)
             m2_list.append(0.0)
             continue
-        M1, M2 = _manders_pair(fi, si, thr)
+        M1, M2 = _manders_pair(fi, si, thr, precision=precision)
         m1_list.append(M1)
         m2_list.append(M2)
     return {f"{F_MANDERS_FORMAT}_1": m1_list, f"{F_MANDERS_FORMAT}_2": m2_list}
@@ -708,11 +737,16 @@ def get_correlation_rwc(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     """Per-object rank-weighted colocalization coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    ``precision="input"`` preserves the pre-policy dtype path; ``"float64"``
+    widens float16/32 before arithmetic (see measurement notes).
     """
+    validate_precision(precision)
     r1: list[float] = []
     r2: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -720,7 +754,7 @@ def get_correlation_rwc(
             r1.append(0.0)
             r2.append(0.0)
             continue
-        RWC1, RWC2 = _rwc_pair(fi, si, thr)
+        RWC1, RWC2 = _rwc_pair(fi, si, thr, precision=precision)
         r1.append(RWC1)
         r2.append(RWC2)
     return {f"{F_RWC_FORMAT}_1": r1, f"{F_RWC_FORMAT}_2": r2}
@@ -772,11 +806,16 @@ def get_correlation_overlap(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     """Per-object overlap and k1/k2 colocalization coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    ``precision="input"`` preserves the pre-policy dtype path; ``"float64"``
+    widens float16/32 before arithmetic (see measurement notes).
     """
+    validate_precision(precision)
     overlap_list: list[float] = []
     k1_list: list[float] = []
     k2_list: list[float] = []
@@ -786,7 +825,7 @@ def get_correlation_overlap(
             k1_list.append(0.0)
             k2_list.append(0.0)
             continue
-        overlap, K1, K2 = _overlap_pair(fi, si, thr)
+        overlap, K1, K2 = _overlap_pair(fi, si, thr, precision=precision)
         overlap_list.append(overlap)
         k1_list.append(K1)
         k2_list.append(K2)
