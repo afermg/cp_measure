@@ -2,19 +2,27 @@
 
 For essential input and performance guidance, see the [README](../README.md#important-notes). For dimensions, label requirements, empty masks, and Feret batch shapes, see the [measurement support table](measurement-support.md).
 
+## Feature coverage policy
+
+Maximize valid feature coverage: prefer 3D measurements; where unavailable for singleton 3D inputs, generate supported 2D features. Apply fallback per measurement family, retain 2D feature names and meanings, and keep schemas consistent across backends and empty/nonempty inputs.
+
 ## 3D size and shape
 
 The featurizer supports both single- and multichannel volumes with `is_3d=True`. Both images `(B, C, Z, Y, X)` and masks `(B, M, Z, Y, X)` must have all five axes, with matching batch size and spatial dimensions. A 2D mask stack is rejected; singleton spatial axes are not stretched.
 
 To use a 2D mask through a volume, the caller must explicitly repeat it before calling `featurize`, for example `masks_3d = np.repeat(masks_2d[:, :, None], image.shape[2], axis=2)`. Each repeated label becomes one 3D object, so intensity and shape measurements use the entire volume rather than separate 2D measurements per slice. The featurizer does not perform this conversion or modify its inputs.
 
-The existing `sizeshape` measurement uses a surface-area calculation that requires at least two voxels along each spatial axis. In particular, a single-slice volume (`Z=1`) raises `ValueError: Input array must be at least 2x2x2.` with size/shape enabled. Disable it with `make_featurizer_config(..., sizeshape=False)`, or explicitly provide a 2D batch and use `is_3d=False` if 2D measurements are intended. This limitation predates the batch featurizer.
+For `Z=1`, size/shape measures the sole plane in both backends, including through the bulk wrappers and featurizer. It returns 2D feature names and pixel-based values: 78 default features, not the 212-feature 3D schema. All-background raw masks use the same 2D schema with zero-length arrays. This replaces the previous nonempty-input error and changes the previous empty singleton-Z schema. As for explicit 2D inputs, `spacing` does not scale these measurements.
+
+For `Z>1`, size/shape retains its 3D implementation and spacing convention. Its surface-area calculation still requires at least two voxels along each spatial axis; singleton X/Y axes are not squeezed. Raw size/shape calls remain per-image, not batch APIs.
 
 ## Numba size and shape
 
-With `set_accelerator("numba")`, size/shape accelerates 2D convex-hull construction and perimeter/Euler reductions. Hull rasterization and Euclidean distance transforms still use skimage/SciPy. Moment-derived features retain the NumPy backend's batched products and shared algebra: a different summation order can change the sign at the `-90`/`+90` degree orientation boundary. Returned features are not rounded; Euler numbers retain their integer dtype, while perimeter-derived values can differ by floating-point round-off.
+With `set_accelerator("numba")`, size/shape accelerates convex-hull construction and perimeter/Euler reductions for 2D and singleton-Z inputs. Hull rasterization, Euclidean distance transforms and the existing NumPy moment calculations remain unchanged. Euler output stays integer; returned values are not rounded or clipped.
 
-The raw function has the same parameters and contiguous-label requirement as NumPy. Non-2D inputs are forwarded unchanged to NumPy, including its single-slice limitation above; this backend adds no new batch or dimensional behavior. The featurizer and default bulk wrappers still sanitize arbitrary positive label IDs without mutating inputs. Warmed speedups depend on object size and density; first calls also pay Numba compilation cost.
+2D moment comparisons use object-local scaling: raw/central moments of total order k are divided by `Area**(1+k/2)` and compared with `rtol=1e-7, atol=1e-12`. Normalized and Hu moments use the same tolerance directly. Orientations are compared modulo 180 degrees with absolute tolerance `1e-8` degrees. These are test comparison rules only; other geometry, dtype and nonfinite checks are unchanged.
+
+Both raw functions require contiguous labels. The featurizer and default bulk wrappers sanitize arbitrary positive IDs without modifying inputs. Multi-slice volumes use the NumPy fallback. Warmed gains depend on object size and density; first calls also pay compilation cost.
 
 ## Texture quantization
 
@@ -43,7 +51,7 @@ The 2D-only families (`radial_distribution`, `radial_zernikes`, shape `zernike`,
 
 The same eligibility rule applies in both backends and through the featurizer. NumPy raw functions remain per-image APIs; Numba also accepts batches. Labels and intensities must match for intensity-dependent features; do not repeat masks through Z or select the first slice of a multi-slice volume.
 
-This does not reinterpret the input as 2D for other measurements. Intensity, texture, granularity, size/shape, and colocalization keep their 3D input and existing conventions. In particular, the size/shape singleton-axis limitation above remains. Granularity's Numba backend uses the NumPy 3D path for singleton-Z volumes instead of silently selecting its 2D kernel.
+Size/shape also uses 2D measurements for singleton-Z inputs, as described above. Intensity, texture, granularity and colocalization retain their 3D input and existing conventions. Granularity's Numba backend uses the NumPy 3D path for singleton-Z volumes instead of silently selecting its 2D kernel.
 
 ## Radial-distribution centers
 

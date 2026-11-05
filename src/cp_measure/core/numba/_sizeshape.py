@@ -498,11 +498,11 @@ def get_sizeshape(
 ) -> dict[str, NDArray[numpy.floating]]:
     """Size/shape backend for contiguous labels, with the NumPy public signature.
 
-    Only 2D masks are accelerated. All other ranks (including singleton-Z) go
-    unchanged to NumPy, preserving its dimensional support and error behavior.
-    ``pixels`` is forwarded for regionprops' shape validation even though no
+    2D and singleton-Z masks use the accelerated 2D measurements. Other inputs
+    go unchanged to NumPy. Pixel shapes are validated even though no
     intensity-weighted measurements are requested.
     """
+    masks, pixels = _ss._single_slice_inputs(masks, pixels)
     if masks.ndim != 2:
         return _ss.get_sizeshape(
             masks, pixels, calculate_advanced, new_features, spacing

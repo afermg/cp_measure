@@ -2,20 +2,20 @@
 
 This table covers the object measurements exposed by the bulk registries. The featurizer uses the 3D registry for volumes. For `Z=1`, it additionally enables the 2D-only families on the sole slice; for `Z>1`, it skips them with a warning. Both backends use this rule. This is not a 3D implementation of those measurements; genuinely 3D features retain their input rank.
 
-| Measurement           | 2D  | Multi-slice 3D | Notes                                                                             |
-| --------------------- | --- | -------------- | --------------------------------------------------------------------------------- |
-| `intensity`           | Yes | Yes            | Per channel; `legacy` selects percentile conventions.                             |
-| `sizeshape`           | Yes | Yes            | Shape-only; 3D surface area requires at least two voxels along each spatial axis. |
-| `texture`             | Yes | Yes            | Per channel; see [quantization notes](measurement-notes.md#texture-quantization). |
-| `granularity`         | Yes | Yes            | Per channel.                                                                      |
-| `radial_distribution` | Yes | No             | Measures `Z=1`; returns `{}` for `Z>1`.                                           |
-| `radial_zernikes`     | Yes | No             | Measures `Z=1`; returns `{}` for `Z>1`.                                           |
-| `zernike`             | Yes | No             | Shape-only; measures `Z=1`, returns `{}` for `Z>1`.                               |
-| `feret`               | Yes | No             | Shape-only; measures `Z=1`, returns `{}` for `Z>1` in both backends.              |
-| `pearson`             | Yes | Yes            | Two channels.                                                                     |
-| `costes`              | Yes | Yes            | Two channels; see the API's intensity-scale requirements.                         |
-| `manders_fold`        | Yes | Yes            | Two channels.                                                                     |
-| `rwc`                 | Yes | Yes            | Two channels.                                                                     |
+| Measurement           | 2D  | Multi-slice 3D | Notes                                                                                                             |
+| --------------------- | --- | -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `intensity`           | Yes | Yes            | Per channel; `legacy` selects percentile conventions.                                                             |
+| `sizeshape`           | Yes | Yes            | Shape-only; `Z=1` uses 2D features. For `Z>1`, surface area requires at least two voxels along each spatial axis. |
+| `texture`             | Yes | Yes            | Per channel; see [quantization notes](measurement-notes.md#texture-quantization).                                 |
+| `granularity`         | Yes | Yes            | Per channel.                                                                                                      |
+| `radial_distribution` | Yes | No             | Measures `Z=1`; returns `{}` for `Z>1`.                                                                           |
+| `radial_zernikes`     | Yes | No             | Measures `Z=1`; returns `{}` for `Z>1`.                                                                           |
+| `zernike`             | Yes | No             | Shape-only; measures `Z=1`, returns `{}` for `Z>1`.                                                               |
+| `feret`               | Yes | No             | Shape-only; measures `Z=1`, returns `{}` for `Z>1` in both backends.                                              |
+| `pearson`             | Yes | Yes            | Two channels.                                                                                                     |
+| `costes`              | Yes | Yes            | Two channels; see the API's intensity-scale requirements.                                                         |
+| `manders_fold`        | Yes | Yes            | Two channels.                                                                                                     |
+| `rwc`                 | Yes | Yes            | Two channels.                                                                                                     |
 
 “Supported” describes dimensionality, not a guarantee that every feature is defined for every object. Constant intensities, tiny objects, and other degenerate inputs may produce undefined values. Empty masks have no uniform raw-function contract; for example, raw Feret raises `ValueError` for an all-background 2D mask.
 

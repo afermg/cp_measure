@@ -292,6 +292,8 @@ def featurize(
     it along Z before calling this function. Inputs are not modified. For Z=1,
     2D-only families may measure the sole slice; for Z>1 they are skipped. This
     exception does not change the spatial rank passed to 3D-capable features.
+    Size/shape also uses 2D features for Z=1; other families keep their own
+    dimensional conventions.
 
     Images whose mask stack has no labelled objects are skipped before any
     measurement runs; the number skipped is reported via a warning.

@@ -156,13 +156,34 @@ def test_numba_perimeter_euler_empty():
 
 def _assert_features_equal(got, ref):
     assert list(got) == list(ref)
-    # Only perimeter-weight summation changes floating-point order. Moment,
-    # orientation, Euler and schema parity must not be hidden by float casts.
+    # Moment budgets are dimensionless and object-local, not scaled by another
+    # object's largest value. Geometry, schemas and undefined values stay strict.
     perimeter_features = {"Perimeter", "PerimeterCrofton", "FormFactor", "Compactness"}
     for key in ref:
         assert got[key].shape == ref[key].shape, key
         assert got[key].dtype == ref[key].dtype, key
-        if key in perimeter_features:
+        for mask in (numpy.isnan, numpy.isposinf, numpy.isneginf):
+            numpy.testing.assert_array_equal(
+                mask(got[key]), mask(ref[key]), err_msg=key
+            )
+        if key == "Orientation":
+            finite = numpy.isfinite(ref[key])
+            difference = (got[key][finite] - ref[key][finite] + 90) % 180 - 90
+            numpy.testing.assert_allclose(difference, 0, rtol=0, atol=1e-8, err_msg=key)
+        elif "Area" in ref and "Moment_" in key:
+            scale = 1.0
+            if key.startswith(("SpatialMoment_", "CentralMoment_")):
+                order = sum(map(int, key.split("_")[1:]))
+                scale = ref["Area"] ** (1 + order / 2)
+            numpy.testing.assert_allclose(
+                got[key] / scale,
+                ref[key] / scale,
+                rtol=1e-7,
+                atol=1e-12,
+                equal_nan=True,
+                err_msg=key,
+            )
+        elif key in perimeter_features:
             numpy.testing.assert_allclose(
                 got[key],
                 ref[key],
@@ -173,6 +194,43 @@ def _assert_features_equal(got, ref):
             )
         else:
             numpy.testing.assert_array_equal(got[key], ref[key], err_msg=key)
+
+
+def test_sizeshape_moment_comparison_budget():
+    # Symmetric ellipse: exact mu_23 = 0; a different accumulation order
+    # produced 0.0025036931. Compare dimensionless moments per object rather
+    # than imposing a fixed absolute threshold in pixel**5 units.
+    y, x = numpy.mgrid[:512, :512]
+    area = numpy.count_nonzero(
+        ((y - 255.3) / 180.1) ** 2 + ((x - 255.5) / 210.7) ** 2 <= 1
+    )
+    ref = {
+        "Area": numpy.array([float(area), 1.0]),
+        "CentralMoment_2_3": numpy.zeros(2),
+        "Orientation": numpy.array([90.0, 0.0]),
+        "EulerNumber": numpy.ones(2, dtype=numpy.int64),
+        "Perimeter": numpy.array([100.0, 0.0]),
+    }
+    got = {key: values.copy() for key, values in ref.items()}
+    got["CentralMoment_2_3"][0] = 0.002503693103790283
+    got["Orientation"][0] = -90.0
+    _assert_features_equal(got, ref)
+
+    # A large object must not mask a small object's error. Nor may the moment
+    # allowance hide geometry, dtype, schema, or undefined-value changes.
+    for key, values in [
+        ("CentralMoment_2_3", numpy.array([0.0, 1e-7])),
+        ("CentralMoment_2_3", numpy.array([1e-6 * area**3.5, 0.0])),
+        ("CentralMoment_2_3", numpy.array([numpy.nan, 0.0])),
+        ("CentralMoment_2_3", numpy.array([numpy.inf, 0.0])),
+        ("CentralMoment_2_3", numpy.array([-numpy.inf, 0.0])),
+        ("Orientation", numpy.array([90.001, 0.0])),
+        ("EulerNumber", numpy.ones(2, dtype=float)),
+        ("Area", ref["Area"] + 1),
+        ("Perimeter", ref["Perimeter"] + 1e-6),
+    ]:
+        with pytest.raises(AssertionError):
+            _assert_features_equal({**ref, key: values}, ref)
 
 
 @requires_numba
@@ -270,14 +328,14 @@ def test_get_sizeshape_3d_fallback(calculate_advanced, new_features):
 
 
 @requires_numba
-@pytest.mark.parametrize("shape", [(1, 40, 40), (1, 1, 40, 40)])
+@pytest.mark.parametrize("shape", [(2, 1, 40), (2, 40, 1), (1, 1, 40, 40)])
 def test_get_sizeshape_preserves_unsupported_rank_errors(shape):
     from cp_measure.core.measureobjectsizeshape import get_sizeshape as baseline
     from cp_measure.core.numba._sizeshape import get_sizeshape
 
-    masks = _ring().reshape(shape)
-    # Main cannot run marching_cubes on a singleton Z, nor regionprops on 4D.
-    # Accelerating 2D must not silently turn either into a successful 2D call.
+    masks = numpy.ones(shape, dtype=numpy.int32)
+    # Only singleton Z is normalized; multi-slice thin axes and raw batches
+    # retain NumPy's existing errors.
     with pytest.raises((ValueError, TypeError)) as ref:
         baseline(masks, None)
     with pytest.raises(type(ref.value)) as got:

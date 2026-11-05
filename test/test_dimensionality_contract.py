@@ -1,6 +1,7 @@
 """Singleton-Z eligibility is shared by all 2D-only measurement families.
 
-3D-capable measurements keep their declared rank; a batch axis is never Z.
+Size/shape also falls back to 2D for singleton Z; other 3D families retain rank.
+A batch axis is never Z.
 NumPy raw functions remain per-image APIs; Numba additionally accepts batches.
 """
 
@@ -47,7 +48,7 @@ def assert_same(got, expected):
         np.testing.assert_array_equal(actual_values, expected_values, err_msg=key)
 
 
-@pytest.mark.parametrize("feature", TWO_D_ONLY)
+@pytest.mark.parametrize("feature", (*TWO_D_ONLY, "sizeshape"))
 def test_singleton_z_is_eligible_without_mutating_inputs(backend, feature):
     masks, pixels = scene()
     # Negative strides and gapped labels exercise the public sanitation boundary.
@@ -105,7 +106,7 @@ def test_radial_does_not_broadcast_singleton_spatial_axes(backend, feature, reve
         get_core_measurements()[feature](masks, pixels)
 
 
-@pytest.mark.parametrize("feature", TWO_D_ONLY)
+@pytest.mark.parametrize("feature", (*TWO_D_ONLY, "sizeshape"))
 def test_featurizer_singleton_z_matches_2d_without_skip_warning(backend, feature):
     masks, pixels = scene()
     masks, pixels = masks[None, None], pixels[None, None]
@@ -194,10 +195,38 @@ def test_granularity_singleton_z_batch_preserves_numpy_3d_behavior(container):
         assert_same(result, ref(masks, pixels))
 
 
-def test_singleton_z_does_not_reinterpret_3d_sizeshape(backend):
+@pytest.mark.parametrize(
+    "advanced,new,count",
+    [(False, False, 23), (False, True, 25), (True, False, 76), (True, True, 78)],
+)
+@pytest.mark.parametrize("empty", [False, True])
+def test_sizeshape_singleton_schema(backend, advanced, new, count, empty):
+    masks, _ = scene()
+    masks = np.where(masks == 7, 1, np.where(masks == 91, 2, 0)).astype(np.int32)
+    if empty:
+        masks[:] = 0
+    masks.flags.writeable = False
+    fn = get_core_measurements(sanitize=False)["sizeshape"]
+    kwargs = dict(calculate_advanced=advanced, new_features=new)
+    expected = fn(masks, None, **kwargs)
+    # Like explicit 2D measurements, the fallback remains in pixel units.
+    got = fn(masks[None], None, spacing=(2.0, 1.0, 0.5), **kwargs)
+    assert_same(got, expected)
+    assert len(got) == count
+    assert got["Area"].shape == ((0,) if empty else (2,))
+    assert got["EulerNumber"].dtype == np.int64
+    assert "Volume" not in got and "SurfaceArea" not in got
+
+
+def test_sizeshape_singleton_validates_pixels_before_slicing(backend):
     masks, pixels = scene()
-    with pytest.raises(ValueError, match="at least 2x2x2"):
-        get_core_measurements()["sizeshape"](masks[None], pixels[None])
+    fn = get_core_measurements()["sizeshape"]
+    for shape in [(32, 40), (2, 32, 40), (1, 31, 40), (1, 32, 39), (1, 32, 40, 1, 1)]:
+        with pytest.raises(ValueError, match="shape"):
+            fn(masks[None], np.zeros(shape))
+    # Preserve regionprops' optional last-axis intensity channels.
+    channels = np.stack([pixels, pixels * 2], axis=-1)
+    assert_same(fn(masks[None], channels[None]), fn(masks, channels))
 
 
 @pytest.mark.parametrize("feature", ["pearson", "manders_fold", "rwc", "costes"])
