@@ -31,7 +31,7 @@ from cp_measure.core.numba._granularity import (
     erosion_4conn_2d,
     reconstruction_by_dilation_2d,
 )
-from cp_measure.primitives.shapes import each_volume
+from cp_measure.primitives.shapes import to_bzyx
 
 
 def get_granularity(
@@ -55,21 +55,22 @@ def get_granularity(
     ``"float64"`` widens float16/32 before resampling/background operations.
     """
     validate_precision(precision)
-    # each_volume yields per-item (Z, Y, X) VIEWS and validates once, without
-    # stacking the batch — so batching no longer pays a whole-batch copy.
-    items, unwrap = each_volume(masks, pixels)
+    masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
+    is_sequence = isinstance(masks, (list, tuple))
     results = [
         _granularity_one(
-            mask_zyx,
-            pixels_zyx,
+            m,
+            p,
             subsample_size,
             image_sample_size,
             element_size,
             granular_spectrum_length,
             precision=precision,
-            spatial_ndim=spatial_ndim,
+            spatial_ndim=(
+                numpy.ndim(masks[i]) if is_sequence else min(numpy.ndim(masks), 3)
+            ),
         )
-        for mask_zyx, pixels_zyx, spatial_ndim in items
+        for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx))
     ]
     return unwrap(results)
 

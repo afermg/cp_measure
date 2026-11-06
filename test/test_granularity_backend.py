@@ -128,7 +128,7 @@ def test_batch_sequence_precision_matches_per_image(container, precision):
 
 @pytest.mark.parametrize("container", [list, tuple])
 @pytest.mark.parametrize("precision", ["input", "float64"])
-def test_mixed_dtype_batch_preserves_per_image_precision(container, precision):
+def test_mixed_dtype_batch_uses_common_precision(container, precision):
     y, x = numpy.mgrid[:80, :80]
     first = (0.5 + 0.4 * numpy.sin(x / 11) * numpy.cos(y / 13)).astype(numpy.float32)
     pixels = container([first, first.astype(numpy.float64)])
@@ -137,20 +137,22 @@ def test_mixed_dtype_batch_preserves_per_image_precision(container, precision):
         array.setflags(write=False)
     params = dict(subsample_size=0.3, element_size=2, precision=precision)
     actual = gran_numba(masks, pixels, **params)
+    assert isinstance(actual, list) and len(actual) == len(pixels)
+    common_dtype = numpy.result_type(*pixels)
     for mask, image, result in zip(masks, pixels, actual):
-        expected = gran_numba(mask, image, **params)
+        expected = gran_numba(mask, image.astype(common_dtype, copy=False), **params)
         assert result.keys() == expected.keys()
         for key in expected:
             assert result[key].dtype == expected[key].dtype
             numpy.testing.assert_array_equal(result[key], expected[key])
+    for key in actual[0]:
+        numpy.testing.assert_array_equal(actual[0][key], actual[1][key])
     if precision == "input":
-        # Fractional resampling distinguishes float32 from float64 arithmetic.
+        # Whole-batch promotion differs from an independent float32 call.
+        unpromoted = gran_numba(masks[0], first, **params)
         assert any(
-            not numpy.array_equal(actual[0][key], actual[1][key]) for key in actual[0]
+            not numpy.array_equal(actual[0][key], unpromoted[key]) for key in actual[0]
         )
-    else:
-        for key in actual[0]:
-            numpy.testing.assert_array_equal(actual[0][key], actual[1][key])
 
 
 @pytest.mark.parametrize("is_3d", [False, True], ids=["2d", "3d"])

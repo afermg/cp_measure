@@ -39,7 +39,7 @@ from cp_measure.core.measureobjectintensity import (
     STD_INTENSITY_EDGE,
     UPPER_QUARTILE_INTENSITY,
 )
-from cp_measure.primitives.shapes import each_volume
+from cp_measure.primitives.shapes import to_bzyx
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
     inner_boundary,
@@ -60,24 +60,53 @@ def get_intensity(
 
     Returns a feature dict for a single image, or a list of dicts for a batch
     (4D ``(B, Z, Y, X)`` array or a list/tuple of images). See
-    :func:`cp_measure.primitives.shapes.each_volume` for the accepted shapes.
+    :func:`cp_measure.primitives.shapes.to_bzyx` for the accepted shapes.
     Labels must be contiguous ``1..N`` and match the pixels in shape and rank.
     ``legacy=True`` retains the original quartiles and rank-dependent MAD;
     a singleton-Z image uses the 3D convention.
     """
-    # Validate the batch before kernel calls and normalize each item as a view.
-    items, unwrap = each_volume(masks, pixels)
-    results = [
-        _intensity_volume(
-            mask_zyx,
-            pixels_zyx,
-            edge_measurements,
-            legacy,
-            spatial_ndim=spatial_ndim,
+    masks_is_seq = isinstance(masks, (list, tuple))
+    pixels_is_seq = isinstance(pixels, (list, tuple))
+    if masks_is_seq != pixels_is_seq:
+        raise ValueError("masks and pixels must both be sequences, or both arrays")
+    if pixels_is_seq:
+        if len(masks) != len(pixels):
+            raise ValueError("masks and pixels must have matching batch sizes")
+        if any(numpy.shape(m) != numpy.shape(p) for m, p in zip(masks, pixels)):
+            raise ValueError("labels and pixels must have matching shapes and rank")
+    elif numpy.shape(masks) != numpy.shape(pixels):
+        raise ValueError("labels and pixels must have matching shapes and rank")
+
+    is_batch = pixels_is_seq or numpy.ndim(pixels) == 4
+    if is_batch:
+        if len(pixels) == 0:
+            raise ValueError("intensity batches must not be empty")
+        if pixels_is_seq and any(
+            numpy.shape(p) != numpy.shape(pixels[0]) for p in pixels
+        ):
+            raise ValueError("all images in a batch must have the same shape")
+        pairs = zip(masks, pixels)
+    else:
+        pairs = zip([masks], [pixels])
+
+    results = []
+    for mask, image in pairs:
+        spatial_ndim = numpy.ndim(image)
+        if spatial_ndim not in (2, 3):
+            raise ValueError("expected a 2D or 3D image per batch item")
+        # Normalize one image at a time: these are views, not whole-batch copies.
+        # The per-volume kernel is serial, so materializing a stack buys nothing.
+        masks_zyx, pixels_zyx, _ = to_bzyx(mask, image)
+        results.append(
+            _intensity_volume(
+                masks_zyx[0],
+                pixels_zyx[0],
+                edge_measurements,
+                legacy,
+                spatial_ndim=spatial_ndim,
+            )
         )
-        for mask_zyx, pixels_zyx, spatial_ndim in items
-    ]
-    return unwrap(results)
+    return results if is_batch else results[0]
 
 
 def _intensity_volume(
