@@ -65,14 +65,9 @@ def test_numba_intensity_matches_numpy(dim, edge, legacy):
 
 
 def test_numpy_intensity_rejects_rank_mismatch():
-    """A 3D image with a 2D mask is rejected, not broadcast over the stack.
-
-    Mirrors the numba backend (and the ``to_bzyx`` contract); the old numpy
-    implementation silently broadcast the mask, diverging from numba once #57
-    tightened it.
-    """
-    mask2d, _ = _mask_pixels_2d()
-    _, pixels3d = _mask_pixels_3d()
+    """Reject a broadcastable 2D mask whose Y/X dimensions match the volume."""
+    mask3d, pixels3d = _mask_pixels_3d()
+    mask2d = mask3d[0]
     with pytest.raises(ValueError, match="matching shapes and rank"):
         intensity_numpy(mask2d, pixels3d)
 

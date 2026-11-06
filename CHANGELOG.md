@@ -12,6 +12,17 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
+  returning one dictionary per item. Intensity and granularity normalize batch
+  items as views and process them sequentially.
+- **Breaking:** NumPy intensity now requires matching label/image shapes instead
+  of broadcasting a 2D mask over a 3D image. To retain that measurement, pass
+  `numpy.broadcast_to(mask_2d, pixels_3d.shape)` explicitly. Numba granularity also
+  checks matching label/image shapes.
+- Numba granularity preserves each image's dtype in mixed-dtype list/tuple batches
+  with `precision="input"`, matching separate calls. This replaces whole-batch
+  dtype promotion and can change rounding; `precision="float64"` widens each
+  float16/float32 image before arithmetic.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler

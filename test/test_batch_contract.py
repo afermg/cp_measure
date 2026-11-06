@@ -128,8 +128,8 @@ def test_batch_matches_independent_items(measurement, depth, container, labels):
         inputs = tuple([a[None] for a in group] for group in inputs)
     inputs = tuple(container(group) for group in inputs)
     originals = [[a.copy() for a in group] for group in inputs]
-    # Older skimage relabel_sequential rejects readonly sparse labels. Exercise
-    # readonly dense inputs and non-mutating sparse sanitation separately.
+    # Exercise dense readonly input and sparse sanitation separately; combined
+    # readonly sparse-label coverage lives in test_sanitize.py.
     for i, group in enumerate(inputs):
         if i == 0 and labels == "gapped":
             continue

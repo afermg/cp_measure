@@ -67,9 +67,7 @@ def get_intensity(
     ``legacy=True`` retains the original quartiles and rank-dependent MAD, so a
     singleton-Z volume remains 3D even when its pixels fit in one plane.
     """
-    # each_volume validates once and yields per-item (Z, Y, X) VIEWS — no
-    # whole-batch stack/copy — so the serial per-volume kernel keeps batching at
-    # least as cheap as looping single images.
+    # Validate the batch before kernel calls and normalize each item as a view.
     items, unwrap = each_volume(masks, pixels)
     results = [
         _intensity_volume(

@@ -147,9 +147,8 @@ def each_volume(masks, pixels):
     batch structure (a 3D array is one volume; a 4D array or a list/tuple is a
     batch), ragged batches are rejected, and no lower-rank mask is broadcast over a
     volume. In addition each image's labels and pixels must match in shape and rank
-    (no broadcasting). Unlike :func:`to_bzyx` it never materialises the batch, so a
-    serial per-volume kernel pays no stacking cost — batching stays at least as
-    cheap as looping single images.
+    (no broadcasting). Unlike :func:`to_bzyx` it never materialises the batch,
+    preserving each array's dtype and avoiding a whole-batch allocation.
     """
     masks_is_seq = isinstance(masks, (list, tuple))
     pixels_is_seq = isinstance(pixels, (list, tuple))

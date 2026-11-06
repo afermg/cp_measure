@@ -126,6 +126,33 @@ def test_batch_sequence_precision_matches_per_image(container, precision):
             _assert_same(got, gran_numpy(m, p, precision=precision))
 
 
+@pytest.mark.parametrize("container", [list, tuple])
+@pytest.mark.parametrize("precision", ["input", "float64"])
+def test_mixed_dtype_batch_preserves_per_image_precision(container, precision):
+    y, x = numpy.mgrid[:80, :80]
+    first = (0.5 + 0.4 * numpy.sin(x / 11) * numpy.cos(y / 13)).astype(numpy.float32)
+    pixels = container([first, first.astype(numpy.float64)])
+    masks = container([numpy.ones(first.shape, numpy.int32) for _ in pixels])
+    for array in (*masks, *pixels):
+        array.setflags(write=False)
+    params = dict(subsample_size=0.3, element_size=2, precision=precision)
+    actual = gran_numba(masks, pixels, **params)
+    for mask, image, result in zip(masks, pixels, actual):
+        expected = gran_numba(mask, image, **params)
+        assert result.keys() == expected.keys()
+        for key in expected:
+            assert result[key].dtype == expected[key].dtype
+            numpy.testing.assert_array_equal(result[key], expected[key])
+    if precision == "input":
+        # Fractional resampling distinguishes float32 from float64 arithmetic.
+        assert any(
+            not numpy.array_equal(actual[0][key], actual[1][key]) for key in actual[0]
+        )
+    else:
+        for key in actual[0]:
+            numpy.testing.assert_array_equal(actual[0][key], actual[1][key])
+
+
 @pytest.mark.parametrize("is_3d", [False, True], ids=["2d", "3d"])
 def test_featurizer_batch_matches_numpy(monkeypatch, is_3d):
     """Exercise the rebased backend through #106's explicit batch interface."""
