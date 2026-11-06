@@ -12,6 +12,12 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
+  returning one dictionary per item. Intensity normalizes batch items as views
+  and processes them sequentially.
+- **Breaking:** NumPy intensity now requires matching label/image shapes instead
+  of broadcasting a 2D mask over a 3D image. To retain that measurement, pass
+  `numpy.broadcast_to(mask_2d, pixels_3d.shape)` explicitly.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler

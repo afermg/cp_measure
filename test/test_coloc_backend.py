@@ -3,8 +3,8 @@
 Compares the numba ``pearson``/``manders_fold``/``rwc``/``overlap`` against the
 reference ``cp_measure.core.measurecolocalization`` key-by-key. Two value regimes
 run: continuous random floats (generic path) and integer-VALUED floats in a small
-range (forces RWC dense-rank ties). 2D and 3D, single image and batch (4D array +
-same-shape list) all run, since every bzyx path must hold.
+range (forces RWC dense-rank ties), in 2D and 3D. Shared batch/container,
+ordering and immutability checks live in test_batch_contract.py.
 
 These golden inputs exercise the accelerated float64 path. Dtype-sensitive
 reference compatibility (including real integer images) is covered separately
@@ -86,32 +86,3 @@ def test_matches_numpy_3d(name):
     expected = getattr(ref, f"get_correlation_{name}")(p1, p2, masks)
     got = _numba_fn(name)(p1, p2, masks)
     _assert_match(got, expected)
-
-
-@requires_numba
-@pytest.mark.parametrize("name", FUNCS)
-def test_batch_list_matches_per_image(name):
-    # A list batch must be same-shape (ragged batches are rejected by the
-    # _stack/to_bzyx contract); distinct data comes from the two pixel regimes.
-    imgs = [_data_2d("cont"), _data_2d("ties")]
-    masks = [m for m, _, _ in imgs]
-    p1 = [a for _, a, _ in imgs]
-    p2 = [b for _, _, b in imgs]
-    got = _numba_fn(name)(p1, p2, masks)
-    assert isinstance(got, list) and len(got) == 2
-    for (m, a, b), per_image in zip(imgs, got):
-        _assert_match(per_image, getattr(ref, f"get_correlation_{name}")(a, b, m))
-
-
-@requires_numba
-@pytest.mark.parametrize("name", FUNCS)
-def test_4d_batch_matches_per_image(name):
-    m0, a0, b0 = _data_2d("cont")
-    m1, a1, b1 = _data_2d("ties")
-    masks = np.stack([m0[np.newaxis], m1[np.newaxis]])  # (2, 1, H, W)
-    p1 = np.stack([a0[np.newaxis], a1[np.newaxis]])
-    p2 = np.stack([b0[np.newaxis], b1[np.newaxis]])
-    got = _numba_fn(name)(p1, p2, masks)
-    assert isinstance(got, list) and len(got) == 2
-    for per_image, (m, a, b) in zip(got, [(m0, a0, b0), (m1, a1, b1)]):
-        _assert_match(per_image, getattr(ref, f"get_correlation_{name}")(a, b, m))
