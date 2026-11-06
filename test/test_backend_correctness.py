@@ -113,6 +113,13 @@ def test_numba_granularity_matches_numpy(sub):
 def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
     from cp_measure.core.numba import measureobjectintensity as accelerated
 
+    if kind in ("list", "tuple") and len(shape) == 2:
+        pytest.skip(
+            "2D list/tuple batches run the prange kernel, which stacks the batch; "
+            "the no-copy views guarantee applies to the serial path (3D / 4D / "
+            "single) — kernel coverage is in test_intensity_prange"
+        )
+
     masks = [np.ones(shape, dtype=np.int32) for _ in range(2)]
     pixels = [np.full(shape, float(i)) for i in range(2)]
     if kind == "stacked":
