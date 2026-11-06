@@ -56,16 +56,14 @@ def get_intensity(
     edge_measurements: bool = True,
     legacy: bool = False,
 ):
-    """Per-object intensity features; accepts a single image/volume or a batch.
+    """Per-object intensity features for 2D or 3D images, individually or in batches.
 
-    Returns a single feature dict for a lone 2D image or 3D volume, or a list of
-    such dicts for a batch (4D ``(B, Z, Y, X)`` array or a list of images). See
-    :func:`cp_measure.primitives.shapes.to_bzyx` for the accepted shapes; a single
-    image is the ``B == 1`` case of one batched code path. Labels must be contiguous
-    ``1..N``; bulk wrappers sanitize arbitrary positive IDs. Labels and pixels must
-    match in shape and rank for each image: no mask broadcasting is performed.
-    ``legacy=True`` retains the original quartiles and rank-dependent MAD, so a
-    singleton-Z volume remains 3D even when its pixels fit in one plane.
+    Returns a feature dict for a single image, or a list of dicts for a batch
+    (4D ``(B, Z, Y, X)`` array or a list/tuple of images). See
+    :func:`cp_measure.primitives.shapes.each_volume` for the accepted shapes.
+    Labels must be contiguous ``1..N`` and match the pixels in shape and rank.
+    ``legacy=True`` retains the original quartiles and rank-dependent MAD;
+    a singleton-Z image uses the 3D convention.
     """
     # Validate the batch before kernel calls and normalize each item as a view.
     items, unwrap = each_volume(masks, pixels)
