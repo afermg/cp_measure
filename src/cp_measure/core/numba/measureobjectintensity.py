@@ -39,6 +39,7 @@ from cp_measure.core.measureobjectintensity import (
     STD_INTENSITY_EDGE,
     UPPER_QUARTILE_INTENSITY,
 )
+from cp_measure.core.numba._intensity import intensity_2d_batch
 from cp_measure.primitives.shapes import to_bzyx
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
@@ -48,6 +49,39 @@ from cp_measure.primitives._segment_numba import (
     segment_resid_sumsq,
     segment_stats,
 )
+
+# Column order of the prange kernel output, matching ``measurement_names`` below.
+_BASE_KEYS = (
+    f"{INTENSITY}_{INTEGRATED_INTENSITY}",
+    f"{INTENSITY}_{MEAN_INTENSITY}",
+    f"{INTENSITY}_{STD_INTENSITY}",
+    f"{INTENSITY}_{MIN_INTENSITY}",
+    f"{INTENSITY}_{MAX_INTENSITY}",
+    f"{INTENSITY}_{MASS_DISPLACEMENT}",
+    f"{INTENSITY}_{LOWER_QUARTILE_INTENSITY}",
+    f"{INTENSITY}_{MEDIAN_INTENSITY}",
+    f"{INTENSITY}_{MAD_INTENSITY}",
+    f"{INTENSITY}_{UPPER_QUARTILE_INTENSITY}",
+    f"{C_LOCATION}_{LOC_CMI_X}",
+    f"{C_LOCATION}_{LOC_CMI_Y}",
+    f"{C_LOCATION}_{LOC_CMI_Z}",
+    f"{C_LOCATION}_{LOC_MAX_X}",
+    f"{C_LOCATION}_{LOC_MAX_Y}",
+    f"{C_LOCATION}_{LOC_MAX_Z}",
+)
+_EDGE_KEYS = (
+    f"{INTENSITY}_{INTEGRATED_INTENSITY_EDGE}",
+    f"{INTENSITY}_{MEAN_INTENSITY_EDGE}",
+    f"{INTENSITY}_{STD_INTENSITY_EDGE}",
+    f"{INTENSITY}_{MIN_INTENSITY_EDGE}",
+    f"{INTENSITY}_{MAX_INTENSITY_EDGE}",
+)
+
+
+def _assemble_intensity(out, b, nobj, edge):
+    """One per-image dict from the kernel output, with independent arrays."""
+    keys = _BASE_KEYS + _EDGE_KEYS if edge else _BASE_KEYS
+    return {k: out[b, f, :nobj].copy() for f, k in enumerate(keys)}
 
 
 def get_intensity(
@@ -88,6 +122,20 @@ def get_intensity(
         pairs = zip(masks, pixels)
     else:
         pairs = zip([masks], [pixels])
+
+    # Fast path: a list/tuple batch of 2D images runs the parallel prange kernel.
+    # A 4D (B, 1, Y, X) array is a batch of singleton-Z volumes (spatial rank 3),
+    # so it stays serial; the 2D kernel's MAD fraction (1/2) would be wrong for it.
+    # The validation above already enforced the per-item shape/rank and ragged
+    # contract, so the stacked batch is well-formed.
+    if masks_is_seq and all(numpy.ndim(m) == 2 for m in masks):
+        masks_b = numpy.stack([numpy.asarray(m)[numpy.newaxis] for m in masks])
+        pixels_b = numpy.stack([numpy.asarray(p)[numpy.newaxis] for p in pixels])
+        out, nobjs = intensity_2d_batch(masks_b, pixels_b, legacy, edge_measurements)
+        return [
+            _assemble_intensity(out, b, int(nobjs[b]), edge_measurements)
+            for b in range(len(masks))
+        ]
 
     results = []
     for mask, image in pairs:
