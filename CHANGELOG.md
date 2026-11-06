@@ -12,6 +12,10 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- Size/shape measures singleton-Z volumes as 2D in both backends, returning
+  the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
+  Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
+  output remains integer and the existing moment implementation is retained.
 - Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
   (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
   widening of float16/float32 before arithmetic in both backends). Opting in can
