@@ -177,8 +177,8 @@ def test_measured_image_shape_mismatch_rejected(
     measurement, shape, container, monkeypatch
 ):
     name, call, _ = measurement
-    if name in ("zernike", "feret", "granularity"):
-        pytest.skip("shape-only pixels ignored; granularity has no shared shape guard")
+    if name in ("zernike", "feret"):
+        pytest.skip("shape-only API ignores pixels, so no shape guard applies")
     if name == "intensity":
         from cp_measure.core.numba import measureobjectintensity
 
