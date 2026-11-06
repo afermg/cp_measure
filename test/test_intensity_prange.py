@@ -29,6 +29,31 @@ def _batch(counts):
     return masks, pix
 
 
+def test_all_nonfinite_object_image_edge_matches_serial():
+    """An image whose objects are entirely non-finite still has edge features
+    (nan/inf) in the serial path; the kernel must not skip them (I1)."""
+    rng = get_rng()
+    m_nan = np.zeros((SIZE_2D, SIZE_2D), np.int32)
+    _stamp_objects_2d(m_nan, n_objects=3)
+    p_nan = np.full((SIZE_2D, SIZE_2D), np.nan)
+    m_ok = np.zeros((SIZE_2D, SIZE_2D), np.int32)
+    _stamp_objects_2d(m_ok, n_objects=4)
+    p_ok = rng.random((SIZE_2D, SIZE_2D))
+    masks, pix = [m_nan, m_ok], [p_nan, p_ok]
+    masks_b, pix_b, _ = to_bzyx(masks, pix)
+    out, _ = intensity_2d_batch(masks_b, pix_b, False, True)
+    for b, (m, p) in enumerate(zip(masks, pix)):
+        ref = list(
+            _intensity_volume(
+                m[np.newaxis], p[np.newaxis], edge_measurements=True, spatial_ndim=2
+            ).values()
+        )
+        for f, arr in enumerate(ref):
+            np.testing.assert_array_equal(
+                out[b, f, : int(m.max())], arr, err_msg=f"img {b} col {f}"
+            )
+
+
 @pytest.mark.parametrize("legacy", [False, True], ids=["new", "legacy"])
 @pytest.mark.parametrize("edge", [False, True], ids=["edge", "noedge"])
 def test_batch_kernel_matches_serial(edge, legacy):

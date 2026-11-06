@@ -40,53 +40,59 @@ def fill_intensity_2d(mask_zyx, pix_zyx, legacy, edge, out, b, nobj):
     m = np.ascontiguousarray(mask_zyx)
     p = np.ascontiguousarray(pix_zyx)
     values, seg0, xc, yc, zc = flatten_numba(m, p)
-    if values.size == 0:
-        return
 
-    (
-        count,
-        sumI,
-        minI,
-        maxI,
-        max_x,
-        max_y,
-        max_z,
-        sx,
-        sy,
-        sz,
-        sxI,
-        syI,
-        szI,
-    ) = segment_moments(values, seg0, xc, yc, zc, nobj)
-    cnt = count.astype(np.float64)
-    mean = sumI / cnt
-    ss = segment_resid_sumsq(values, seg0, nobj, mean)
-    std = np.sqrt(ss / cnt)
-    cm_x = sx / cnt
-    cm_y = sy / cnt
-    cm_z = sz / cnt
-    cmi_x = sxI / sumI
-    cmi_y = syI / sumI
-    cmi_z = szI / sumI
-    massd = np.sqrt((cm_x - cmi_x) ** 2 + (cm_y - cmi_y) ** 2 + (cm_z - cmi_z) ** 2)
-    lq, med, uq, mad = segment_quantiles(values, seg0, count, nobj, 1.0 / 2.0, legacy)
+    # Base features need at least one finite object pixel; with none, serial
+    # leaves them zero (matched by out being zero-initialised). Edge features are
+    # gated only on ``edge`` in the serial path, so they must still run below.
+    if values.size > 0:
+        (
+            count,
+            sumI,
+            minI,
+            maxI,
+            max_x,
+            max_y,
+            max_z,
+            sx,
+            sy,
+            sz,
+            sxI,
+            syI,
+            szI,
+        ) = segment_moments(values, seg0, xc, yc, zc, nobj)
+        cnt = count.astype(np.float64)
+        mean = sumI / cnt
+        ss = segment_resid_sumsq(values, seg0, nobj, mean)
+        std = np.sqrt(ss / cnt)
+        cm_x = sx / cnt
+        cm_y = sy / cnt
+        cm_z = sz / cnt
+        cmi_x = sxI / sumI
+        cmi_y = syI / sumI
+        cmi_z = szI / sumI
+        massd = np.sqrt(
+            (cm_x - cmi_x) ** 2 + (cm_y - cmi_y) ** 2 + (cm_z - cmi_z) ** 2
+        )
+        lq, med, uq, mad = segment_quantiles(
+            values, seg0, count, nobj, 1.0 / 2.0, legacy
+        )
 
-    out[b, 0, :nobj] = sumI
-    out[b, 1, :nobj] = mean
-    out[b, 2, :nobj] = std
-    out[b, 3, :nobj] = minI
-    out[b, 4, :nobj] = maxI
-    out[b, 5, :nobj] = massd
-    out[b, 6, :nobj] = lq
-    out[b, 7, :nobj] = med
-    out[b, 8, :nobj] = mad
-    out[b, 9, :nobj] = uq
-    out[b, 10, :nobj] = cmi_x
-    out[b, 11, :nobj] = cmi_y
-    out[b, 12, :nobj] = cmi_z
-    out[b, 13, :nobj] = max_x
-    out[b, 14, :nobj] = max_y
-    out[b, 15, :nobj] = max_z
+        out[b, 0, :nobj] = sumI
+        out[b, 1, :nobj] = mean
+        out[b, 2, :nobj] = std
+        out[b, 3, :nobj] = minI
+        out[b, 4, :nobj] = maxI
+        out[b, 5, :nobj] = massd
+        out[b, 6, :nobj] = lq
+        out[b, 7, :nobj] = med
+        out[b, 8, :nobj] = mad
+        out[b, 9, :nobj] = uq
+        out[b, 10, :nobj] = cmi_x
+        out[b, 11, :nobj] = cmi_y
+        out[b, 12, :nobj] = cmi_z
+        out[b, 13, :nobj] = max_x
+        out[b, 14, :nobj] = max_y
+        out[b, 15, :nobj] = max_z
 
     if not edge:
         return
