@@ -12,6 +12,13 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- Costes (NumPy and Numba) restores permissive CellProfiler-style threshold
+  boundaries: remove the final-background validity veto and the no-candidate
+  bisection rejection; restore linear handling of tiny/constant backgrounds.
+  This selectively reverses #110's background-search policy, not its scale fix.
+  Previously rejected searches may now yield finite coefficients (including 0/1),
+  leaving quality filtering downstream. Invalid input/regression and zero
+  denominator checks remain. See [boundary policy](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler

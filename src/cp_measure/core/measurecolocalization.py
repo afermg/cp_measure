@@ -341,19 +341,13 @@ def _valid_costes_pixels(fi, si) -> bool:
 
 
 def _costes_background_correlation(fi, si, selected) -> float:
-    if numpy.count_nonzero(selected) < 3:
+    # Linear search permits two pairs; bisection skips them before calling here.
+    if numpy.count_nonzero(selected) < 2:
         return numpy.nan
     first, second = fi[selected], si[selected]
     if numpy.ptp(first) == 0 or numpy.ptp(second) == 0:
         return numpy.nan
     return float(scipy.stats.pearsonr(first, second)[0])
-
-
-def _finish_costes_thresholds(fi, si, first_threshold, second_threshold):
-    selected = (fi < first_threshold) | (si < second_threshold)
-    if not numpy.isfinite(_costes_background_correlation(fi, si, selected)):
-        return _undefined_costes("chosen background subset has undefined correlation")
-    return float(first_threshold), float(second_threshold)
 
 
 def _costes_pair(
@@ -503,8 +497,8 @@ def get_correlation_overlap_ind(
 
 
 # ---------------------------------------------------------------------------
-# Costes' automated threshold (CellProfiler searches with explicit scale and
-# undefined-subset guards). first_pixels/second_pixels are compatibility args.
+# Costes' automated threshold (CellProfiler boundary policy, explicit scale).
+# first_pixels/second_pixels are compatibility args.
 # ---------------------------------------------------------------------------
 
 
@@ -529,7 +523,8 @@ def linear_costes(
     Candiate thresholds are gradually decreased until Pearson R falls below 0.
     If "Fast" mode is enabled the "steps" between tested thresholds will be increased
     when Pearson R is much greater than 0. Inputs must be normalized 1D arrays.
-    Undefined subsets return NaN thresholds with RuntimeWarning.
+    As in CellProfiler, insufficient background pixels end the search at the
+    current thresholds; no final background-validity veto is applied.
     """
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
@@ -579,14 +574,15 @@ def linear_costes(
         thr_fi_c = i
         thr_si_c = (a * i) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
-        # Only run Pearson if the input has changed.
-        if (positives := numpy.count_nonzero(combt)) != num_true:
+        # CP returns the current thresholds when Pearson has too few pairs.
+        positives = numpy.count_nonzero(combt)
+        if positives < 2:
+            break
+        # Only run Pearson if the input has changed. Constant subsets yield NaN
+        # and take the ordinary one-step descent, matching CP's comparisons.
+        if positives != num_true:
             costReg = _costes_background_correlation(fi, si, combt)
             num_true = positives
-        if not numpy.isfinite(costReg):
-            return _undefined_costes(
-                "background correlation became undefined during linear search"
-            )
         if costReg <= 0:
             break
         # Accurate mode and thresholds below ten grid steps never skip candidates.
@@ -594,7 +590,7 @@ def linear_costes(
         if fast_costes != M_ACCURATE and i >= i_step * 10:
             multiplier = _costes_step_multiplier(costReg)
         i -= i_step * multiplier
-    return _finish_costes_thresholds(fi, si, thr_fi_c, thr_si_c)
+    return float(thr_fi_c), float(thr_si_c)
 
 
 def bisection_costes(
@@ -612,8 +608,9 @@ def bisection_costes(
     We're looking for the first point below 0, and R value can become highly variable
     at lower thresholds in some samples. Therefore the candidate tested in each
     loop is 1/6th of the window size below the maximum value (as opposed to the midpoint).
-    Inputs must be normalized 1D arrays. Undefined results return NaN thresholds
-    with RuntimeWarning; constant candidates are treated as insufficient.
+    Inputs must be normalized 1D arrays. As in CellProfiler, the search retains
+    its boundary fallback when no nonnegative candidate is found and does not
+    validate the background again after choosing the final thresholds.
     """
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
@@ -650,8 +647,9 @@ def bisection_costes(
     right: float = scale_max
     mid: float = ((right - left) // (6 / 5)) + left
     lastmid: float = 0
-    # None distinguishes an undefined search from a real threshold at zero.
-    valid: float | None = None
+    # CP's boundary fallback: if no nonnegative candidate is found, use zero
+    # for the first threshold and the fitted intercept for the second.
+    valid: float = 1
     iterations = 0
     while lastmid != mid:
         iterations += 1
@@ -660,23 +658,23 @@ def bisection_costes(
         thr_fi_c = mid / scale_max
         thr_si_c = (a * thr_fi_c) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
-        costReg = _costes_background_correlation(fi, si, combt)
-        if not numpy.isfinite(costReg) or costReg < 0:
-            # Move above insufficient/constant candidates, never treat NaN as
-            # an implicit convergence event (which formerly left stale bounds).
+        if numpy.count_nonzero(combt) <= 2:
             left = mid - 1
         else:
-            right = mid + 1
-            valid = mid
+            costReg = _costes_background_correlation(fi, si, combt)
+            if costReg < 0:
+                left = mid - 1
+            elif costReg >= 0:
+                right = mid + 1
+                valid = mid
+            # NaN (constant background) leaves the bounds unchanged, as in CP.
         lastmid = mid
         divisor = 6 / 5 if right - left > 6 else 2
         mid = ((right - left) // divisor) + left
 
-    if valid is None:
-        return _undefined_costes("no finite nonnegative background correlation found")
     thr_fi_c = (valid - 1) / scale_max
     thr_si_c = (a * thr_fi_c) + b
-    return _finish_costes_thresholds(fi, si, thr_fi_c, thr_si_c)
+    return float(thr_fi_c), float(thr_si_c)
 
 
 # MODIFIED: This reproduces the behaviour of the block at
@@ -802,9 +800,11 @@ def get_correlation_costes(
     ``img_as_float``) are mapped to the integer path's division encoding. Other
     float values are not quantized or tolerance-snapped to the grid.
 
-    Undefined regressions/background subsets or zero signal denominators
-    return NaN and emit :class:`RuntimeWarning`, rather than plausible
-    zero/one coefficients. ``thr`` is retained but unused. Input arrays are
+    Small or constant threshold-search backgrounds do not veto the returned
+    coefficients; boundary results (including zero/one) are left for downstream
+    quality control. Invalid signals, undefined regressions and zero signal
+    denominators still return NaN with :class:`RuntimeWarning`.
+    ``thr`` is retained but unused. Input arrays are
     never modified. Labels must be contiguous ``1..N``; use the bulk API or
     :func:`cp_measure._sanitize.sanitize` for arbitrary IDs.
     """
