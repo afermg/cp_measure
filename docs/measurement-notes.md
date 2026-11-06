@@ -2,13 +2,27 @@
 
 For essential input and performance guidance, see the [README](../README.md#important-notes). For dimensions, label requirements, empty masks, and Feret batch shapes, see the [measurement support table](measurement-support.md).
 
+## Feature coverage policy
+
+Maximize valid feature coverage: prefer 3D measurements; where unavailable for singleton 3D inputs, generate supported 2D features. Apply fallback per measurement family, retain 2D feature names and meanings, and keep schemas consistent across backends and empty/nonempty inputs.
+
 ## 3D size and shape
 
 The featurizer supports both single- and multichannel volumes with `is_3d=True`. Both images `(B, C, Z, Y, X)` and masks `(B, M, Z, Y, X)` must have all five axes, with matching batch size and spatial dimensions. A 2D mask stack is rejected; singleton spatial axes are not stretched.
 
 To use a 2D mask through a volume, the caller must explicitly repeat it before calling `featurize`, for example `masks_3d = np.repeat(masks_2d[:, :, None], image.shape[2], axis=2)`. Each repeated label becomes one 3D object, so intensity and shape measurements use the entire volume rather than separate 2D measurements per slice. The featurizer does not perform this conversion or modify its inputs.
 
-The existing `sizeshape` measurement uses a surface-area calculation that requires at least two voxels along each spatial axis. In particular, a single-slice volume (`Z=1`) raises `ValueError: Input array must be at least 2x2x2.` with size/shape enabled. Disable it with `make_featurizer_config(..., sizeshape=False)`, or explicitly provide a 2D batch and use `is_3d=False` if 2D measurements are intended. This limitation predates the batch featurizer.
+For `Z=1`, size/shape measures the sole plane in both backends, including through the bulk wrappers and featurizer. It returns 2D feature names and pixel-based values: 78 default features, not the 212-feature 3D schema. All-background raw masks use the same 2D schema with zero-length arrays. This replaces the previous nonempty-input error and changes the previous empty singleton-Z schema. As for explicit 2D inputs, `spacing` does not scale these measurements.
+
+For `Z>1`, size/shape retains its 3D implementation and spacing convention. Its surface-area calculation still requires at least two voxels along each spatial axis; singleton X/Y axes are not squeezed. Raw size/shape calls remain per-image, not batch APIs.
+
+## Numba size and shape
+
+With `set_accelerator("numba")`, size/shape accelerates convex-hull construction and perimeter/Euler reductions for 2D and singleton-Z inputs. Hull rasterization, Euclidean distance transforms and the existing NumPy moment calculations remain unchanged. Euler output stays integer; returned values are not rounded or clipped.
+
+2D moment comparisons use object-local scaling: raw/central moments of total order k are divided by `Area**(1+k/2)` and compared with `rtol=1e-7, atol=1e-12`. Normalized and Hu moments use the same tolerance directly. Orientations are compared modulo 180 degrees with absolute tolerance `1e-8` degrees. These are test comparison rules only; other geometry, dtype and nonfinite checks are unchanged.
+
+Both raw functions require contiguous labels. The featurizer and default bulk wrappers sanitize arbitrary positive IDs without modifying inputs. Multi-slice volumes use the NumPy fallback. Warmed gains depend on object size and density; first calls also pay compilation cost.
 
 ## Numba intensity batches
 
@@ -24,6 +38,14 @@ Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim 
 
 `legacy=True` restores the original intensity quantile conventions; the default uses NumPy's linear quartiles and the usual median absolute deviation. See the [`get_intensity` docstring](../src/cp_measure/core/measureobjectintensity.py#L139-L163) for formulas, including the different legacy MAD convention in 3D.
 
+## Costes integer-to-float normalization
+
+For integer images, Costes divides by `scale_max`; normalized floats require the same scale explicitly. Equivalent floating-point expressions such as `level / scale_max` and `level * (1 / scale_max)` can differ at round-off, which can otherwise change threshold decisions substantially (see [#117](https://github.com/afermg/cp_measure/issues/117)).
+
+Both public Costes functions recognize **exact** reciprocal-multiply encodings of integer acquisition-grid levels, as produced by `img_as_float`, and map them to the existing division encoding before fitting thresholds and computing coefficients. This is performed per object, without modifying caller inputs. Other float values are left unchanged: there is no blanket quantization or epsilon-based snapping of nearby values. Explicit lower-bit-depth scales, such as `4095` for 12-bit images in `uint16`, use the same rule.
+
+This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes. Existing threshold comparisons and undefined-result/NaN rules are unchanged.
+
 ## Singleton-Z measurement eligibility
 
 The 2D-only families (`radial_distribution`, `radial_zernikes`, shape `zernike`, and `feret`) use their 2D calculations when there is exactly one Z slice. They are not computed when there is more than one Z slice.
@@ -35,7 +57,7 @@ The 2D-only families (`radial_distribution`, `radial_zernikes`, shape `zernike`,
 
 The same eligibility rule applies in both backends and through the featurizer. NumPy raw functions remain per-image APIs; Numba also accepts batches. Labels and intensities must match for intensity-dependent features; do not repeat masks through Z or select the first slice of a multi-slice volume.
 
-This does not reinterpret the input as 2D for other measurements. Intensity, texture, granularity, size/shape, and colocalization keep their 3D input and existing conventions. In particular, the size/shape singleton-axis limitation above remains. Granularity's Numba backend uses the NumPy 3D path for singleton-Z volumes instead of silently selecting its 2D kernel.
+Size/shape also uses 2D measurements for singleton-Z inputs, as described above. Intensity, texture, granularity and colocalization retain their 3D input and existing conventions. Granularity's Numba backend uses the NumPy 3D path for singleton-Z volumes instead of silently selecting its 2D kernel.
 
 ## Radial-distribution centers
 
@@ -143,16 +165,11 @@ by the reference to preserve precise diagnostics. Near-constant subsets and
 correlations within a reduction-error bound of a search decision also use this
 compatibility path; no correlation is rounded or search cutoff moved.
 
-The pending [#118](https://github.com/afermg/cp_measure/pull/118) normalization
-canonicalization is **not** included. Each encoding currently matches NumPy,
-without promising equality between division and reciprocal-multiplication
-encodings. Both backends share image-scale preparation, but #118 canonicalizes
-inside its per-object `_costes_pair`, **not** `_prepare_costes_inputs`. Its
-integration must call the same canonicalization helper in the Numba
-`_costes_pair` before validation/regression/search; merging only #118's NumPy
-change would leave finite accelerated searches on the old policy. That
-propagation is already requested, not a new policy decision. Its regression
-case is checked against current main in the accelerator tests.
+Both backends call the same per-object normalization canonicalization before
+validation, regression and threshold search. Exact reciprocal-multiply
+acquisition-grid encodings therefore follow the same division encoding in the
+NumPy and Numba paths; arbitrary off-grid floats are unchanged. This is the
+normalization rule described above, not an epsilon-based threshold adjustment.
 
 No fused `get_correlation_all` dispatch is introduced. Costes supports matching
 2D, singleton-Z and true 3D inputs, and the existing explicit batch convention;

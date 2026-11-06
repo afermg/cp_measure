@@ -573,6 +573,24 @@ new_features : bool, optional
 """
 
 
+def _single_slice_inputs(
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None,
+) -> tuple[NDArray[numpy.integer], NDArray[numpy.floating] | None]:
+    """Use the sole Z plane without discarding pixel-shape validation."""
+    if masks.ndim == 3 and masks.shape[0] == 1:
+        if pixels is not None:
+            # Match regionprops: an optional intensity-channel axis is last.
+            if pixels.ndim not in (3, 4) or pixels.shape[:3] != masks.shape:
+                raise ValueError(
+                    "Label and intensity image shapes must match, "
+                    "except for channel (last) axis."
+                )
+            pixels = pixels[0]
+        masks = masks[0]
+    return masks, pixels
+
+
 def get_sizeshape(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
@@ -583,7 +601,11 @@ def get_sizeshape(
     """Compute the size/shape measurements for multiple object masks.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    Singleton-Z inputs use 2D measurements, including the empty-mask schema.
+    As for explicit 2D inputs, measurements are in pixels; ``spacing`` applies
+    only to the 3D surface-area calculation.
     """
+    masks, pixels = _single_slice_inputs(masks, pixels)
     # Properties available for both 2d and 3d
     desired_properties = [
         "image",

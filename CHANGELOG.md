@@ -12,6 +12,10 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- Size/shape measures singleton-Z volumes as 2D in both backends, returning
+  the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
+  Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
+  output remains integer and the existing moment implementation is retained.
 - Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
   (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
   widening of float16/float32 before arithmetic in both backends). Opting in can
@@ -21,6 +25,13 @@ Notable user-facing changes are documented here.
   [measurement notes](docs/measurement-notes.md#percentage-of-maximum-colocalization-thresholds).
 - **Breaking:** require Python 3.11 or newer. Remove the project's Python upper
   bound; CI covers Python 3.11–3.14 on Ubuntu and macOS.
+
+### Fixed
+
+- Costes now maps exact reciprocal-normalized integer-grid values (including
+  `img_as_float` outputs) to the existing division encoding, preventing round-off
+  from changing coefficients solely because of the normalization path (#117).
+  Other float intensities, threshold-search rules and NaN handling are unchanged.
 
 ## [0.3.0]
 
