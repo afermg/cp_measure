@@ -28,6 +28,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
+from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import to_bzyx
 from cp_measure.utils import _zernike_coords
 
@@ -52,7 +53,7 @@ def zernike_coeffs(
     return lut, nterms, m_arr
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
     """Fused per-object weighted-complex Zernike sum (single pass, no (M,K) buffer).
 
@@ -163,13 +164,14 @@ def zernike_per_image(labels, pixels, degree, features):
     # degree-only work, hoisted out of the per-image loop (computed once per batch)
     zernike_indexes = centrosome.zernike.get_zernike_indexes(degree + 1)
     coeffs = zernike_coeffs(zernike_indexes)
-    results = []
-    for i, (masks_zyx, pixels_zyx) in enumerate(zip(masks_bzyx, pixels_bzyx)):
-        mask_ndim = np.ndim(labels[i] if is_sequence else labels)
+
+    def one(i):
+        masks_zyx = masks_bzyx[i]
+        pixels_zyx = pixels_bzyx[i]
         if masks_zyx.shape[0] != 1:
-            results.append({})
-            continue
+            return {}
         if weighted:
+            mask_ndim = np.ndim(labels[i] if is_sequence else labels)
             pixel_ndim = np.ndim(pixels[i] if is_sequence else pixels)
             if mask_ndim != pixel_ndim or masks_zyx.shape != pixels_zyx.shape:
                 raise ValueError(
@@ -178,5 +180,8 @@ def zernike_per_image(labels, pixels, degree, features):
         sums = zernike_moments_per_object(
             masks_zyx[0], pixels_zyx[0] if weighted else None, coeffs
         )
-        results.append(features(*sums, zernike_indexes))
-    return unwrap(results)
+        return features(*sums, zernike_indexes)
+
+    # Per-image work is independent; map_images runs a batch across a thread pool
+    # (the nogil zernike_moments kernel releases the GIL) and one image serially.
+    return unwrap(map_images(one, range(len(masks_bzyx))))
