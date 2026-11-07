@@ -37,7 +37,9 @@ def test_zernike_batch_uses_map_images(monkeypatch):
     masks, pix = _batch(3, 4)
     get_zernike(masks)
     get_radial_zernikes(masks, pix)
-    assert calls and all(c == 3 for c in calls), f"map_images not used for batch: {calls}"
+    assert calls and all(c == 3 for c in calls), (
+        f"map_images not used for batch: {calls}"
+    )
 
 
 @pytest.mark.parametrize(
