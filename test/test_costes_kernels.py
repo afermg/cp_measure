@@ -72,6 +72,73 @@ def test_bisection_matches_reference(seed):
 
 
 @requires_numba
+def test_bisection_reports_undefined_final_background():
+    """The chosen threshold's background subset is too small or constant. The
+    reference warns and returns NaN; the kernel reports that status, so the wrapper
+    can warn without replaying the whole reference search."""
+    from cp_measure.core.numba._costes import (
+        UNDEFINED_BACKGROUND,
+        _bisection,
+        _regression_ab,
+    )
+
+    fi = (
+        np.array(
+            [
+                131,
+                193,
+                243,
+                8,
+                36,
+                210,
+                242,
+                63,
+                79,
+                222,
+                108,
+                69,
+                211,
+                65,
+                104,
+                164,
+                140,
+            ]
+        )
+        / 255
+    )
+    si = (
+        np.array(
+            [
+                97,
+                155,
+                255,
+                28,
+                63,
+                212,
+                255,
+                49,
+                75,
+                245,
+                77,
+                52,
+                179,
+                60,
+                142,
+                134,
+                130,
+            ]
+        )
+        / 255
+    )
+    a, b = _regression_ab(fi, si, 0, fi.size)
+    *thresholds, status = _bisection(fi, si, 0, fi.size, a, b, 255.0)
+    assert status == UNDEFINED_BACKGROUND
+    assert np.isnan(thresholds).all()
+    with pytest.warns(RuntimeWarning, match="chosen background subset"):
+        assert np.isnan(ref.bisection_costes(fi, si, fi, si, 255)).all()
+
+
+@requires_numba
 @pytest.mark.parametrize("mode_name", ["Fast", "Accurate"])
 @pytest.mark.parametrize("seed", [0, 1, 2, 3])
 def test_linear_matches_reference(seed, mode_name):

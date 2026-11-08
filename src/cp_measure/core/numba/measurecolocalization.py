@@ -34,6 +34,7 @@ from cp_measure.core.measurecolocalization import (
 from cp_measure.core.numba._colocalization import coloc_per_object
 from cp_measure.core.numba._costes import (
     NO_VALID_THRESHOLD,
+    UNDEFINED_BACKGROUND,
     SEARCHED,
     UNDEFINED_IN_SEARCH,
     _bisection,
@@ -47,6 +48,7 @@ from cp_measure.primitives.shapes import to_bzyx
 _UNDEFINED_REASONS = {
     NO_VALID_THRESHOLD: "no finite nonnegative background correlation found",
     UNDEFINED_IN_SEARCH: "background correlation became undefined during linear search",
+    UNDEFINED_BACKGROUND: "chosen background subset has undefined correlation",
 }
 
 

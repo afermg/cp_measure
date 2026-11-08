@@ -17,6 +17,9 @@ from numba import njit
 SEARCHED = 0
 NO_VALID_THRESHOLD = 1  # bisection: no candidate had a finite non-negative correlation
 UNDEFINED_IN_SEARCH = 2  # linear: a background subset had < 3 pixels or was constant
+UNDEFINED_BACKGROUND = (
+    3  # the chosen threshold's background subset is < 3 pixels or constant
+)
 
 
 def _regression_ab(g1, g2, lo, hi):
@@ -147,9 +150,20 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
         return np.nan, np.nan, NO_VALID_THRESHOLD
     thr_fi_c = (valid - 1) / scale
     thr_si_c = a * thr_fi_c + b
-    if not np.isfinite(_pearson_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c)):
+    return _finish(g1, g2, lo, hi, thr_fi_c, thr_si_c)
+
+
+@njit(cache=True, error_model="numpy")
+def _finish(g1, g2, lo, hi, thr_fi, thr_si):
+    """The reference's final check: the chosen background subset must have a defined
+    correlation. Too few or constant pixels (NaN) is decided exactly, so the wrapper
+    warns without a replay; only SciPy's near-constant diagnostics (inf) need one."""
+    r = _pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)
+    if np.isnan(r):
+        return np.nan, np.nan, UNDEFINED_BACKGROUND
+    if np.isinf(r):
         return np.nan, np.nan, SEARCHED
-    return thr_fi_c, thr_si_c, SEARCHED
+    return thr_fi, thr_si, SEARCHED
 
 
 # The linear search tests one grid step at a time: up to ``scale`` candidates (65535 for
@@ -368,6 +382,4 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
             if r <= 0:
                 break
             cur = _next_candidate(cur, r, accurate, i_step)
-    if not np.isfinite(_pearson_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c)):
-        return np.nan, np.nan, SEARCHED
-    return thr_fi_c, thr_si_c, SEARCHED
+    return _finish(g1, g2, lo, hi, thr_fi_c, thr_si_c)
