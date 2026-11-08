@@ -230,10 +230,17 @@ def _featurize_one(
         for func, params in shape_feats:
             results.update(func(clean, dummy_pixels, **params))
 
+        # Each channel feature measures all channels in one batch call (same mask,
+        # one image per channel), so a backend can parallelize across channels and
+        # reuse per-mask work. Columns keep the channel-major order.
+        channel_images = [image[ch_idx] for ch_idx in range(len(channels))]
+        per_feature = [
+            func([clean] * len(channels), channel_images, **params)
+            for func, params in channel_feats
+        ]
         for ch_idx, ch_name in enumerate(channels):
-            pixels = image[ch_idx]
-            for func, params in channel_feats:
-                for key, values in func(clean, pixels, **params).items():
+            for outputs in per_feature:
+                for key, values in outputs[ch_idx].items():
                     results[f"{key}__{ch_name}"] = values
 
         n_ch = len(channels)
