@@ -6,6 +6,13 @@ Notable user-facing changes are documented here.
 
 ### Fixed
 
+- Shape and radial Zernike values no longer depend on where an object sits in
+  the image. The minimum enclosing circle passes exactly through two or three
+  boundary pixels; a strict `r^2 > 1` cutoff let float rounding, which changes
+  with the absolute coordinates, drop them. They now always count (cutoff
+  `r^2 > 1 + 1e-9`, both backends). Values change for objects whose on-circle
+  pixels were dropped (about 40-50% of real nuclei; a few percent per moment),
+  and differ from CellProfiler only in those pixels.
 - `radial_distribution` sums intensities in float64. Integer images no longer
   wrap around (uint8/uint16 results were wrong), and float32 results gain
   precision (relative changes up to ~2e-4).

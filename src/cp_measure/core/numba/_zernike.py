@@ -17,7 +17,8 @@ degree-only, cheap) via :func:`zernike_coeffs`; the per-pixel evaluation follows
   looping exactly ``(n-m)//2 + 1`` terms (forward order, LUT[k,0] = highest power),
 - azimuthal factor ``z^m`` with ``z = ym + 1j*xm`` (ym = normalised row offset,
   xm = normalised column offset),
-- strict unit-disk cutoff: zero where ``r² > 1`` (keep ``== 1``).
+- unit-disk cutoff: zero where ``r² > 1 + 1e-9``, so pixels on the enclosing circle
+  count regardless of rounding (see ``cp_measure.utils._UNIT_DISK_EDGE``).
 
 Label enumeration stays on the host (:func:`cp_measure.utils._zernike_coords`, shared
 with the NumPy backend); the minimum enclosing circle is the numba
@@ -30,7 +31,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from cp_measure.primitives.shapes import to_bzyx
-from cp_measure.utils import _zernike_coords
+from cp_measure.utils import _UNIT_DISK_EDGE, _zernike_coords
 
 
 def zernike_coeffs(
@@ -58,7 +59,7 @@ def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
     """Fused per-object weighted-complex Zernike sum (single pass, no (M,K) buffer).
 
     For each pixel: evaluate every polynomial's ``V_nm`` from ``lut``/``m_arr``
-    (Horner over r² + ``z^m``, ``z = ym + 1j*xm``; zero the basis when ``r² > 1``)
+    (Horner over r² + ``z^m``, ``z = ym + 1j*xm``; zero the basis outside the unit disk)
     and scatter-add ``weight·Re/Im`` into ``vr``/``vi`` ``(n, K)``. ``seg0[i]`` is the
     0-based object index of pixel ``i`` (``< 0`` ⇒ skip). Returns ``(vr, vi)``.
     Optional ``powers[m, i]`` supplies NumPy-computed azimuthal powers ``z^m``;
@@ -97,8 +98,8 @@ def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
             nt = nterms[k]
             for t in range(nt):  # Horner: R_nm(r)/r^m
                 s = s * r2 + lut[k, t]
-            if r2 > 1.0:
-                s = 0.0  # strict cutoff, before weighting (including NaN/Inf)
+            if r2 > _UNIT_DISK_EDGE:
+                s = 0.0  # cutoff, before weighting (including NaN/Inf)
             m = m_arr[k]
             s *= w
             if m == 0:
