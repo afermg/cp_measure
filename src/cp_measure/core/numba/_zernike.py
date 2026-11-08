@@ -19,8 +19,9 @@ degree-only, cheap) via :func:`zernike_coeffs`; the per-pixel evaluation follows
   xm = normalised column offset),
 - strict unit-disk cutoff: zero where ``r² > 1`` (keep ``== 1``).
 
-``minimum_enclosing_circle`` (center/radius) and label enumeration stay on the host
-(:func:`cp_measure.utils._zernike_coords`, shared with the NumPy backend).
+Label enumeration stays on the host (:func:`cp_measure.utils._zernike_coords`, shared
+with the NumPy backend); the minimum enclosing circle is the numba
+:func:`enclosing_circles`.
 """
 
 import centrosome.zernike
@@ -119,7 +120,7 @@ def zernike_moments_per_object(labels, pixels, coeffs):
     :func:`zernike_coeffs`. Returns ``(vr, vi, radii, counts)``.
     """
     lut, nterms, m_arr = coeffs
-    seg, keep, ym, xm, radii = _zernike_coords(labels)
+    seg, keep, ym, xm, radii = _zernike_coords(labels, _enclosing_circle)
     n = len(radii)
     if n == 0:
         empty = np.zeros((0, len(lut)))
@@ -180,3 +181,128 @@ def zernike_per_image(labels, pixels, degree, features):
         )
         results.append(features(*sums, zernike_indexes))
     return unwrap(results)
+
+
+# --- Minimum enclosing circle ---------------------------------------------------------------
+# centrosome's minimum_enclosing_circle (convex hull of the pixel centres, then Chrystal's
+# algorithm) was ~1/3 of the coordinate setup. The minimum enclosing circle of a point set is
+# unique, so any correct algorithm returns the same circle up to rounding: here the hull is
+# built from each row's leftmost and rightmost pixel (whose hull is the object's), already in
+# (row, col) order for Andrew's monotone chain, and the circle comes from Welzl's incremental
+# algorithm on the hull vertices.
+
+
+@njit(cache=True, nogil=True)
+def _cross(ox, oy, ax, ay, bx, by):
+    return (ax - ox) * (by - oy) - (ay - oy) * (bx - ox)
+
+
+@njit(cache=True, nogil=True)
+def _covers(cx, cy, r, x, y):
+    """Point (x, y) is inside the circle, allowing for rounding at the boundary."""
+    return (x - cx) ** 2 + (y - cy) ** 2 <= r * r * (1.0 + 1e-12) + 1e-12
+
+
+@njit(cache=True, nogil=True)
+def _circle_through_2(ax, ay, bx, by):
+    cx = (ax + bx) / 2.0
+    cy = (ay + by) / 2.0
+    return cx, cy, np.sqrt((ax - cx) ** 2 + (ay - cy) ** 2)
+
+
+@njit(cache=True, nogil=True)
+def _circle_through_3(ax, ay, bx, by, px, py):
+    d = 2.0 * (ax * (by - py) + bx * (py - ay) + px * (ay - by))
+    a2 = ax * ax + ay * ay
+    b2 = bx * bx + by * by
+    p2 = px * px + py * py
+    cx = (a2 * (by - py) + b2 * (py - ay) + p2 * (ay - by)) / d
+    cy = (a2 * (px - bx) + b2 * (ax - px) + p2 * (bx - ax)) / d
+    return cx, cy, np.sqrt((ax - cx) ** 2 + (ay - cy) ** 2)
+
+
+@njit(cache=True, nogil=True)
+def enclosing_circles(labels, n):
+    """Minimum enclosing circle of each label ``1..n``'s pixel centres.
+
+    Returns ``(centers, radii)`` with ``centers[:, 0]`` the row and ``[:, 1]`` the
+    column, as centrosome's ``minimum_enclosing_circle``; an absent label gets a NaN
+    centre and radius 0, also as centrosome.
+    """
+    H, W = labels.shape
+    row_min = np.full((n + 1, H), W, np.int64)
+    row_max = np.full((n + 1, H), -1, np.int64)
+    for r in range(H):
+        for c in range(W):
+            lab = labels[r, c]
+            if lab > 0:
+                if c < row_min[lab, r]:
+                    row_min[lab, r] = c
+                if c > row_max[lab, r]:
+                    row_max[lab, r] = c
+    centers = np.full((n, 2), np.nan)
+    radii = np.zeros(n)
+    px = np.empty(2 * H)
+    py = np.empty(2 * H)
+    hx = np.empty(4 * H + 2)
+    hy = np.empty(4 * H + 2)
+    for lab in range(1, n + 1):
+        m = 0  # extreme pixels per row, in (row, col) order
+        for r in range(H):
+            if row_max[lab, r] >= 0:
+                px[m] = r
+                py[m] = row_min[lab, r]
+                m += 1
+                if row_max[lab, r] != row_min[lab, r]:
+                    px[m] = r
+                    py[m] = row_max[lab, r]
+                    m += 1
+        if m == 0:
+            continue
+        k = 0  # Andrew's monotone chain: lower then upper hull
+        for i in range(m):
+            while (
+                k >= 2
+                and _cross(hx[k - 2], hy[k - 2], hx[k - 1], hy[k - 1], px[i], py[i])
+                <= 0
+            ):
+                k -= 1
+            hx[k] = px[i]
+            hy[k] = py[i]
+            k += 1
+        lower = k + 1
+        for i in range(m - 2, -1, -1):
+            while (
+                k >= lower
+                and _cross(hx[k - 2], hy[k - 2], hx[k - 1], hy[k - 1], px[i], py[i])
+                <= 0
+            ):
+                k -= 1
+            hx[k] = px[i]
+            hy[k] = py[i]
+            k += 1
+        h = k - 1 if k > 1 else k  # the chain repeats its first point
+        cx, cy, rad = hx[0], hy[0], 0.0  # Welzl, iterative
+        for i in range(1, h):
+            if _covers(cx, cy, rad, hx[i], hy[i]):
+                continue
+            cx, cy, rad = hx[i], hy[i], 0.0
+            for j in range(i):
+                if _covers(cx, cy, rad, hx[j], hy[j]):
+                    continue
+                cx, cy, rad = _circle_through_2(hx[i], hy[i], hx[j], hy[j])
+                for q in range(j):
+                    if _covers(cx, cy, rad, hx[q], hy[q]):
+                        continue
+                    cx, cy, rad = _circle_through_3(
+                        hx[i], hy[i], hx[j], hy[j], hx[q], hy[q]
+                    )
+        centers[lab - 1, 0] = cx
+        centers[lab - 1, 1] = cy
+        radii[lab - 1] = rad
+    return centers, radii
+
+
+def _enclosing_circle(masks, labels):
+    """``centrosome.zernike.minimum_enclosing_circle`` signature over contiguous labels."""
+    return enclosing_circles(np.ascontiguousarray(masks, dtype=np.intp), len(labels))

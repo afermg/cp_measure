@@ -56,6 +56,7 @@ def labels_to_binmasks(masks: numpy.ndarray) -> numpy.ndarray:
 
 def _zernike_coords(
     masks: NDArray[numpy.integer],
+    enclosing_circle=zernike.minimum_enclosing_circle,
 ) -> tuple[
     NDArray[numpy.integer],
     NDArray[numpy.bool_],
@@ -68,13 +69,15 @@ def _zernike_coords(
     Returns ``(seg, keep, ym, xm, radii)``: the 0-based object index of each foreground
     pixel, the foreground mask, the pixels' row/column offsets from their object's
     enclosing-circle centre divided by its radius, and the ``(n,)`` radii. No full
-    ``(H, W)`` coordinate grid is materialised. Shared by the numpy and numba backends.
+    ``(H, W)`` coordinate grid is materialised. Shared by the numpy and numba backends;
+    ``enclosing_circle(masks, labels) -> (centers, radii)`` defaults to centrosome's,
+    and the numba backend passes its own exact port.
     """
     # Contiguous 1..N contract: segment index is label - 1, so the label->index lookup is a
     # plain arange. masks.max() raises on a size-0 array, so guard it.
     n = 0 if masks.size == 0 else int(masks.max())
     lut = numpy.arange(-1, n)  # lut[0] = -1 (background); lut[label] = label - 1
-    centers, radii = zernike.minimum_enclosing_circle(masks, numpy.arange(1, n + 1))
+    centers, radii = enclosing_circle(masks, numpy.arange(1, n + 1))
     radii = numpy.asarray(radii, dtype=float)
     if n == 0:  # before the lut gather, which needs integer labels
         empty = numpy.zeros(0)
