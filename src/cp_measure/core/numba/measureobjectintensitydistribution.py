@@ -11,8 +11,9 @@ handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
 grown by one pixel and clipped to the image. It replaces centrosome's
 ``propagate`` with a numba chamfer geodesic plus centre and histogram/wedge
 reductions, fused into one per-crop kernel
-(:func:`cp_measure.core.numba._radial.radial_object`). The exact-Euclidean
-``distance_transform_edt`` (scipy) and masked ``RadialCV`` stay host-side.
+(:func:`cp_measure.core.numba._radial.radial_object`). The exact Euclidean
+distance transform is the bit-identical numba port in
+:mod:`cp_measure.primitives._edt_numba`; the masked ``RadialCV`` stays host-side.
 Results match the NumPy reference, which is label-independent since #96 (Issue #22).
 """
 
@@ -38,6 +39,7 @@ from cp_measure.core.numba._radial import (
 from cp_measure.core.numba._zernike import (
     zernike_per_image,
 )
+from cp_measure.primitives._edt_numba import distance_transform_edt
 from cp_measure.primitives.shapes import to_bzyx
 
 
@@ -162,7 +164,7 @@ def _radial_distribution_2d(
         )
         m = numpy.ascontiguousarray(labels[sl] == label)
         pix = numpy.ascontiguousarray(pixels[sl], dtype=numpy.float64)
-        d_to_edge = scipy.ndimage.distance_transform_edt(m)
+        d_to_edge = distance_transform_edt(m)
         (
             frac_at_d[label - 1],
             mean_frac[label - 1],
