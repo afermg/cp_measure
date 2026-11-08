@@ -10,8 +10,8 @@ Overlap errors.
 
 The public feature schema, label slots and per-object RWC scope are unchanged.
 Overlap remains a direct API, not an extra default bulk feature. Costes keeps
-NumPy's scale preparation and regression reductions around compiled searches;
-no combined featurizer dispatch is introduced here.
+NumPy's scale preparation and measures all objects in one compiled pass whose
+sums reproduce NumPy's; no combined featurizer dispatch is introduced here.
 """
 
 import numpy
@@ -43,9 +43,14 @@ from cp_measure.core.numba._costes import (
     UNDEFINED_BACKGROUND,
     UNDEFINED_IN_SEARCH,
     ZERO_DENOMINATOR,
-    costes_per_object,
+    costes_faster,
+    costes_linear,
 )
-from cp_measure.primitives._segment_numba import NUMPY_SUM_CHUNK, flatten_pairs_grouped
+from cp_measure.primitives._segment_numba import (
+    flatten_pairs_grouped,
+    label_counts,
+    numpy_sum_chunk,
+)
 from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import to_bzyx
 
@@ -60,7 +65,6 @@ _UNDEFINED_REASONS = {
     CONSTANT_CHANNEL: "constant channel in the regression subset",
     ZERO_DENOMINATOR: "zero above-threshold intensity denominator",
 }
-_COSTES_MODES = {M_FASTER: 0, M_FAST: 1, M_ACCURATE: 2}
 
 
 def _grouped(masks_zyx, pixels_1_zyx, pixels_2_zyx):
@@ -76,14 +80,11 @@ def _grouped(masks_zyx, pixels_1_zyx, pixels_2_zyx):
         masks = masks.astype(numpy.intp)
     # Labels are contiguous 1..N by contract (see cp_measure._sanitize), so the
     # segment index is label - 1 and the CSR block bounds are the cumulative
-    # per-label pixel counts — one bincount, no lookup table.
+    # per-label pixel counts, with no lookup table.
     n = int(masks.max(initial=0))
     offsets = numpy.zeros(n + 1, dtype=numpy.int64)
-    # bincount rejects uint64 even when these bounded label IDs fit intp.
-    if masks.dtype == numpy.uint64:
-        masks = masks.astype(numpy.intp)
     if n:
-        offsets[1:] = numpy.cumsum(numpy.bincount(masks.ravel(), minlength=n + 1)[1:])
+        offsets[1:] = numpy.cumsum(label_counts(masks, n))
     g1, g2 = flatten_pairs_grouped(
         masks,
         numpy.ascontiguousarray(pixels_1_zyx, dtype=numpy.float64),
@@ -276,12 +277,13 @@ def get_correlation_costes(
     """Costes coefficients using the current NumPy scale and warning contracts.
 
     Floats require an explicit acquisition ``scale_max``; same-dtype unsigned
-    integers infer it. ``thr`` is retained but unused. The repeated threshold
-    search is compiled; regression and coefficient reductions remain NumPy to
-    preserve threshold inclusion. Undefined/near-constant searches use the
-    reference implementation for diagnostics. See the NumPy API for details.
+    integers infer it. ``thr`` is retained but unused. One compiled pass measures
+    all objects; its regression and coefficient sums reproduce NumPy's, so the
+    same pixels count. Undefined results warn with the reference's messages, and
+    near-constant searches replay the reference for its diagnostics. See the NumPy
+    API for details.
     """
-    # Share acquisition-scale preparation; _costes_pair canonicalizes each object.
+    # Share acquisition-scale preparation; the kernel canonicalizes each object.
     first, second, scale = reference._prepare_costes_inputs(
         pixels_1, pixels_2, scale_max
     )
@@ -294,11 +296,19 @@ def get_correlation_costes(
     def compute(item):
         # Kernel work only (the GIL is released): map_images runs batches on threads.
         p1, p2, mask = item
+        if mask.ndim not in (2, 3):
+            raise ValueError(f"Costes expects 2D or 3D images, got {mask.ndim}D")
         zyx = (mask, p1, p2) if mask.ndim == 3 else (mask[None], p1[None], p2[None])
         g1, g2, offsets = _grouped(*zyx)
-        c1, c2, status = costes_per_object(
-            g1, g2, offsets, float(scale), _COSTES_MODES[fast_costes], NUMPY_SUM_CHUNK
-        )
+        if fast_costes == M_FASTER:
+            c1, c2, status = costes_faster(
+                g1, g2, offsets, float(scale), numpy_sum_chunk()
+            )
+        else:
+            accurate = fast_costes == M_ACCURATE
+            c1, c2, status = costes_linear(
+                g1, g2, offsets, float(scale), accurate, numpy_sum_chunk()
+            )
         # Keep the grouped pixels only for objects the reference must replay.
         replay = (g1, g2) if (status == REPLAY).any() else (None, None)
         return *replay, offsets, c1, c2, status
