@@ -20,7 +20,7 @@ import numpy as np
 from numba import njit
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _dense_rank(vals):
     """Per-element 0-based dense rank (ties share a rank), plus the max rank.
 
@@ -40,7 +40,7 @@ def _dense_rank(vals):
     return ranks, r
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
     """Per-object colocalization features over grouped value blocks.
 

@@ -395,3 +395,37 @@ def test_costes_background_ignored_and_unused_threshold():
     b = np.pad(b / 255, 1, constant_values=999)
     masks = np.pad(np.ones((8, 16), int), 1)
     parity(a, b, masks, scale_max=255, thr=93)
+
+
+@pytest.mark.parametrize("name", ["get_correlation_costes", "get_correlation_rwc"])
+def test_threaded_batch_matches_per_image_calls(name):
+    """A batch runs on threads; values and warnings equal per-image calls, in order,
+    including images whose objects warn or fall back to the reference."""
+    from cp_measure.core.numba import measurecolocalization as numba_coloc
+
+    function = getattr(numba_coloc, name)
+    kwargs = {"scale_max": 255} if name == "get_correlation_costes" else {}
+    a = np.array([[0.1, 0.2, 0.4, 0.7], [0.3, 0.5, 0.8, 1.0]] * 4)
+    masks = np.repeat(np.arange(1, 5), 2)[:, None] * np.ones((1, 4), dtype=np.int32)
+    constant, with_nan = a.copy(), a.copy()
+    constant[:2] = 0.1
+    with_nan[3, 1] = np.nan
+    firsts = [a, constant, a, with_nan, a]
+    seconds = [a[:, ::-1].copy(), a[:, ::-1].copy(), 1 - a, a[::-1].copy(), a**2]
+
+    def run(call):
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            values = call()
+        return values, [(w.category, str(w.message)) for w in recorded]
+
+    expected = [
+        run(lambda f=f, s=s: function(f, s, masks, **kwargs))
+        for f, s in zip(firsts, seconds)
+    ]
+    got, got_warnings = run(lambda: function(firsts, seconds, [masks] * 5, **kwargs))
+    assert got_warnings == [w for _, ws in expected for w in ws]
+    for item, (values, _) in zip(got, expected):
+        assert list(item) == list(values)
+        for key in values:
+            np.testing.assert_array_equal(item[key], values[key])
