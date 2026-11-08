@@ -66,7 +66,7 @@ def test_bisection_matches_reference(seed):
 
     fi, si = _obj(seed)
     a, b = _regression_ab(fi, si, 0, fi.size)
-    thr_fi, thr_si = _bisection(fi, si, 0, fi.size, a, b, 255.0)
+    thr_fi, thr_si, _ = _bisection(fi, si, 0, fi.size, a, b, 255.0)
     thr_fi_ref, thr_si_ref = ref.bisection_costes(fi, si, fi, si, 255)
     np.testing.assert_allclose([thr_fi, thr_si], [thr_fi_ref, thr_si_ref], rtol=1e-6)
 
@@ -79,8 +79,28 @@ def test_linear_matches_reference(seed, mode_name):
 
     fi, si = _obj(seed)
     a, b = _regression_ab(fi, si, 0, fi.size)
-    thr_fi, thr_si = _linear(fi, si, 0, fi.size, a, b, 255.0, mode_name == "Accurate")
+    thr_fi, thr_si, _ = _linear(
+        fi, si, 0, fi.size, a, b, 255.0, mode_name == "Accurate"
+    )
     thr_fi_ref, thr_si_ref = ref.linear_costes(
         fi, si, fi, si, 255, fast_costes=mode_name
     )
     np.testing.assert_allclose([thr_fi, thr_si], [thr_fi_ref, thr_si_ref], rtol=1e-6)
+
+
+@requires_numba
+@pytest.mark.parametrize("mode_name", ["Fast", "Accurate"])
+@pytest.mark.parametrize("seed", [0, 1])
+def test_linear_long_walk_matches_reference(seed, mode_name):
+    """A 12-bit search far longer than _SWEEP_AFTER steps, so it finishes on the
+    prefix-sum path; thresholds must still equal the reference's exactly."""
+    from cp_measure.core.numba._costes import _SWEEP_AFTER, _linear, _regression_ab
+
+    scale = 4095
+    fi, si = _obj(seed, n=1500)
+    fi, si = np.round(fi * scale) / scale, np.round(si * scale) / scale
+    a, b = _regression_ab(fi, si, 0, fi.size)
+    got = _linear(fi, si, 0, fi.size, a, b, float(scale), mode_name == "Accurate")[:2]
+    want = ref.linear_costes(fi, si, fi, si, scale, fast_costes=mode_name)
+    assert (max(fi.max(), si.max()) - got[0]) * scale > 2 * _SWEEP_AFTER
+    np.testing.assert_array_equal(got, want)

@@ -32,9 +32,22 @@ from cp_measure.core.measurecolocalization import (
     M_FASTER,
 )
 from cp_measure.core.numba._colocalization import coloc_per_object
-from cp_measure.core.numba._costes import _bisection, _linear, _regression_ab
+from cp_measure.core.numba._costes import (
+    NO_VALID_THRESHOLD,
+    SEARCHED,
+    UNDEFINED_IN_SEARCH,
+    _bisection,
+    _linear,
+    _regression_ab,
+)
 from cp_measure.primitives._segment_numba import flatten_pairs_grouped
 from cp_measure.primitives.shapes import to_bzyx
+
+# The reference's warning text for each undefined search status.
+_UNDEFINED_REASONS = {
+    NO_VALID_THRESHOLD: "no finite nonnegative background correlation found",
+    UNDEFINED_IN_SEARCH: "background correlation became undefined during linear search",
+}
 
 
 def _run(
@@ -242,9 +255,14 @@ def _costes_pair(fi, si, scale, mode):
     if not (numpy.isfinite(a) and numpy.isfinite(b)):
         return reference._costes_pair(fi, si, scale, mode)
     if mode == M_FASTER:
-        first, second = _bisection(fi, si, 0, fi.size, a, b, scale)
+        first, second, status = _bisection(fi, si, 0, fi.size, a, b, scale)
     else:
-        first, second = _linear(fi, si, 0, fi.size, a, b, scale, mode == M_ACCURATE)
+        first, second, status = _linear(
+            fi, si, 0, fi.size, a, b, scale, mode == M_ACCURATE
+        )
+    if status != SEARCHED:
+        # Same result and warning as the reference, without replaying its search.
+        return reference._undefined_costes(_UNDEFINED_REASONS[status])
     if not (numpy.isfinite(first) and numpy.isfinite(second)):
         # The kernel does not emit Python warnings. Replay only exceptional
         # objects to preserve the reference's precise warning categories/messages.
