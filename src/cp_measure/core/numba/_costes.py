@@ -139,13 +139,14 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
     lastmid = 0.0
     valid = np.nan
     iterations = 0
+    totals = _moment_totals(g1, g2, lo, hi)
     while lastmid != mid:
         iterations += 1
         if iterations > 256:
             return np.nan, np.nan, SEARCHED
         thr_fi = mid / scale
         thr_si = a * thr_fi + b
-        cnt, r = _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)
+        cnt, r = _direct_count_pearson(g1, g2, lo, hi, totals, thr_fi, thr_si)
         if np.isinf(r):
             return np.nan, np.nan, SEARCHED
         if not np.isfinite(r) or r < 0:
@@ -218,6 +219,28 @@ def _sorted_prefix(keys, g1, g2, c1, c2, use):
     return ks, P
 
 
+@njit(cache=True)
+def _moment_totals(g1, g2, lo, hi):
+    """Sums of ``u, v, uu, vv, uv, |u|, |v|`` over the object, then the centres
+    ``c1, c2``, with ``u = g1 - c1`` and ``v = g2 - c2`` centred on the object means."""
+    totals = np.zeros(9)
+    c1 = g1[lo:hi].mean()
+    c2 = g2[lo:hi].mean()
+    totals[7] = c1
+    totals[8] = c2
+    for i in range(lo, hi):
+        u = g1[i] - c1
+        v = g2[i] - c2
+        totals[0] += u
+        totals[1] += v
+        totals[2] += u * u
+        totals[3] += v * v
+        totals[4] += u * v
+        totals[5] += abs(u)
+        totals[6] += abs(v)
+    return totals
+
+
 @njit(cache=True, error_model="numpy")
 def _sweep_prep(g1, g2, a, b):
     """Tables for :func:`_sweep_count_pearson` on one object's pixels.
@@ -228,23 +251,9 @@ def _sweep_prep(g1, g2, a, b):
     those with ``g1 < t``, over pixels where that interval is non-empty).
     """
     n = g1.size
-    c1 = g1.mean()
-    c2 = g2.mean()
+    totals = _moment_totals(g1, g2, 0, n)
+    c1, c2 = totals[7], totals[8]
     q = (g2 - b) / a
-    # sums of u, v, uu, vv, uv, |u|, |v| over the object, then the centres c1, c2
-    totals = np.zeros(9)
-    totals[7] = c1
-    totals[8] = c2
-    for i in range(n):
-        u = g1[i] - c1
-        v = g2[i] - c2
-        totals[0] += u
-        totals[1] += v
-        totals[2] += u * u
-        totals[3] += v * v
-        totals[4] += u * v
-        totals[5] += abs(u)
-        totals[6] += abs(v)
     if a > 0:
         k1, P1 = _sorted_prefix(np.minimum(g1, q), g1, g2, c1, c2, np.ones(n, np.bool_))
         k2, P2 = k1[:0], P1[:, :1]
@@ -283,13 +292,35 @@ def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si):
         excluded = P1[:, hq] - P2[:, hf]
         n_excluded = hq - hf
     m = n - n_excluded
+    return _r_or_exact(
+        g1,
+        g2,
+        lo,
+        hi,
+        thr_fi,
+        thr_si,
+        totals,
+        m,
+        totals[0] - excluded[0],
+        totals[1] - excluded[1],
+        totals[2] - excluded[2],
+        totals[3] - excluded[3],
+        totals[4] - excluded[4],
+    )
+
+
+@njit(cache=True, error_model="numpy")
+def _r_or_exact(g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv):
+    """``(count, r)`` of the background subset from its centred moments, or from the
+    exact kernel when the moments cannot decide the search exactly.
+
+    ``m`` and the sums ``su .. suv`` are over the subset; ``totals`` from
+    :func:`_moment_totals` bound their rounding error.
+    """
+    n = hi - lo
+    eps = np.finfo(np.float64).eps
     if m < 3:
         return m, np.nan
-    su = totals[0] - excluded[0]
-    sv = totals[1] - excluded[1]
-    suu = totals[2] - excluded[2]
-    svv = totals[3] - excluded[3]
-    suv = totals[4] - excluded[4]
     varu = suu - su * su / m
     varv = svv - sv * sv / m
     cov = suv - su * sv / m
@@ -319,6 +350,26 @@ def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si):
         if abs(r - cutoff) <= bound:
             return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)
     return m, min(1.0, max(-1.0, r))
+
+
+@njit(cache=True, error_model="numpy")
+def _direct_count_pearson(g1, g2, lo, hi, totals, thr_fi, thr_si):
+    """Same ``(count, r)`` decisions as :func:`_count_pearson_combt` in one pass over
+    the object (the exact kernel takes four), via :func:`_r_or_exact`."""
+    c1, c2 = totals[7], totals[8]
+    m = 0
+    su = sv = suu = svv = suv = 0.0
+    for i in range(lo, hi):
+        if g1[i] < thr_fi or g2[i] < thr_si:
+            u = g1[i] - c1
+            v = g2[i] - c2
+            m += 1
+            su += u
+            sv += v
+            suu += u * u
+            svv += v * v
+            suv += u * v
+    return _r_or_exact(g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv)
 
 
 @njit(cache=True)

@@ -171,3 +171,19 @@ def test_linear_long_walk_matches_reference(seed, mode_name):
     want = ref.linear_costes(fi, si, fi, si, scale, fast_costes=mode_name)
     assert (max(fi.max(), si.max()) - got[0]) * scale > 2 * _SWEEP_AFTER
     np.testing.assert_array_equal(got, want)
+
+
+@requires_numba
+@pytest.mark.parametrize("n", [50, 800, 5000])
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_bisection_equals_reference_on_16bit_objects(n, seed):
+    """Bisection answers its steps from one-pass moments and falls back to the exact
+    kernel near a decision; the chosen thresholds must equal the reference's exactly."""
+    from cp_measure.core.numba._costes import _bisection, _regression_ab
+
+    scale = 65535
+    fi, si = _obj(seed, n=n)
+    fi, si = np.round(fi * scale) / scale, np.round(si * scale) / scale
+    a, b = _regression_ab(fi, si, 0, fi.size)
+    got = _bisection(fi, si, 0, fi.size, a, b, float(scale))[:2]
+    np.testing.assert_array_equal(got, ref.bisection_costes(fi, si, fi, si, scale))
