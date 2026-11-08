@@ -16,7 +16,7 @@ import scipy.ndimage
 from numba import njit
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def squared_edt_2d(mask):
     """Squared distance from each pixel to the nearest False pixel of ``mask``.
 
