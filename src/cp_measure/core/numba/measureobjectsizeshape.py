@@ -20,7 +20,7 @@ def get_zernike(masks, pixels=None, zernike_numbers: int = 9, *, max_workers=Non
 
     ``pixels`` is accepted for signature parity with the numpy baseline but unused
     (shape Zernike is a binary-mask descriptor). ``max_workers`` caps the batch
-    thread pool (default ``os.cpu_count()``); pass it when nesting under an outer
+    thread pool (default: the CPUs this process may use); pass it when nesting under an outer
     parallel map.
     """
     return zernike_per_image(

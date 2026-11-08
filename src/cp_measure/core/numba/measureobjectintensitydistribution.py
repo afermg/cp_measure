@@ -47,7 +47,7 @@ def get_radial_zernikes(labels, pixels, zernike_degree: int = 9, *, max_workers=
     Measured 2D entries require matching label and intensity shapes; mismatches
     raise ``ValueError`` rather than selecting an intensity plane. Compare phases
     modulo 2π; near-zero moments have numerically unstable phases. ``max_workers``
-    caps the batch thread pool (default ``os.cpu_count()``); pass it when nesting
+    caps the batch thread pool (default: the CPUs this process may use); pass it when nesting
     under an outer parallel map.
     """
     return zernike_per_image(
