@@ -10,6 +10,7 @@ import pytest
 import scipy.stats
 
 import cp_measure.core.measurecolocalization as ref
+from cp_measure.primitives._segment_numba import numpy_sum_chunk
 from cp_measure._detect import HAS_NUMBA
 
 requires_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
@@ -24,23 +25,28 @@ def _obj(seed, n=200):
 
 
 @requires_numba
-@pytest.mark.parametrize("seed", [0, 1, 2, 3])
-def test_regression_ab_matches_reference(seed):
+@pytest.mark.parametrize("n", [200, 9000])
+@pytest.mark.parametrize("seed", [0, 1])
+def test_regression_ab_equals_reference_bitwise(seed, n):
+    """The kernel's regression line equals the reference's NumPy expression bit for
+    bit (#118: the line decides which pixels count), past NumPy's 8192 chunking."""
     from cp_measure.core.numba._costes import _regression_ab
 
-    fi, si = _obj(seed)
-    a, b = _regression_ab(fi, si, 0, fi.size)
-    # Reference computes a,b inline; reproduce its exact expression.
+    fi, si = _obj(seed, n=n)
+    fi[::7] = 0.0  # some pixels drop out of the nonzero subset
+    si[::7] = 0.0
+    a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
+    # The reference's expression (bisection_costes / linear_costes).
     nz = (fi > 0) | (si > 0)
-    xvar = np.var(fi[nz], ddof=1)
-    yvar = np.var(si[nz], ddof=1)
-    z = fi[nz] + si[nz]
-    zvar = np.var(z, ddof=1)
+    fz, sz = fi[nz], si[nz]
+    xvar = np.var(fz, axis=0, ddof=1)
+    yvar = np.var(sz, axis=0, ddof=1)
+    zvar = np.var(fz + sz, axis=0, ddof=1)
     covar = 0.5 * (zvar - (xvar + yvar))
-    a_ref = ((yvar - xvar) + np.sqrt((yvar - xvar) ** 2 + 4 * covar**2)) / (2 * covar)
-    b_ref = si[nz].mean() - a_ref * fi[nz].mean()
-    np.testing.assert_allclose(a, a_ref, rtol=1e-9)
-    np.testing.assert_allclose(b, b_ref, rtol=1e-9)
+    num = (yvar - xvar) + np.sqrt((yvar - xvar) * (yvar - xvar) + 4 * (covar * covar))
+    a_ref = num / (2 * covar)
+    b_ref = np.mean(sz, axis=0) - a_ref * np.mean(fz, axis=0)
+    assert (a, b) == (a_ref, b_ref)
 
 
 @requires_numba
@@ -65,7 +71,7 @@ def test_bisection_matches_reference(seed):
     from cp_measure.core.numba._costes import _bisection, _regression_ab
 
     fi, si = _obj(seed)
-    a, b = _regression_ab(fi, si, 0, fi.size)
+    a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
     thr_fi, thr_si, _ = _bisection(fi, si, 0, fi.size, a, b, 255.0)
     thr_fi_ref, thr_si_ref = ref.bisection_costes(fi, si, fi, si, 255)
     np.testing.assert_allclose([thr_fi, thr_si], [thr_fi_ref, thr_si_ref], rtol=1e-6)
@@ -130,7 +136,7 @@ def test_bisection_reports_undefined_final_background():
         )
         / 255
     )
-    a, b = _regression_ab(fi, si, 0, fi.size)
+    a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
     *thresholds, status = _bisection(fi, si, 0, fi.size, a, b, 255.0)
     assert status == UNDEFINED_BACKGROUND
     assert np.isnan(thresholds).all()
@@ -145,7 +151,7 @@ def test_linear_matches_reference(seed, mode_name):
     from cp_measure.core.numba._costes import _linear, _regression_ab
 
     fi, si = _obj(seed)
-    a, b = _regression_ab(fi, si, 0, fi.size)
+    a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
     thr_fi, thr_si, _ = _linear(
         fi, si, 0, fi.size, a, b, 255.0, mode_name == "Accurate"
     )
@@ -166,7 +172,7 @@ def test_linear_long_walk_matches_reference(seed, mode_name):
     scale = 4095
     fi, si = _obj(seed, n=1500)
     fi, si = np.round(fi * scale) / scale, np.round(si * scale) / scale
-    a, b = _regression_ab(fi, si, 0, fi.size)
+    a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
     got = _linear(fi, si, 0, fi.size, a, b, float(scale), mode_name == "Accurate")[:2]
     want = ref.linear_costes(fi, si, fi, si, scale, fast_costes=mode_name)
     assert (max(fi.max(), si.max()) - got[0]) * scale > 2 * _SWEEP_AFTER
@@ -184,6 +190,6 @@ def test_bisection_equals_reference_on_16bit_objects(n, seed):
     scale = 65535
     fi, si = _obj(seed, n=n)
     fi, si = np.round(fi * scale) / scale, np.round(si * scale) / scale
-    a, b = _regression_ab(fi, si, 0, fi.size)
+    a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
     got = _bisection(fi, si, 0, fi.size, a, b, float(scale))[:2]
     np.testing.assert_array_equal(got, ref.bisection_costes(fi, si, fi, si, scale))

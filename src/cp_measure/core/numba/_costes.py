@@ -1,11 +1,13 @@
-"""Costes threshold searches (single-threaded, cached).
+"""Costes for all objects in one compiled pass (cached; the entry kernels
+release the GIL).
 
-The host keeps NumPy's regression reductions: tiny changes in the fitted line
-can change threshold inclusion (#118). Only the repeated background searches
-are compiled. Undefined searches return NaN to the wrapper, which reports the
-common "no valid threshold" case directly and replays the reference for the
-others' precise RuntimeWarning. Long linear searches switch to sorted prefix
-sums but make the exact kernel's decisions. No fastmath or grid rounding is used.
+The regression line and coefficient sums use NumPy's pairwise summation
+(``numpy_sum``/``numpy_var``): tiny changes in the fitted line can change
+threshold inclusion (#118). Undefined results return a status per object; the
+wrapper emits the reference's warning, or replays the reference where its
+diagnostics need SciPy. Bisection steps and long linear searches answer from
+moments or sorted prefix sums but make the exact kernel's decisions. No
+fastmath or grid rounding is used.
 """
 
 import numpy as np
@@ -22,7 +24,7 @@ UNDEFINED_IN_SEARCH = 2  # linear: a background subset had < 3 pixels or was con
 UNDEFINED_BACKGROUND = (
     3  # the chosen threshold's background subset is < 3 pixels or constant
 )
-# Per-object statuses of costes_per_object, beyond the search's: undefined results the
+# Per-object statuses of costes_faster / costes_linear, beyond the search's: undefined results the
 # wrapper reports with the reference's warning, an out-of-range pixel it raises for, and
 # REPLAY for cases whose diagnostics need the reference itself.
 EMPTY_OBJECT = 4
@@ -34,18 +36,35 @@ OUT_OF_RANGE = 9
 REPLAY = 10
 
 
-def _regression_ab(g1, g2, lo, hi):
-    """Use the reference's exact NumPy reduction order, not serial JIT sums."""
-    fi, si = g1[lo:hi], g2[lo:hi]
-    non_zero = (fi > 0) | (si > 0)
-    fz, sz = fi[non_zero], si[non_zero]
-    xvar = np.var(fz, axis=0, ddof=1)
-    yvar = np.var(sz, axis=0, ddof=1)
-    xmean = np.mean(fz, axis=0)
-    ymean = np.mean(sz, axis=0)
-    zvar = np.var(fz + sz, axis=0, ddof=1)
+@njit(cache=True, error_model="numpy")
+def _regression_ab(g1, g2, lo, hi, chunk):
+    """The reference's regression line over the object's nonzero pixels.
+
+    Same expressions and NumPy's pairwise sums (``numpy_sum``/``numpy_var`` with
+    ``chunk`` from ``numpy_sum_chunk()``), so ``a`` and ``b`` are bit-identical and
+    the same pixels count against the line (#118). NaN when ill-conditioned.
+    """
+    m = 0
+    for i in range(lo, hi):
+        if g1[i] > 0 or g2[i] > 0:
+            m += 1
+    fz = np.empty(m)
+    sz = np.empty(m)
+    zz = np.empty(m)
+    m = 0
+    for i in range(lo, hi):
+        if g1[i] > 0 or g2[i] > 0:
+            fz[m] = g1[i]
+            sz[m] = g2[i]
+            zz[m] = g1[i] + g2[i]
+            m += 1
+    xvar = numpy_var(fz, chunk)
+    yvar = numpy_var(sz, chunk)
+    xmean = numpy_sum(fz, chunk) / m
+    ymean = numpy_sum(sz, chunk) / m
+    zvar = numpy_var(zz, chunk)
     covar = 0.5 * (zvar - (xvar + yvar))
-    if abs(covar) <= 8 * np.finfo(float).eps * max(xvar, yvar):
+    if abs(covar) <= 8 * np.finfo(np.float64).eps * max(xvar, yvar):
         return np.nan, np.nan
     num = (yvar - xvar) + np.sqrt((yvar - xvar) * (yvar - xvar) + 4 * (covar * covar))
     a = num / (2 * covar)
@@ -346,6 +365,15 @@ def _r_or_exact(g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv
     )
     r = cov / np.sqrt(varu * varv)
     bound = 2 * (err_c / np.sqrt(varu * varv) + abs(r) * (err_u / varu + err_v / varv))
+    # The exact kernel replays the reference when ITS r is within its own error
+    # bound of a cutoff (gamma * conditioning, see _count_pearson_combt). Its
+    # conditioning grows with |mean| / norm, so near-constant objects need that
+    # margin too, or this path would decide a step the exact kernel replays.
+    ops = 64 * m * eps
+    conditioning = 1 + np.sqrt(m) * (
+        abs(mean1) / np.sqrt(varu) + abs(mean2) / np.sqrt(varv)
+    )
+    bound += 2 * ops / (1 - ops) * conditioning
     for cutoff in _CUTOFFS:
         if abs(r - cutoff) <= bound:
             return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)
@@ -449,14 +477,42 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
 
 
 @njit(cache=True)
-def _canonical(v, scale):
-    """The reference's ``_canonical_costes_pixels`` for one value: snap a value encoded
-    as ``level * (1 / scale)`` to ``level / scale``; leave every other value alone."""
-    if v >= 1.0 / scale and v <= 1:
-        level = np.rint(v * scale)
-        if v == level * (1.0 / scale):
-            return level / scale
-    return v
+def _canonicalize(g, scale):
+    """The reference's ``_canonical_costes_pixels``, in place on private buffers: snap
+    a value encoded as ``level * (1 / scale)`` to ``level / scale``; leave every
+    other value alone. Idempotent, so replayed objects see the same values."""
+    for i in range(g.size):
+        v = g[i]
+        if v >= 1.0 / scale and v <= 1:
+            level = np.rint(v * scale)
+            if v == level * (1.0 / scale):
+                g[i] = level / scale
+
+
+@njit(cache=True)
+def _validity(g1, g2, lo, hi):
+    """The reference's ``_valid_costes_pixels`` checks, in its order, as a status."""
+    if hi - lo < 3:
+        return FEW_OR_NONFINITE
+    for i in range(lo, hi):
+        if not (np.isfinite(g1[i]) and np.isfinite(g2[i])):
+            return FEW_OR_NONFINITE
+    for i in range(lo, hi):
+        if g1[i] < 0 or g2[i] < 0 or g1[i] > 1 or g2[i] > 1:
+            return OUT_OF_RANGE
+    m = 0
+    min1 = min2 = np.inf
+    max1 = max2 = -np.inf
+    for i in range(lo, hi):
+        if g1[i] > 0 or g2[i] > 0:
+            m += 1
+            min1, max1 = min(min1, g1[i]), max(max1, g1[i])
+            min2, max2 = min(min2, g2[i]), max(max2, g2[i])
+    if m < 3:
+        return FEW_NONZERO
+    if min1 == max1 or min2 == max2:
+        return CONSTANT_CHANNEL
+    return SEARCHED
 
 
 @njit(cache=True)
@@ -470,108 +526,100 @@ def _gather_sum(values, lo, hi, keep, buf, chunk):
     return numpy_sum(buf[:m], chunk)
 
 
-@njit(cache=True, nogil=True, error_model="numpy")
-def costes_per_object(g1, g2, offsets, scale, mode, chunk):
-    """Costes coefficients of every object in one pass, as the reference computes them.
+@njit(cache=True)
+def _coefficients(g1, g2, lo, hi, thr1, thr2, keep, buf, chunk):
+    """The reference's coefficients for the chosen thresholds: ``(status, c1, c2)``."""
+    for i in range(lo, hi):
+        keep[i - lo] = g1[i] >= thr1
+    tot1 = _gather_sum(g1, lo, hi, keep, buf, chunk)
+    for i in range(lo, hi):
+        keep[i - lo] = g2[i] >= thr2
+    tot2 = _gather_sum(g2, lo, hi, keep, buf, chunk)
+    if tot1 <= 0 or tot2 <= 0:
+        return ZERO_DENOMINATOR, np.nan, np.nan
+    for i in range(lo, hi):
+        keep[i - lo] = g1[i] > thr1 and g2[i] > thr2
+    c1 = _gather_sum(g1, lo, hi, keep, buf, chunk) / tot1
+    return SEARCHED, c1, _gather_sum(g2, lo, hi, keep, buf, chunk) / tot2
 
-    ``g1``/``g2`` are the grouped pixels (object ``k`` owns ``offsets[k]:offsets[k+1]``),
-    already divided by the acquisition scale. ``mode`` is 0 (Faster, bisection),
-    1 (Fast) or 2 (Accurate); ``chunk`` is ``NUMPY_SUM_CHUNK``. Canonicalization,
-    validity checks, the regression line (NumPy's pairwise sums, so the same pixels
-    count), the search and the coefficients follow ``reference._costes_pair``.
-    Returns ``(c1, c2, status)``; a non-zero status leaves NaN for the wrapper to
-    report (see the status codes at the top of the module).
-    """
+
+@njit(cache=True)
+def _prepare(g1, g2, offsets, scale):
+    """Canonicalize in place; allocate the per-object outputs and scratch buffers."""
+    _canonicalize(g1, scale)
+    _canonicalize(g2, scale)
     n = offsets.size - 1
-    c1 = np.full(n, np.nan)
-    c2 = np.full(n, np.nan)
-    status = np.zeros(n, np.int64)
-    f = np.empty(g1.size)
-    s = np.empty(g2.size)
-    for i in range(g1.size):
-        f[i] = _canonical(g1[i], scale)
-        s[i] = _canonical(g2[i], scale)
     longest = 0
     for k in range(n):
         longest = max(longest, offsets[k + 1] - offsets[k])
-    bx = np.empty(longest)
-    by = np.empty(longest)
-    bz = np.empty(longest)
-    keep = np.empty(longest, np.bool_)
-    for k in range(n):
+    status = np.zeros(n, np.int64)
+    return (
+        np.full(n, np.nan),
+        np.full(n, np.nan),
+        status,
+        np.empty(longest),
+        np.empty(longest, np.bool_),
+    )
+
+
+# Two entry kernels share the per-object helpers, so a call compiles only its own
+# search family (one runtime-dispatched kernel compiled both, ~8x the first call).
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def costes_faster(g1, g2, offsets, scale, chunk):
+    """Costes coefficients of every object, Faster mode (bisection).
+
+    ``g1``/``g2`` are private grouped pixels (object ``k`` owns
+    ``offsets[k]:offsets[k + 1]``), already divided by the acquisition scale; they
+    are canonicalized in place. ``chunk`` is ``numpy_sum_chunk()``. Validity, the
+    regression line, the search and the coefficients follow
+    ``reference._costes_pair``. Returns ``(c1, c2, status)``; a non-zero status
+    leaves NaN for the wrapper to report (see the status codes above). The pass
+    stops at the first ``OUT_OF_RANGE`` object, where the reference raises.
+    """
+    c1, c2, status, buf, keep = _prepare(g1, g2, offsets, scale)
+    for k in range(offsets.size - 1):
         lo, hi = offsets[k], offsets[k + 1]
-        if hi == lo:
-            status[k] = EMPTY_OBJECT
-            continue
-        # _valid_costes_pixels
-        finite = True
-        for i in range(lo, hi):
-            if not (np.isfinite(f[i]) and np.isfinite(s[i])):
-                finite = False
-                break
-        if hi - lo < 3 or not finite:
-            status[k] = FEW_OR_NONFINITE
-            continue
-        outside = False
-        for i in range(lo, hi):
-            if f[i] < 0 or s[i] < 0 or f[i] > 1 or s[i] > 1:
-                outside = True
-                break
-        if outside:
-            status[k] = OUT_OF_RANGE
-            continue
-        m = 0
-        for i in range(lo, hi):
-            if f[i] > 0 or s[i] > 0:
-                bx[m] = f[i]
-                by[m] = s[i]
-                bz[m] = f[i] + s[i]
-                m += 1
-        if m < 3:
-            status[k] = FEW_NONZERO
-            continue
-        if bx[:m].min() == bx[:m].max() or by[:m].min() == by[:m].max():
-            status[k] = CONSTANT_CHANNEL
-            continue
-        # The reference's regression (bisection_costes / linear_costes), same sums.
-        xvar = numpy_var(bx[:m], chunk)
-        yvar = numpy_var(by[:m], chunk)
-        xmean = numpy_sum(bx[:m], chunk) / m
-        ymean = numpy_sum(by[:m], chunk) / m
-        zvar = numpy_var(bz[:m], chunk)
-        covar = 0.5 * (zvar - (xvar + yvar))
-        num = (yvar - xvar) + np.sqrt(
-            (yvar - xvar) * (yvar - xvar) + 4 * (covar * covar)
-        )
-        if abs(covar) <= 8 * np.finfo(np.float64).eps * max(xvar, yvar):
-            status[k] = REPLAY  # rare; the reference also reports NumPy's own warnings
-            continue
-        a = num / (2 * covar)
-        b = ymean - a * xmean
-        if not (np.isfinite(a) and np.isfinite(b)):
-            status[k] = REPLAY
-            continue
-        if mode == 0:
-            thr1, thr2, st = _bisection(f, s, lo, hi, a, b, scale)
-        else:
-            thr1, thr2, st = _linear(f, s, lo, hi, a, b, scale, mode == 2)
-        if st != SEARCHED:
-            status[k] = st
-            continue
-        if not (np.isfinite(thr1) and np.isfinite(thr2)):
-            status[k] = REPLAY
-            continue
-        for i in range(lo, hi):
-            keep[i - lo] = f[i] >= thr1
-        tot1 = _gather_sum(f, lo, hi, keep, bx, chunk)
-        for i in range(lo, hi):
-            keep[i - lo] = s[i] >= thr2
-        tot2 = _gather_sum(s, lo, hi, keep, bx, chunk)
-        if tot1 <= 0 or tot2 <= 0:
-            status[k] = ZERO_DENOMINATOR
-            continue
-        for i in range(lo, hi):
-            keep[i - lo] = f[i] > thr1 and s[i] > thr2
-        c1[k] = _gather_sum(f, lo, hi, keep, bx, chunk) / tot1
-        c2[k] = _gather_sum(s, lo, hi, keep, bx, chunk) / tot2
+        st = _validity(g1, g2, lo, hi) if hi > lo else EMPTY_OBJECT
+        if st == SEARCHED:
+            a, b = _regression_ab(g1, g2, lo, hi, chunk)
+            if not (np.isfinite(a) and np.isfinite(b)):
+                st = REPLAY  # rare; the reference's NumPy diagnostics decide
+            else:
+                thr1, thr2, st = _bisection(g1, g2, lo, hi, a, b, scale)
+                if st == SEARCHED and not (np.isfinite(thr1) and np.isfinite(thr2)):
+                    st = REPLAY
+                elif st == SEARCHED:
+                    st, c1[k], c2[k] = _coefficients(
+                        g1, g2, lo, hi, thr1, thr2, keep, buf, chunk
+                    )
+        status[k] = st
+        if st == OUT_OF_RANGE:
+            break
+    return c1, c2, status
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def costes_linear(g1, g2, offsets, scale, accurate, chunk):
+    """:func:`costes_faster` for the Fast and Accurate modes (linear search)."""
+    c1, c2, status, buf, keep = _prepare(g1, g2, offsets, scale)
+    for k in range(offsets.size - 1):
+        lo, hi = offsets[k], offsets[k + 1]
+        st = _validity(g1, g2, lo, hi) if hi > lo else EMPTY_OBJECT
+        if st == SEARCHED:
+            a, b = _regression_ab(g1, g2, lo, hi, chunk)
+            if not (np.isfinite(a) and np.isfinite(b)):
+                st = REPLAY
+            else:
+                thr1, thr2, st = _linear(g1, g2, lo, hi, a, b, scale, accurate)
+                if st == SEARCHED and not (np.isfinite(thr1) and np.isfinite(thr2)):
+                    st = REPLAY
+                elif st == SEARCHED:
+                    st, c1[k], c2[k] = _coefficients(
+                        g1, g2, lo, hi, thr1, thr2, keep, buf, chunk
+                    )
+        status[k] = st
+        if st == OUT_OF_RANGE:
+            break
     return c1, c2, status
