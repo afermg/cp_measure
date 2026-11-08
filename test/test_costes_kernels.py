@@ -52,16 +52,16 @@ def test_regression_ab_equals_reference_bitwise(seed, n):
 @requires_numba
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_pearson_combt_matches_scipy(seed):
-    from cp_measure.core.numba._costes import _pearson_combt
+    from cp_measure.core.numba._costes import _FAST_CUTOFFS, _pearson_combt
 
     fi, si = _obj(seed)
     thr_fi, thr_si = 0.4, 0.35
-    got = _pearson_combt(fi, si, 0, fi.size, thr_fi, thr_si)
+    got = _pearson_combt(fi, si, 0, fi.size, thr_fi, thr_si, _FAST_CUTOFFS)
     combt = (fi < thr_fi) | (si < thr_si)
     r_ref, _ = scipy.stats.pearsonr(fi[combt], si[combt])
     np.testing.assert_allclose(got, r_ref, rtol=1e-9, atol=1e-12)
     # full-block (inf thresholds) == pearson over everything
-    got_full = _pearson_combt(fi, si, 0, fi.size, np.inf, np.inf)
+    got_full = _pearson_combt(fi, si, 0, fi.size, np.inf, np.inf, _FAST_CUTOFFS)
     np.testing.assert_allclose(got_full, scipy.stats.pearsonr(fi, si)[0], rtol=1e-9)
 
 
@@ -193,3 +193,24 @@ def test_bisection_equals_reference_on_16bit_objects(n, seed):
     a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
     got = _bisection(fi, si, 0, fi.size, a, b, float(scale))[:2]
     np.testing.assert_array_equal(got, ref.bisection_costes(fi, si, fi, si, scale))
+
+
+@requires_numba
+def test_bisection_ignores_linear_step_cutoffs():
+    """r is exactly 0.25 here, a Fast-mode step point that bisection never branches
+    on, so Faster mode measures the object instead of replaying the reference."""
+    from cp_measure.core.numba._costes import REPLAY, costes_faster
+
+    fi = np.array([3, 5, 4, 5, 3, 6, 6, 6, 6, 4]) / 255
+    si = np.array([5, 5, 3, 5, 4, 5, 4, 3, 6, 2]) / 255
+    c1, c2, status = costes_faster(
+        fi.copy(), si.copy(), np.array([0, 10]), 255.0, numpy_sum_chunk()
+    )
+    assert status[0] != REPLAY
+    expected = ref.get_correlation_costes(
+        fi[None], si[None], np.ones((1, 10), int), scale_max=255
+    )
+    np.testing.assert_array_equal(
+        [c1[0], c2[0]],
+        [expected["Correlation_Costes_1"][0], expected["Correlation_Costes_2"][0]],
+    )
