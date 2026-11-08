@@ -210,3 +210,14 @@ def apply_per_image(func, masks, pixels, **kwargs) -> list:
         func(m if ndim == 3 else m[0], p if ndim == 3 else p[0], **kwargs)
         for m, p, ndim in items
     ]
+
+
+def apply_per_pair(func, pixels_1, pixels_2, masks, **kwargs) -> list:
+    """:func:`apply_per_image` for the two-channel colocalization functions,
+    ``func(pixels_1, pixels_2, masks, **kwargs)``. Returns one result per image."""
+    first, _ = each_volume(masks, pixels_1)
+    second, _ = each_volume(masks, pixels_2)
+    return [
+        func(*(x if ndim == 3 else x[0] for x in (p1, p2, m)), **kwargs)
+        for (m, p1, ndim), (_, p2, _) in zip(first, second)
+    ]

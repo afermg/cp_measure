@@ -243,16 +243,23 @@ def _featurize_one(
                 for key, values in outputs[ch_idx].items():
                     results[f"{key}__{ch_name}"] = values
 
+        # Each correlation feature measures all channel pairs in one batch call (same
+        # mask, one image pair per channel pair), so a backend can parallelize
+        # across pairs. Columns keep the pair order.
         n_ch = len(channels)
         for func, params, symmetric in corr_feats:
             iter_fn = itertools.combinations if symmetric else itertools.permutations
-            for ch_i, ch_j in iter_fn(range(n_ch), 2):
-                for key, values in func(
-                    pixels_1=image[ch_i],
-                    pixels_2=image[ch_j],
-                    masks=clean,
-                    **params,
-                ).items():
+            pairs = list(iter_fn(range(n_ch), 2))
+            if not pairs:
+                continue
+            outputs = func(
+                pixels_1=[image[ch_i] for ch_i, _ in pairs],
+                pixels_2=[image[ch_j] for _, ch_j in pairs],
+                masks=[clean] * len(pairs),
+                **params,
+            )
+            for (ch_i, ch_j), output in zip(pairs, outputs):
+                for key, values in output.items():
                     results[f"{key}__{channels[ch_i]}__{channels[ch_j]}"] = values
 
         # Build column list from the first non-empty mask.
