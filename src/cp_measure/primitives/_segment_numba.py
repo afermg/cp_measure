@@ -275,28 +275,67 @@ NUMPY_SUM_CHUNK = 8192 if np.lib.NumpyVersion(np.__version__) < "2.3.0" else 0
 
 
 @njit(cache=True, nogil=True)
-def _pairwise_sum(a, lo, n):
-    """NumPy's ``pairwise_sum`` over ``a[lo : lo + n]``."""
+def _block_sum(a, lo, n):
+    """``pairwise_sum``'s leaf: a serial sum below 8 values, else eight interleaved
+    partial sums combined as a balanced tree, then the remainder."""
     if n < 8:
         res = 0.0
         for i in range(lo, lo + n):
             res += a[i]
         return res
+    r = a[lo : lo + 8].copy()
+    i = 8
+    while i < n - (n % 8):
+        for j in range(8):
+            r[j] += a[lo + i + j]
+        i += 8
+    res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]))
+    while i < n:
+        res += a[lo + i]
+        i += 1
+    return res
+
+
+@njit(cache=True, nogil=True)
+def _pairwise_sum(a, lo, n):
+    """NumPy's ``pairwise_sum`` over ``a[lo : lo + n]``: blocks of at most 128 values,
+    halves split at a multiple of 8 and added as ``left + right``.
+
+    Evaluated with an explicit stack because numba's on-disk cache does not handle
+    recursive functions (a cached recursive version crashed on reload).
+    """
     if n <= 128:
-        r = a[lo : lo + 8].copy()
-        i = 8
-        while i < n - (n % 8):
-            for j in range(8):
-                r[j] += a[lo + i + j]
-            i += 8
-        res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]))
-        while i < n:
-            res += a[lo + i]
-            i += 1
-        return res
-    n2 = n // 2
-    n2 -= n2 % 8
-    return _pairwise_sum(a, lo, n2) + _pairwise_sum(a, lo + n2, n - n2)
+        return _block_sum(a, lo, n)
+    # frames: (start, length, stage); stage 0 = expand left, 1 = expand right, 2 = add
+    starts = np.empty(64, np.int64)
+    lengths = np.empty(64, np.int64)
+    stages = np.empty(64, np.int64)
+    values = np.empty(64)
+    top = 0
+    nvals = 0
+    starts[0], lengths[0], stages[0] = lo, n, 0
+    while top >= 0:
+        start, length, stage = starts[top], lengths[top], stages[top]
+        if length <= 128:
+            values[nvals] = _block_sum(a, start, length)
+            nvals += 1
+            top -= 1
+            continue
+        half = length // 2
+        half -= half % 8
+        if stage == 0:
+            stages[top] = 1
+            top += 1
+            starts[top], lengths[top], stages[top] = start, half, 0
+        elif stage == 1:
+            stages[top] = 2
+            top += 1
+            starts[top], lengths[top], stages[top] = start + half, length - half, 0
+        else:
+            nvals -= 1
+            values[nvals - 1] = values[nvals - 1] + values[nvals]
+            top -= 1
+    return values[0]
 
 
 @njit(cache=True, nogil=True)
