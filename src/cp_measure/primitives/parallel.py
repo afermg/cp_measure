@@ -1,0 +1,41 @@
+"""Shared per-image batch driver for the numba backends.
+
+A measurement's batch dispatch builds a list of per-image work items, then calls
+:func:`map_images` to run the per-image function over them. For a real batch the
+work runs across a thread pool; for a single image it runs serially, with no pool
+overhead. Order is preserved and exceptions propagate. First used by the zernike /
+radial_zernikes backend; the other batch backends can adopt it as they are wired.
+
+Parallelism only materialises when ``func``'s heavy work releases the GIL — the
+numba kernels it calls must be ``@njit(nogil=True)`` (numpy's large array ops also
+release it). A ``ThreadPoolExecutor`` shares memory with the caller, so no image
+data is copied to workers, unlike a process pool.
+"""
+
+import os
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from typing import TypeVar
+
+T = TypeVar("T")
+R = TypeVar("R")
+
+
+def map_images(
+    func: Callable[[T], R], items: Sequence[T], *, max_workers: int | None = None
+) -> list[R]:
+    """Return ``[func(x) for x in items]``, parallel across a thread pool for
+    batches of two or more, serial for zero or one item.
+
+    Order matches ``items``. ``max_workers`` defaults to ``os.cpu_count()`` and is
+    capped at ``len(items)`` so a batch never spawns more threads than images (an
+    explicit ``0`` is passed through and rejected by ``ThreadPoolExecutor``).
+    Parallelism requires ``func`` to release the GIL during its heavy work.
+    """
+    if len(items) <= 1:
+        return [func(x) for x in items]
+    workers = max_workers if max_workers is not None else os.cpu_count()
+    if workers:  # os.cpu_count() may return None → defer to the pool's own default
+        workers = min(workers, len(items))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return list(executor.map(func, items))
