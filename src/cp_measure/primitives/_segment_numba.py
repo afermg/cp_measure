@@ -170,12 +170,13 @@ def segment_resid_sumsq(values, seg0, n, mean):
 
 
 @njit(cache=True)
-def _interp(sorted_seg, n, frac, legacy):
-    """Linear interpolation within a sorted segment at the chosen convention.
+def _interp_pos(n, frac, legacy):
+    """Interpolation position within a segment of ``n`` sorted values.
 
     ``legacy=True`` uses ``pos = n * frac`` (the CellProfiler / cumsum-offset
     convention); ``legacy=False`` uses ``pos = (n - 1) * frac``
-    (``numpy.percentile`` 'linear'). Upper neighbour clamped at the last element.
+    (``numpy.percentile`` 'linear'). Returns ``(lo, hi, f)``: the two neighbouring
+    ranks (upper clamped at the last element) and the weight of ``hi``.
     """
     pos = n * frac if legacy else (n - 1) * frac
     lo = int(pos)
@@ -184,17 +185,18 @@ def _interp(sorted_seg, n, frac, legacy):
     hi = lo + 1
     if hi > n - 1:
         hi = n - 1
-    f = pos - lo
-    return sorted_seg[lo] * (1.0 - f) + sorted_seg[hi] * f
+    return lo, hi, pos - lo
 
 
 @njit(cache=True)
 def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
-    """Per-segment quartiles/median + MAD via scatter-into-segments + sort.
+    """Per-segment quartiles/median + MAD via scatter-into-segments + selection.
 
     Builds CSR offsets from ``counts``, scatters values into one flat buffer,
-    sorts each segment slice in place, and interpolates with the convention
-    selected by ``legacy`` (see :func:`_interp`). MAD reuses the sorted absolute
+    places the ranks the interpolation reads with ``np.partition`` (O(n)
+    selection instead of an O(n log n) sort; the values at those ranks, and so
+    the results, match the sorted segment's), and interpolates with the
+    convention selected by ``legacy`` (see :func:`_interp_pos`). MAD is the same interpolation over the absolute
     deviations from the median: in legacy mode at ``mad_frac`` (= 1 / original
     ndim), otherwise the textbook median.
     """
@@ -223,13 +225,17 @@ def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
             continue
         s = starts[k]
         seg = buf[s : s + cnt]
-        seg.sort()
-        lq[k] = _interp(seg, cnt, 0.25, legacy)
-        med[k] = _interp(seg, cnt, 0.5, legacy)
-        uq[k] = _interp(seg, cnt, 0.75, legacy)
+        l1, h1, f1 = _interp_pos(cnt, 0.25, legacy)
+        l2, h2, f2 = _interp_pos(cnt, 0.5, legacy)
+        l3, h3, f3 = _interp_pos(cnt, 0.75, legacy)
+        part = np.partition(seg, np.unique(np.array([l1, h1, l2, h2, l3, h3])))
+        lq[k] = part[l1] * (1.0 - f1) + part[h1] * f1
+        med[k] = part[l2] * (1.0 - f2) + part[h2] * f2
+        uq[k] = part[l3] * (1.0 - f3) + part[h3] * f3
         ad = np.abs(seg - med[k])
-        ad.sort()
-        mad[k] = _interp(ad, cnt, mad_frac if legacy else 0.5, legacy)
+        lm, hm, fm = _interp_pos(cnt, mad_frac if legacy else 0.5, legacy)
+        part = np.partition(ad, np.unique(np.array([lm, hm])))
+        mad[k] = part[lm] * (1.0 - fm) + part[hm] * fm
     return lq, med, uq, mad
 
 

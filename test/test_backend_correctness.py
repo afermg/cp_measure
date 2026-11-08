@@ -64,6 +64,27 @@ def test_numba_intensity_matches_numpy(dim, edge, legacy):
     _assert_dicts_match(ref, got)
 
 
+@requires_numba
+@pytest.mark.parametrize("legacy", [False, True], ids=["new", "legacy"])
+@pytest.mark.parametrize("shape", [(48, 48), (3, 24, 24)], ids=["2d", "3d"])
+def test_numba_intensity_quantiles_exact_on_ties(shape, legacy):
+    """Quantiles and MAD are order statistics, so numba must equal the numpy
+    sort-based reference exactly, including heavily tied values and a 1-px object."""
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as intensity_numba,
+    )
+
+    rng = get_rng()
+    mask = rng.integers(1, 6, shape).astype(np.int32)
+    mask.flat[0] = 6  # single-pixel object
+    pixels = rng.integers(0, 4, shape) / 4.0  # few distinct levels -> many ties
+    ref = intensity_numpy(mask, pixels, edge_measurements=False, legacy=legacy)
+    got = intensity_numba(mask, pixels, edge_measurements=False, legacy=legacy)
+    for name in ("LowerQuartile", "Median", "UpperQuartile", "MAD"):
+        key = f"Intensity_{name}Intensity"
+        np.testing.assert_array_equal(got[key], ref[key], err_msg=key)
+
+
 def test_legacy_flag_anchor():
     """Pin both backends to known numerical conventions on a tiny anchor case."""
     mask = np.array([[1, 1, 1, 1]], dtype=np.int32)
