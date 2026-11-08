@@ -7,42 +7,48 @@ import skimage.morphology as M
 
 from cp_measure.core.numba._granularity import (
     _disk_halfwidths,
-    bilinear_gather,
     disk_dilation_2d,
     disk_erosion_2d,
     dilation_4conn_2d,
     erosion_4conn_2d,
+    readback_sums,
+    readback_tables,
     reconstruction_by_dilation_2d,
 )
 
 
 @pytest.mark.parametrize("seed", [0, 1, 7])
-def test_bilinear_gather_matches_map_coordinates(seed):
-    """The gather must match scipy order-1 map_coordinates (mode=constant) to ~eps,
-    including points on the array boundary (where a corner is out of range)."""
+@pytest.mark.parametrize("shape", [(37, 41), (64, 64)])
+def test_readback_matches_upsample_then_label_mean(seed, shape):
+    """Per-label sums of the bilinear readback equal upsampling the coarse grid with
+    order-1 map_coordinates (the baseline) and summing per label, to rounding; with
+    unit scales they equal a bincount of the grid at the object pixels exactly."""
     rng = numpy.random.default_rng(seed)
-    img = rng.random((37, 41))
-    H, W = img.shape
-    npts = 500
-    # Constant mode zeros the entire sample outside the domain, even by one ULP;
-    # it does not interpolate with zero-valued exterior corners (grid-constant).
-    sy = numpy.concatenate(
-        [
-            rng.uniform(0, H - 1, npts),
-            [0.0, H - 1, H - 1, -0.25, numpy.nextafter(H - 1.0, numpy.inf), 1, 1],
-        ]
+    labels = rng.integers(0, 6, size=shape)
+    labels[labels == 3] = 0  # an absent label
+    pixels = rng.random(shape)
+    n = int(labels.max())
+
+    def per_label(values):  # labels 1..n; background is never read back
+        flat = numpy.bincount(labels.ravel(), weights=values.ravel(), minlength=n + 1)
+        return flat[1:]
+
+    coarse = (shape[0] // 4, shape[1] // 3)
+    grid = rng.random(coarse)
+    sy = (coarse[0] - 1) / (shape[0] - 1)
+    sx = (coarse[1] - 1) / (shape[1] - 1)
+    counts, sums, *tables = readback_tables(labels, pixels, n, sy, sx, *coarse)
+    yy, xx = numpy.indices(shape).astype(float)
+    upsampled = scipy.ndimage.map_coordinates(grid, (yy * sy, xx * sx), order=1)
+    numpy.testing.assert_allclose(
+        readback_sums(grid, *tables)[1:], per_label(upsampled), rtol=0, atol=1e-12
     )
-    sx = numpy.concatenate(
-        [
-            rng.uniform(0, W - 1, npts),
-            [0.0, W - 1, 0.0, 1, 1, -0.25, numpy.nextafter(W - 1.0, numpy.inf)],
-        ]
-    )
-    ref = scipy.ndimage.map_coordinates(img, (sy, sx), order=1)
-    y0 = numpy.floor(sy).astype(numpy.int64)
-    x0 = numpy.floor(sx).astype(numpy.int64)
-    got = bilinear_gather(img, y0, x0, sy - y0, sx - x0, H, W)
-    numpy.testing.assert_allclose(got, ref, rtol=0, atol=1e-12)
+    numpy.testing.assert_array_equal(counts[1:], per_label(numpy.ones(shape)))
+    numpy.testing.assert_array_equal(sums[1:], per_label(pixels))
+    # unit scales: same sums as a bincount at the object pixels, bit for bit
+    fine = rng.random(shape)
+    _, _, *unit = readback_tables(labels, pixels, n, 1.0, 1.0, *shape)
+    numpy.testing.assert_array_equal(readback_sums(fine, *unit)[1:], per_label(fine))
 
 
 def _images(seed):

@@ -3,14 +3,15 @@
 Mirrors :func:`cp_measure.core.measuregranularity.get_granularity` but swaps the
 skimage morphology (background opening, per-iteration disk(1) erosion, geodesic
 reconstruction) for the bit-exact numba kernels in :mod:`._granularity`, and the
-16 ``scipy.ndimage.mean`` calls for a precomputed ``bincount`` per-object mean
-sampled by a sparse point-query of the reconstructed image (no full-resolution
-upsample). The 16 per-step resamples of the reconstructed image back to the object
-sample points — the default-config hot spot (~67% of runtime) — use the numba
-:func:`._granularity.bilinear_gather` (floor/frac precomputed once and reused
-across steps) instead of ``scipy.ndimage.map_coordinates``; it matches order-1
-``map_coordinates`` to ~3e-16 (≪ this backend's ``rtol=1e-6`` contract). The three
-one-off grid resamples (subsample / background) stay on ``map_coordinates``.
+16 ``scipy.ndimage.mean`` calls (each on a full-resolution order-1 upsample of the
+reconstructed image) for per-object sums of fixed bilinear weights: one pass over
+the mask (:func:`._granularity.readback_tables`) sums each object's corner weights
+on a block over its bounding box in the working grid, and each spectrum step then
+reads only those blocks (:func:`._granularity.readback_sums`). This matches the
+upsample-then-mean to floating-point summation order (~1e-12 absolute on the
+spectrum, inside this backend's ``rtol=1e-7, atol=1e-10`` contract), and is
+bit-exact when no resampling is needed. The three one-off grid resamples
+(subsample / background) stay on ``map_coordinates``.
 
 Batch-shaped via the canonical ``(B, Z, Y, X)`` form (see
 :func:`cp_measure.primitives.shapes.to_bzyx`): a single image is ``B == 1``. Each
@@ -25,10 +26,11 @@ from numpy.typing import NDArray
 from cp_measure._precision import Precision, promote_float_pixels, validate_precision
 from cp_measure.core.measuregranularity import get_granularity as _get_granularity_numpy
 from cp_measure.core.numba._granularity import (
-    bilinear_gather,
     disk_dilation_2d,
     disk_erosion_2d,
     erosion_4conn_2d,
+    readback_sums,
+    readback_tables,
     reconstruction_by_dilation_2d,
 )
 from cp_measure.primitives.shapes import to_bzyx
@@ -168,9 +170,7 @@ def _granularity_2d(
     pixels = pixels - back_pixels
     pixels[pixels < 0] = 0
 
-    # 3. Per-object readback structures (dense labels 1..max, like baseline)
-    flat_mask = orig_mask.ravel()
-    in_obj = flat_mask > 0
+    # 3. Per-object readback (dense labels 1..max, like baseline)
     max_label = int(orig_mask.max()) if orig_mask.size else 0
     results: dict[str, NDArray[numpy.floating]] = {}
     if max_label == 0:  # no objects -> baseline returns empty arrays
@@ -179,37 +179,28 @@ def _granularity_2d(
             results[f"Granularity_{granularity_id}"] = empty
         return results
 
-    flat_pos = numpy.flatnonzero(in_obj)
-    # bincount otherwise recasts int32 labels on every spectrum step.
-    labels_in = flat_mask[flat_pos].astype(numpy.intp, copy=False)
-    counts = numpy.bincount(labels_in, minlength=max_label + 1)[1:].astype(
-        numpy.float64
+    # Object pixel (y, x) samples the working grid at (y * scale_y, x * scale_x),
+    # the baseline's order-1 upsample of the grid back to the original shape.
+    scale_y = float(new_shape[0] - 1) / float(orig_shape[0] - 1)
+    scale_x = float(new_shape[1] - 1) / float(orig_shape[1] - 1)
+    counts, sums, *tables = readback_tables(
+        numpy.ascontiguousarray(orig_mask, dtype=numpy.intp),
+        # exact widening (any input dtype, incl. float16) for the starting means
+        numpy.ascontiguousarray(orig_pixels, dtype=numpy.float64),
+        max_label,
+        scale_y,
+        scale_x,
+        int(new_shape[0]),
+        int(new_shape[1]),
     )
+    counts = counts[1:]
 
-    needs_resize = not numpy.array_equal(new_shape, orig_shape)
-    if needs_resize:
-        yy, xx = numpy.unravel_index(flat_pos, tuple(orig_shape))
-        sy = yy * (float(new_shape[0] - 1) / float(orig_shape[0] - 1))
-        sx = xx * (float(new_shape[1] - 1) / float(orig_shape[1] - 1))
-        # The sample points are fixed across the 16 spectrum steps (only `rec`
-        # changes), so the bilinear floor/frac are computed ONCE and reused, instead
-        # of 16 map_coordinates calls re-deriving them (the default-config hot spot).
-        gy0 = numpy.floor(sy).astype(numpy.int64)
-        gx0 = numpy.floor(sx).astype(numpy.int64)
-        gfy = sy - gy0
-        gfx = sx - gx0
-
-    def _label_mean(values_at_in_obj):
-        sums = numpy.bincount(
-            labels_in, weights=values_at_in_obj, minlength=max_label + 1
-        )[1:]
+    def _label_mean(label_sums):
         with numpy.errstate(invalid="ignore", divide="ignore"):
-            return (
-                sums / counts
-            )  # 0/0 -> nan for absent labels, matching scipy.ndimage.mean
+            # 0/0 -> nan for absent labels, matching scipy.ndimage.mean
+            return label_sums[1:] / counts
 
-    orig_valid = orig_pixels.ravel()[flat_pos].astype(numpy.float64, copy=False)
-    current_mean = _label_mean(orig_valid)
+    current_mean = _label_mean(sums)
     start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
 
     # 4. Granular spectrum loop (numba disk(1) erosion + reconstruction, cascaded mask)
@@ -222,14 +213,7 @@ def _granularity_2d(
         rec = reconstruction_by_dilation_2d(ero, recon_mask)
         recon_mask = rec  # cascade: rec_g <= rec_{g-1} <= pixels (exact)
 
-        if needs_resize:
-            rec_valid = bilinear_gather(
-                rec, gy0, gx0, gfy, gfx, rec.shape[0], rec.shape[1]
-            )
-        else:
-            rec_valid = rec.ravel()[flat_pos]
-
-        new_mean = _label_mean(rec_valid)
+        new_mean = _label_mean(readback_sums(rec, *tables))
         results[f"Granularity_{granularity_id}"] = (
             (current_mean - new_mean) * 100 / start_mean
         )

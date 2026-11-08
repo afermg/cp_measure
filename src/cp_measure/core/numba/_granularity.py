@@ -25,43 +25,116 @@ from numpy.typing import NDArray
 
 
 @njit(cache=True)
-def bilinear_gather(img, y0, x0, fy, fx, H, W):
-    """Bilinear sample of ``img`` at points with precomputed floor/frac indices.
+def readback_tables(mask, pixels, n, scale_y, scale_x, H, W):
+    """One pass over the full-resolution mask for the spectrum's per-object means.
 
-    Reproduces ``scipy.ndimage.map_coordinates(img, (y, x), order=1)`` with the
-    default ``mode="constant"`` (out-of-range sample points return ``cval=0``):
-    ``y0=floor(y)``, ``fy=y-y0`` (likewise x). Matches map_coordinates to ~3e-16
-    (FP add-order only) — far inside this
-    backend's ``rtol=1e-6`` contract — but ~9x faster per call. The floor/frac are
-    computed once on the host and reused across the 16 granularity steps (same
-    sample points, different ``img``), replacing 16 ``map_coordinates`` calls that
-    re-derive them every time (~67% of the default-config runtime).
+    Each object pixel ``(y, x)`` samples the ``(H, W)`` working grid bilinearly at
+    ``(y * scale_y, x * scale_x)``, as ``scipy.ndimage.map_coordinates(order=1)``
+    does (samples outside the grid, even by one ULP, contribute 0). Those samples
+    are fixed across the spectrum steps, and a label's sum of bilinear samples is
+    linear in the grid values, so the corner weights are summed once per label on a
+    dense block over its bounding box in the grid. Each step then reads only that
+    block (:func:`readback_sums`) instead of every object pixel.
+
+    Returns ``(counts, sums, starts, cells, values)``, indexed by label ``0..n``:
+    pixel counts, sums of ``pixels`` in raster order (as a weighted ``bincount``),
+    and label ``L``'s nonzero weights ``values[starts[L]:starts[L + 1]]`` on the flat
+    grid ``cells``, in raster order. With unit scales every weight is 1.0 at the
+    pixel itself, so the per-label sums equal a ``bincount`` of the grid at the
+    object pixels exactly.
     """
-    out = np.empty(y0.shape[0])
-    for t in range(y0.shape[0]):
-        iy = y0[t]
-        ix = x0[t]
-        gy = fy[t]
-        gx = fx[t]
-        # Test floor/frac separately so even a one-ULP overshoot is rejected.
-        # Interpolating exterior zero-valued corners would be grid-constant mode.
-        if (
-            iy < 0
-            or ix < 0
-            or iy >= H
-            or ix >= W
-            or (iy == H - 1 and gy > 0)
-            or (ix == W - 1 and gx > 0)
-        ):
-            out[t] = 0.0
-            continue
-        v00 = img[iy, ix]
-        v01 = img[iy, ix + 1] if (0 <= iy < H and 0 <= ix + 1 < W) else 0.0
-        v10 = img[iy + 1, ix] if (0 <= iy + 1 < H and 0 <= ix < W) else 0.0
-        v11 = img[iy + 1, ix + 1] if (0 <= iy + 1 < H and 0 <= ix + 1 < W) else 0.0
-        out[t] = (v00 * (1.0 - gx) + v01 * gx) * (1.0 - gy) + (
-            v10 * (1.0 - gx) + v11 * gx
-        ) * gy
+    Y, X = mask.shape
+    counts = np.zeros(n + 1)
+    sums = np.zeros(n + 1)
+    row0 = np.full(n + 1, H, np.int64)
+    col0 = np.full(n + 1, W, np.int64)
+    row1 = np.full(n + 1, -1, np.int64)
+    col1 = np.full(n + 1, -1, np.int64)
+    for y in range(Y):
+        iy = int(np.floor(y * scale_y))
+        for x in range(X):
+            lab = mask[y, x]
+            if lab <= 0:
+                continue
+            counts[lab] += 1
+            sums[lab] += np.float64(pixels[y, x])
+            ix = int(np.floor(x * scale_x))
+            row0[lab] = min(row0[lab], iy)
+            col0[lab] = min(col0[lab], ix)
+            row1[lab] = max(row1[lab], iy + 1)
+            col1[lab] = max(col1[lab], ix + 1)
+    rows = np.zeros(n + 1, np.int64)
+    cols = np.zeros(n + 1, np.int64)
+    offsets = np.zeros(n + 2, np.int64)
+    for lab in range(n + 1):
+        if row1[lab] >= 0:
+            rows[lab] = row1[lab] - row0[lab] + 1
+            cols[lab] = col1[lab] - col0[lab] + 1
+        offsets[lab + 1] = offsets[lab] + rows[lab] * cols[lab]
+    weights = np.zeros(offsets[n + 1])
+    for y in range(Y):
+        sy = y * scale_y
+        iy = int(np.floor(sy))
+        gy = sy - iy
+        for x in range(X):
+            lab = mask[y, x]
+            if lab <= 0:
+                continue
+            sx = x * scale_x
+            ix = int(np.floor(sx))
+            gx = sx - ix
+            # Test floor/frac separately so even a one-ULP overshoot is rejected.
+            if (
+                iy < 0
+                or ix < 0
+                or iy >= H
+                or ix >= W
+                or (iy == H - 1 and gy > 0)
+                or (ix == W - 1 and gx > 0)
+            ):
+                continue
+            k = offsets[lab] + (iy - row0[lab]) * cols[lab] + (ix - col0[lab])
+            weights[k] += (1.0 - gx) * (1.0 - gy)
+            if ix + 1 < W:
+                weights[k + 1] += gx * (1.0 - gy)
+            if iy + 1 < H:
+                weights[k + cols[lab]] += (1.0 - gx) * gy
+                if ix + 1 < W:
+                    weights[k + cols[lab] + 1] += gx * gy
+    # Keep only the nonzero weights, per label in raster order of the grid.
+    nnz = 0
+    for k in range(weights.size):
+        if weights[k] != 0.0:
+            nnz += 1
+    starts = np.zeros(n + 2, np.int64)
+    cells = np.empty(nnz, np.int64)
+    values = np.empty(nnz)
+    j = 0
+    for lab in range(n + 1):
+        starts[lab] = j
+        k = offsets[lab]
+        for a in range(rows[lab]):
+            for b in range(cols[lab]):
+                if weights[k] != 0.0:
+                    cells[j] = (row0[lab] + a) * W + col0[lab] + b
+                    values[j] = weights[k]
+                    j += 1
+                k += 1
+    starts[n + 1] = j
+    return counts, sums, starts, cells, values
+
+
+@njit(cache=True)
+def readback_sums(grid, starts, cells, values):
+    """Per-label sums of the bilinear samples of ``grid``, from :func:`readback_tables`."""
+    flat = grid.ravel()
+    n = starts.size - 2
+    out = np.zeros(n + 1)
+    for lab in range(1, n + 1):
+        acc = 0.0
+        for j in range(starts[lab], starts[lab + 1]):
+            acc += values[j] * flat[cells[j]]
+        out[lab] = acc
     return out
 
 
@@ -250,7 +323,7 @@ def _geodesic_raster_bwd(out, mask):
 def reconstruction_by_dilation_2d(seed, mask):
     """Morphological reconstruction by dilation (4-connectivity), seed under mask.
 
-    Vincent (1993) / Robinson (2004) hybrid: three forward+backward raster
+    Vincent (1993) / Robinson (2004) hybrid: two forward+backward raster
     geodesic-dilation passes under ``mask``, the last backward pass seeding a FIFO
     of pixels that can still propagate, then FIFO propagation until it drains. This
     computes the exact reconstruction in ``O(N)`` (independent of propagation
@@ -259,11 +332,14 @@ def reconstruction_by_dilation_2d(seed, mask):
     ``skimage.morphology.reconstruction(seed, mask, footprint=disk(1))`` — min/max
     selections only. ``seed`` is clamped to ``min(seed, mask)``.
 
-    Three raster pairs (vs a single pair) cut the FIFO seed count ~50-95%, trading a
-    little cheap cache-sequential scanning for far fewer random-access FIFO updates
-    (~1.5x faster reconstruction, bit-identical — the result is independent of how
-    many raster passes precede the FIFO). FIFO entries use pointer-sized integers
-    packed as ``(i << shift) | j``, with ``shift`` chosen from the image width.
+    Two raster pairs precede the FIFO (the result is independent of how many, so
+    this is purely a speed choice). Measured over the 16 spectrum steps: on real
+    microscopy (skimage cells3d / human_mitosis) two pairs are 1.25-1.4x faster than
+    three, and on synthetic Gaussian noise they are never slower; one pair is fastest
+    on smooth real images but up to 2x slower on fine noise.
+
+    FIFO entries use pointer-sized integers packed as ``(i << shift) | j``, with
+    ``shift`` chosen from the image width.
     Shift/mask decoding avoids int-div/mod without imposing signed 16-bit coordinate
     limits. The FIFO is a ring buffer with a per-pixel ``in-queue`` flag, so at most
     ``N`` entries are live at once and a buffer of ``N + 1`` cannot overflow.
@@ -276,9 +352,7 @@ def reconstruction_by_dilation_2d(seed, mask):
             m = mask[i, j]
             out[i, j] = s if s < m else m
 
-    # 3 raster pairs before FIFO seeding; the first two pairs do not seed
-    _geodesic_raster_fwd(out, mask)
-    _geodesic_raster_bwd(out, mask)
+    # 2 raster pairs before FIFO seeding; the first pair does not seed
     _geodesic_raster_fwd(out, mask)
     _geodesic_raster_bwd(out, mask)
     _geodesic_raster_fwd(out, mask)
