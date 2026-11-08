@@ -233,7 +233,7 @@ def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
     return lq, med, uq, mad
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def flatten_pairs_grouped(masks, pix1, pix2, offsets):
     """Flatten two co-registered ``(Z, Y, X)`` channels to per-object blocks.
 

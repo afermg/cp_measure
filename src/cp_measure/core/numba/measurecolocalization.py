@@ -46,6 +46,7 @@ from cp_measure.core.numba._costes import (
     costes_per_object,
 )
 from cp_measure.primitives._segment_numba import NUMPY_SUM_CHUNK, flatten_pairs_grouped
+from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import to_bzyx
 
 # The reference's warning text for each undefined Costes status.
@@ -138,30 +139,32 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
     frac = (float(threshold) if precision == "float64" else threshold) / 100.0
     masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
     _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
-    results = []
-    for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list):
+
+    def compute(item):
+        # Kernel work only (the GIL is released): map_images runs batches on threads.
+        m, p1, p2 = item
         if ref is not reference.get_correlation_pearson:
             p1, p2 = (
                 promote_float_pixels(p1, precision),
                 promote_float_pixels(p2, precision),
             )
         if p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
+            return m, p1, p2, None
+        compute_pearson = ref is reference.get_correlation_pearson
+        return m, p1, p2, _run(m, p1, p2, frac, compute_rwc, compute_pearson)
+
+    def finish(staged):
+        # Reference fallbacks (and their warnings) on the calling thread, in order.
+        m, p1, p2, res = staged
+        if p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
+            return ref(p1, p2, m, **kwargs)
+        result = build(res)
+        if any(not numpy.isfinite(values).all() for values in result.values()):
             result = ref(p1, p2, m, **kwargs)
-        else:
-            result = build(
-                _run(
-                    m,
-                    p1,
-                    p2,
-                    frac,
-                    compute_rwc,
-                    compute_pearson=ref is reference.get_correlation_pearson,
-                )
-            )
-            if any(not numpy.isfinite(values).all() for values in result.values()):
-                result = ref(p1, p2, m, **kwargs)
-        results.append(result)
-    return unwrap(results)
+        return result
+
+    items = list(zip(masks_list, pixels_1_list, pixels_2_list))
+    return unwrap([finish(staged) for staged in map_images(compute, items)])
 
 
 def get_correlation_pearson(
@@ -296,13 +299,22 @@ def get_correlation_costes(
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
 
-    def measure(p1, p2, mask):
+    def compute(item):
+        # Kernel work only (the GIL is released): map_images runs batches on threads.
+        p1, p2, mask = item
         zyx = (mask, p1, p2) if mask.ndim == 3 else (mask[None], p1[None], p2[None])
         g1, g2, offsets = _grouped(*zyx)
         c1, c2, status = costes_per_object(
             g1, g2, offsets, float(scale), _COSTES_MODES[fast_costes], NUMPY_SUM_CHUNK
         )
-        # Warnings, errors and replays in object order, as the reference emits them.
+        # Keep the grouped pixels only for objects the reference must replay.
+        replay = (g1, g2) if (status == REPLAY).any() else (None, None)
+        return *replay, offsets, c1, c2, status
+
+    def finish(staged):
+        g1, g2, offsets, c1, c2, status = staged
+        # Warnings, errors and replays on the calling thread, in image and object
+        # order, as the reference emits them.
         for k in numpy.flatnonzero(status):
             if status[k] == OUT_OF_RANGE:
                 raise ValueError(
@@ -321,7 +333,7 @@ def get_correlation_costes(
     # Single arrays retain their original rank, including singleton Z. Explicit
     # batches follow the existing backend helper; no mask repetition is allowed.
     if not isinstance(masks, (list, tuple)) and labels.ndim < 4:
-        return measure(first, second, labels)
+        return finish(compute((first, second, labels)))
     if isinstance(masks, (list, tuple)):
         if not isinstance(pixels_1, (list, tuple)) or not isinstance(
             pixels_2, (list, tuple)
@@ -330,6 +342,5 @@ def get_correlation_costes(
         labels, first, second = list(labels), list(first), list(second)
     masks_list, first_list, unwrap = to_bzyx(labels, first)
     _, second_list, _ = to_bzyx(labels, second)
-    return unwrap(
-        [measure(p1, p2, m) for m, p1, p2 in zip(masks_list, first_list, second_list)]
-    )
+    items = list(zip(first_list, second_list, masks_list))
+    return unwrap([finish(staged) for staged in map_images(compute, items)])
