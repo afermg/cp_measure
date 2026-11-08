@@ -29,7 +29,7 @@ _DW = np.array([1.0, 1.0, 1.0, 1.0, _SQ2, _SQ2, _SQ2, _SQ2], np.float64)
 UNREACHED = 1e18
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def geodesic_chamfer_fifo(mask, si, sj):
     """1/sqrt(2) chamfer geodesic distance from ``(si, sj)`` within ``mask``.
 
@@ -72,7 +72,7 @@ def geodesic_chamfer_fifo(mask, si, sj):
     return d
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
     """All per-object radial work for one cropped object, in one numba pass.
 

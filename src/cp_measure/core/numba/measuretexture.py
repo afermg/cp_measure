@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 
 from cp_measure.core.measuretexture import _pack, _prep
 from cp_measure.core.numba._texture import DELTAS_2D, DELTAS_3D, haralick_object
+from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import _stack
 
 
@@ -53,7 +54,11 @@ def get_texture(
         raise ValueError(
             f"batch size mismatch: {len(masks)} masks vs {len(pixels)} images"
         )
-    return [_texture_image(m, p, scale, gray_levels) for m, p in zip(masks, pixels)]
+    # Images are independent and the Haralick kernel releases the GIL, so
+    # map_images runs a batch on threads.
+    return map_images(
+        lambda item: _texture_image(*item, scale, gray_levels), list(zip(masks, pixels))
+    )
 
 
 def _texture_image(

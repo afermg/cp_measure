@@ -38,6 +38,7 @@ from cp_measure.core.numba._radial import (
 from cp_measure.core.numba._zernike import (
     zernike_per_image,
 )
+from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import to_bzyx
 
 
@@ -79,17 +80,20 @@ def get_radial_distribution(
     if not is_sequence and numpy.ndim(labels) == 3 and labels.shape[0] != 1:
         return {}
     masks_zyx, pixels_zyx, unwrap = to_bzyx(labels, pixels)
-    results: list[dict[str, NDArray[numpy.floating]]] = []
-    for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx)):
-        mask_ndim = numpy.ndim(labels[i] if is_sequence else labels)
+
+    def one(i):
+        m, p = masks_zyx[i], pixels_zyx[i]
         if m.shape[0] != 1:
-            results.append({})
-            continue
+            return {}
+        mask_ndim = numpy.ndim(labels[i] if is_sequence else labels)
         pixel_ndim = numpy.ndim(pixels[i] if is_sequence else pixels)
         if mask_ndim != pixel_ndim or m.shape != p.shape:
             raise ValueError("radial labels and pixels must have matching shapes")
-        results.append(_radial_distribution_2d(m, p, scaled, bin_count, maximum_radius))
-    return unwrap(results)
+        return _radial_distribution_2d(m, p, scaled, bin_count, maximum_radius)
+
+    # Images are independent and the per-object kernel releases the GIL, so
+    # map_images runs a batch on threads.
+    return unwrap(map_images(one, range(len(masks_zyx))))
 
 
 # (per-bin name template, overflow-bin name) per feature, in result order. The

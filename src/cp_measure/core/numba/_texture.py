@@ -53,7 +53,7 @@ DELTAS_3D = np.array(
 )
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def _entropy(a):
     """``-sum(a * log2(a))`` over positive entries (0*log2(1)=0), as mahotas."""
     s = 0.0
@@ -64,7 +64,7 @@ def _entropy(a):
     return s
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def haralick_object(crop, offsets):
     """The 13 Haralick features per direction for one ``(Z, Y, X)`` object crop.
 
@@ -121,7 +121,7 @@ def haralick_object(crop, offsets):
     return out
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def _haralick_13(cmat, fm1, T, out, d):
     """Fill ``out[d, :]`` with the 13 Haralick features of GLCM ``cmat`` (size fm1)."""
     px = np.zeros(fm1)  # marginal (== row & col marginal; GLCM is symmetric)
