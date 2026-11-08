@@ -29,10 +29,12 @@ from cp_measure.core.numba._granularity import (
     disk_dilation_2d,
     disk_erosion_2d,
     erosion_4conn_2d,
+    label_sums,
     readback_sums,
     readback_tables,
     reconstruction_by_dilation_2d,
 )
+from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import to_bzyx
 
 
@@ -45,6 +47,7 @@ def get_granularity(
     granular_spectrum_length: int = 16,
     *,
     precision: Precision = "input",
+    max_workers: int | None = None,
 ):
     """Granularity spectrum per object; accepts a single image/volume or a batch.
 
@@ -55,26 +58,41 @@ def get_granularity(
     channel axes. Output arrays are indexed densely by label ``1..max(mask)``.
     ``precision="input"`` retains the pre-policy mixed-precision path;
     ``"float64"`` widens float16/32 before resampling/background operations.
+    A batch runs on a thread pool; ``max_workers`` caps it (default
+    ``os.cpu_count()``), e.g. when nesting under an outer parallel map.
     """
     validate_precision(precision)
     masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
     is_sequence = isinstance(masks, (list, tuple))
-    results = [
-        _granularity_one(
-            m,
-            p,
+    batch = range(len(masks_zyx))
+    ndims = [
+        numpy.ndim(masks[i]) if is_sequence else min(numpy.ndim(masks), 3)
+        for i in batch
+    ]
+    # The readback tables depend only on the mask, so a list that repeats one mask
+    # object (the featurizer passes one mask per channel) builds them once.
+    keys = [id(masks[i]) if is_sequence else i for i in batch]
+    readbacks = {}
+    for i in batch:
+        if ndims[i] == 2 and keys[i] not in readbacks:
+            readbacks[keys[i]] = _readback(masks_zyx[i][0], subsample_size)
+
+    def one(i):
+        return _granularity_one(
+            masks_zyx[i],
+            pixels_zyx[i],
             subsample_size,
             image_sample_size,
             element_size,
             granular_spectrum_length,
             precision=precision,
-            spatial_ndim=(
-                numpy.ndim(masks[i]) if is_sequence else min(numpy.ndim(masks), 3)
-            ),
+            spatial_ndim=ndims[i],
+            readback=readbacks.get(keys[i]),
         )
-        for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx))
-    ]
-    return unwrap(results)
+
+    # Images are independent; map_images runs a batch on a thread pool (the
+    # granularity kernels release the GIL) and a single image serially.
+    return unwrap(map_images(one, batch, max_workers=max_workers))
 
 
 def _granularity_one(
@@ -87,6 +105,7 @@ def _granularity_one(
     *,
     spatial_ndim,
     precision: Precision = "input",
+    readback=None,
 ):
     """Preserve original spatial rank, including singleton-Z volumes (NumPy 3D)."""
     # Per image, before interpolation and background operations; no batch-wide
@@ -100,6 +119,7 @@ def _granularity_one(
             image_sample_size,
             element_size,
             ng,
+            readback,
         )
     return _get_granularity_numpy(
         mask_zyx,
@@ -119,6 +139,7 @@ def _granularity_2d(
     image_sample_size: float,
     element_size: int,
     ng: int,
+    readback=None,
 ) -> dict[str, NDArray[numpy.floating]]:
     orig_shape = numpy.array(orig_pixels.shape)
     effective_shape = (
@@ -179,21 +200,12 @@ def _granularity_2d(
             results[f"Granularity_{granularity_id}"] = empty
         return results
 
-    # Object pixel (y, x) samples the working grid at (y * scale_y, x * scale_x),
-    # the baseline's order-1 upsample of the grid back to the original shape.
-    scale_y = float(new_shape[0] - 1) / float(orig_shape[0] - 1)
-    scale_x = float(new_shape[1] - 1) / float(orig_shape[1] - 1)
-    counts, sums, *tables = readback_tables(
-        numpy.ascontiguousarray(orig_mask, dtype=numpy.intp),
-        # exact widening (any input dtype, incl. float16) for the starting means
-        numpy.ascontiguousarray(orig_pixels, dtype=numpy.float64),
-        max_label,
-        scale_y,
-        scale_x,
-        int(new_shape[0]),
-        int(new_shape[1]),
-    )
-    counts = counts[1:]
+    if readback is None:
+        readback = _readback(orig_mask, subsample_size)
+    mask, counts, tables = readback
+    # exact widening (any input dtype, incl. float16) for the starting means
+    pixels_f64 = numpy.ascontiguousarray(orig_pixels, dtype=numpy.float64)
+    sums = label_sums(mask, pixels_f64, max_label)
 
     def _label_mean(label_sums):
         with numpy.errstate(invalid="ignore", divide="ignore"):
@@ -220,3 +232,30 @@ def _granularity_2d(
         current_mean = new_mean
 
     return results
+
+
+def _readback(orig_mask, subsample_size):
+    """Mask-only readback tables for the 2D spectrum: ``(mask, counts, tables)``.
+
+    Object pixel ``(y, x)`` samples the working grid at ``(y * scale_y, x *
+    scale_x)``, the baseline's order-1 upsample of the grid back to the original
+    shape (see :func:`._granularity.readback_tables`). ``None`` when there is no
+    spectrum to read back (undefined grid or no objects).
+    """
+    orig_shape = numpy.array(orig_mask.shape)
+    new_shape = (
+        (orig_shape * subsample_size).astype(int) if subsample_size < 1 else orig_shape
+    )
+    max_label = int(orig_mask.max()) if orig_mask.size else 0
+    if (new_shape < 2).any() or max_label == 0:
+        return None
+    mask = numpy.ascontiguousarray(orig_mask, dtype=numpy.intp)
+    counts, *tables = readback_tables(
+        mask,
+        max_label,
+        float(new_shape[0] - 1) / float(orig_shape[0] - 1),
+        float(new_shape[1] - 1) / float(orig_shape[1] - 1),
+        int(new_shape[0]),
+        int(new_shape[1]),
+    )
+    return mask, counts[1:], tables

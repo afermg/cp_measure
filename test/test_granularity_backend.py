@@ -141,6 +141,25 @@ def test_batch_sequence_matches_per_image_baseline(container, precision):
             _assert_same(got, gran_numpy(m, p, precision=precision))
 
 
+@pytest.mark.parametrize("max_workers", [None, 1])
+def test_batch_shared_mask_matches_per_image(max_workers):
+    """A list repeating one mask object (the featurizer's one mask per channel),
+    mixed with a different mask, equals per-image calls exactly and in order,
+    whether the batch runs on threads or serially."""
+    mask, pixels = _scene(seed=0)
+    other_mask, other_pixels = _scene(n=3, seed=1)
+    channels = [pixels, pixels[::-1].copy(), numpy.sqrt(pixels)]
+    masks = [mask, mask, other_mask, mask]
+    images = [channels[0], channels[1], other_pixels, channels[2]]
+    out = gran_numba(masks, images, max_workers=max_workers)
+    assert isinstance(out, list) and len(out) == 4
+    for m, p, got in zip(masks, images, out):
+        want = gran_numba(m, p)
+        assert list(got) == list(want)
+        for k in want:
+            numpy.testing.assert_array_equal(got[k], want[k], err_msg=k)
+
+
 def test_batch_list_ragged_rejected():
     a = _scene(H=80, W=80, seed=0)
     b = _scene(H=64, W=96, n=3, seed=1)

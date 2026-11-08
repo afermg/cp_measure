@@ -11,6 +11,7 @@ from cp_measure.core.numba._granularity import (
     disk_erosion_2d,
     dilation_4conn_2d,
     erosion_4conn_2d,
+    label_sums,
     readback_sums,
     readback_tables,
     reconstruction_by_dilation_2d,
@@ -37,7 +38,8 @@ def test_readback_matches_upsample_then_label_mean(seed, shape):
     grid = rng.random(coarse)
     sy = (coarse[0] - 1) / (shape[0] - 1)
     sx = (coarse[1] - 1) / (shape[1] - 1)
-    counts, sums, *tables = readback_tables(labels, pixels, n, sy, sx, *coarse)
+    counts, *tables = readback_tables(labels, n, sy, sx, *coarse)
+    sums = label_sums(labels, pixels, n)
     yy, xx = numpy.indices(shape).astype(float)
     upsampled = scipy.ndimage.map_coordinates(grid, (yy * sy, xx * sx), order=1)
     numpy.testing.assert_allclose(
@@ -47,7 +49,7 @@ def test_readback_matches_upsample_then_label_mean(seed, shape):
     numpy.testing.assert_array_equal(sums[1:], per_label(pixels))
     # unit scales: same sums as a bincount at the object pixels, bit for bit
     fine = rng.random(shape)
-    _, _, *unit = readback_tables(labels, pixels, n, 1.0, 1.0, *shape)
+    _, *unit = readback_tables(labels, n, 1.0, 1.0, *shape)
     numpy.testing.assert_array_equal(readback_sums(fine, *unit)[1:], per_label(fine))
 
 

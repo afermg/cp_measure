@@ -1,7 +1,9 @@
 """Numba 2D morphology kernels for the granularity backend.
 
-Single-threaded ``@njit(cache=True)`` kernels, bit-exact with the skimage
-operations the numpy baseline uses:
+Single-threaded ``@njit(cache=True, nogil=True)`` kernels, bit-exact with the
+skimage operations the numpy baseline uses. ``nogil`` lets the batch path run images
+on a thread pool (:func:`cp_measure.primitives.parallel.map_images`); every kernel
+allocates its own outputs and only reads its inputs, so concurrent calls are safe.
 
 - :func:`disk_erosion_2d` / :func:`disk_dilation_2d` — greyscale disk min/max via
   a **row-decomposed van-Herk/Gil-Werman (VHG)** sliding 1-D min/max over the
@@ -24,8 +26,8 @@ from numba import njit
 from numpy.typing import NDArray
 
 
-@njit(cache=True)
-def readback_tables(mask, pixels, n, scale_y, scale_x, H, W):
+@njit(cache=True, nogil=True)
+def readback_tables(mask, n, scale_y, scale_x, H, W):
     """One pass over the full-resolution mask for the spectrum's per-object means.
 
     Each object pixel ``(y, x)`` samples the ``(H, W)`` working grid bilinearly at
@@ -36,16 +38,15 @@ def readback_tables(mask, pixels, n, scale_y, scale_x, H, W):
     dense block over its bounding box in the grid. Each step then reads only that
     block (:func:`readback_sums`) instead of every object pixel.
 
-    Returns ``(counts, sums, starts, cells, values)``, indexed by label ``0..n``:
-    pixel counts, sums of ``pixels`` in raster order (as a weighted ``bincount``),
-    and label ``L``'s nonzero weights ``values[starts[L]:starts[L + 1]]`` on the flat
-    grid ``cells``, in raster order. With unit scales every weight is 1.0 at the
+    Returns ``(counts, starts, cells, values)``, indexed by label ``0..n``: pixel
+    counts, and label ``L``'s nonzero weights ``values[starts[L]:starts[L + 1]]`` on
+    the flat grid ``cells``, in raster order. They depend only on the mask and the
+    grid shape, so one set serves every channel measured with the same mask. With unit scales every weight is 1.0 at the
     pixel itself, so the per-label sums equal a ``bincount`` of the grid at the
     object pixels exactly.
     """
     Y, X = mask.shape
     counts = np.zeros(n + 1)
-    sums = np.zeros(n + 1)
     row0 = np.full(n + 1, H, np.int64)
     col0 = np.full(n + 1, W, np.int64)
     row1 = np.full(n + 1, -1, np.int64)
@@ -57,7 +58,6 @@ def readback_tables(mask, pixels, n, scale_y, scale_x, H, W):
             if lab <= 0:
                 continue
             counts[lab] += 1
-            sums[lab] += np.float64(pixels[y, x])
             ix = int(np.floor(x * scale_x))
             row0[lab] = min(row0[lab], iy)
             col0[lab] = min(col0[lab], ix)
@@ -121,10 +121,23 @@ def readback_tables(mask, pixels, n, scale_y, scale_x, H, W):
                     j += 1
                 k += 1
     starts[n + 1] = j
-    return counts, sums, starts, cells, values
+    return counts, starts, cells, values
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
+def label_sums(mask, pixels, n):
+    """Per-label sums of ``pixels`` in raster order, as ``bincount(weights=...)``."""
+    sums = np.zeros(n + 1)
+    Y, X = mask.shape
+    for y in range(Y):
+        for x in range(X):
+            lab = mask[y, x]
+            if lab > 0:
+                sums[lab] += np.float64(pixels[y, x])
+    return sums
+
+
+@njit(cache=True, nogil=True)
 def readback_sums(grid, starts, cells, values):
     """Per-label sums of the bilinear samples of ``grid``, from :func:`readback_tables`."""
     flat = grid.ravel()
@@ -148,7 +161,7 @@ def _disk_halfwidths(radius: int) -> NDArray[np.int64]:
     return np.floor(np.sqrt(radius * radius - dy * dy)).astype(np.int64)
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _disk_reduce(P, radius, hx, H, W, is_max):
     """Row-decomposed VHG disk min/max over an ``edge``-padded image ``P``.
 
@@ -238,7 +251,7 @@ def disk_dilation_2d(img: NDArray, radius: int) -> NDArray[np.float64]:
     )
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _plus_reduce(P, H, W, is_max):
     """5-tap (disk(1)/cross) min/max over a 1-pixel ``edge``-padded image ``P``."""
     out = np.empty((H, W), np.float64)
@@ -285,7 +298,7 @@ def dilation_4conn_2d(img: NDArray) -> NDArray[np.float64]:
     return _plus_reduce(P, a.shape[0], a.shape[1], True)
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _geodesic_raster_fwd(out, mask):
     """One forward (TL→BR) geodesic-dilation raster of ``out`` under ``mask``."""
     H, W = out.shape
@@ -302,7 +315,7 @@ def _geodesic_raster_fwd(out, mask):
             out[i, j] = v
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _geodesic_raster_bwd(out, mask):
     """One backward (BR→TL) geodesic-dilation raster of ``out`` under ``mask``."""
     H, W = out.shape
@@ -319,7 +332,7 @@ def _geodesic_raster_bwd(out, mask):
             out[i, j] = v
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def reconstruction_by_dilation_2d(seed, mask):
     """Morphological reconstruction by dilation (4-connectivity), seed under mask.
 
