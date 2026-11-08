@@ -70,9 +70,7 @@ def fill_intensity_2d(mask_zyx, pix_zyx, legacy, edge, out, b, nobj):
         cmi_x = sxI / sumI
         cmi_y = syI / sumI
         cmi_z = szI / sumI
-        massd = np.sqrt(
-            (cm_x - cmi_x) ** 2 + (cm_y - cmi_y) ** 2 + (cm_z - cmi_z) ** 2
-        )
+        massd = np.sqrt((cm_x - cmi_x) ** 2 + (cm_y - cmi_y) ** 2 + (cm_z - cmi_z) ** 2)
         lq, med, uq, mad = segment_quantiles(
             values, seg0, count, nobj, 1.0 / 2.0, legacy
         )
