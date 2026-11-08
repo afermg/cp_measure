@@ -47,7 +47,7 @@ from cp_measure.core.numba._costes import (
 )
 from cp_measure.primitives._segment_numba import NUMPY_SUM_CHUNK, flatten_pairs_grouped
 from cp_measure.primitives.parallel import map_images
-from cp_measure.primitives.shapes import to_bzyx
+from cp_measure.primitives.shapes import each_volume, is_batch
 
 # The reference's warning text for each undefined Costes status.
 _UNDEFINED_REASONS = {
@@ -120,25 +120,21 @@ def _run(
 
 
 def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **kwargs):
-    """Normalise the triple via ``to_bzyx`` and map each image through ``build``.
+    """Split the triple into per-image ``(Z, Y, X)`` views and map each through ``build``.
 
     ``build(result)`` turns the kernel tuple (or ``None`` for an empty image) into
     one image's feature dict. ``unwrap`` then collapses a single image to that
     dict, or returns the list for a batch — matching the numba intensity backend.
     """
-    # to_bzyx promotes 2D and singleton-Z inputs to the same shape and does not
-    # validate spatial extents. Check the original triple before unchecked JIT
-    # indexing; never broadcast masks or silently discard intensity planes.
     precision = kwargs.get("precision", "input")
     validate_precision(precision)
-    shape = numpy.asarray(masks).shape
-    if numpy.asarray(pixels_1).shape != shape or numpy.asarray(pixels_2).shape != shape:
-        raise ValueError("colocalization images and masks must have the same shape")
     # Preserve historical scalar division in input mode, including NumPy 2's
     # float32 rounding. Only the opt-in mode widens before dividing.
     frac = (float(threshold) if precision == "float64" else threshold) / 100.0
-    masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
-    _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
+    # Views, no batch copy. each_volume checks that each image's labels and pixels
+    # match in shape and rank before unchecked JIT indexing (no mask broadcasting).
+    first, unwrap = each_volume(masks, pixels_1)
+    second, _ = each_volume(masks, pixels_2)
 
     def compute(item):
         # Kernel work only (the GIL is released): map_images runs batches on threads.
@@ -163,7 +159,7 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
             result = ref(p1, p2, m, **kwargs)
         return result
 
-    items = list(zip(masks_list, pixels_1_list, pixels_2_list))
+    items = [(m, p1, p2) for (m, p1, _), (_, p2, _) in zip(first, second)]
     return unwrap([finish(staged) for staged in map_images(compute, items)])
 
 
@@ -289,30 +285,34 @@ def get_correlation_costes(
     preserve threshold inclusion. Undefined/near-constant searches use the
     reference implementation for diagnostics. See the NumPy API for details.
     """
-    # Share acquisition-scale preparation; _costes_pair canonicalizes each object.
-    first, second, scale = reference._prepare_costes_inputs(
-        pixels_1, pixels_2, scale_max
-    )
-    labels = numpy.asarray(masks)
-    if labels.shape != first.shape or not numpy.issubdtype(labels.dtype, numpy.integer):
-        raise ValueError("Costes labels must be an integer array matching the images")
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
 
     def compute(item):
-        # Kernel work only (the GIL is released): map_images runs batches on threads.
+        # Per-image preparation and kernel work (the kernel releases the GIL):
+        # map_images runs batches on threads, with no whole-batch float64 copy.
         p1, p2, mask = item
-        zyx = (mask, p1, p2) if mask.ndim == 3 else (mask[None], p1[None], p2[None])
+        first, second, scale = reference._prepare_costes_inputs(p1, p2, scale_max)
+        labels = numpy.asarray(mask)
+        if labels.shape != first.shape or not numpy.issubdtype(
+            labels.dtype, numpy.integer
+        ):
+            raise ValueError(
+                "Costes labels must be an integer array matching the images"
+            )
+        zyx = (labels, first, second)
+        if labels.ndim != 3:
+            zyx = (labels[None], first[None], second[None])
         g1, g2, offsets = _grouped(*zyx)
         c1, c2, status = costes_per_object(
             g1, g2, offsets, float(scale), _COSTES_MODES[fast_costes], NUMPY_SUM_CHUNK
         )
         # Keep the grouped pixels only for objects the reference must replay.
         replay = (g1, g2) if (status == REPLAY).any() else (None, None)
-        return *replay, offsets, c1, c2, status
+        return *replay, offsets, c1, c2, status, scale
 
     def finish(staged):
-        g1, g2, offsets, c1, c2, status = staged
+        g1, g2, offsets, c1, c2, status, scale = staged
         # Warnings, errors and replays on the calling thread, in image and object
         # order, as the reference emits them.
         for k in numpy.flatnonzero(status):
@@ -327,20 +327,22 @@ def get_correlation_costes(
                 )
             else:
                 reference._undefined_costes(_UNDEFINED_REASONS[status[k]])
-        c1, c2 = c1.tolist(), c2.tolist()
-        return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
+        return {
+            f"{F_COSTES_FORMAT}_1": c1.tolist(),
+            f"{F_COSTES_FORMAT}_2": c2.tolist(),
+        }
 
-    # Single arrays retain their original rank, including singleton Z. Explicit
-    # batches follow the existing backend helper; no mask repetition is allowed.
-    if not isinstance(masks, (list, tuple)) and labels.ndim < 4:
-        return finish(compute((first, second, labels)))
-    if isinstance(masks, (list, tuple)):
-        if not isinstance(pixels_1, (list, tuple)) or not isinstance(
-            pixels_2, (list, tuple)
-        ):
-            raise ValueError("masks and pixels must both be sequences, or both arrays")
-        labels, first, second = list(labels), list(first), list(second)
-    masks_list, first_list, unwrap = to_bzyx(labels, first)
-    _, second_list, _ = to_bzyx(labels, second)
-    items = list(zip(first_list, second_list, masks_list))
-    return unwrap([finish(staged) for staged in map_images(compute, items)])
+    # Single arrays keep their original rank, including singleton Z.
+    if not is_batch(masks):
+        return finish(compute((pixels_1, pixels_2, masks)))
+    first, _ = each_volume(masks, pixels_1)
+    second, _ = each_volume(masks, pixels_2)
+    items = [
+        (
+            p1 if ndim == 3 else p1[0],
+            p2 if ndim == 3 else p2[0],
+            m if ndim == 3 else m[0],
+        )
+        for (m, p1, ndim), (_, p2, _) in zip(first, second)
+    ]
+    return [finish(staged) for staged in map_images(compute, items)]
