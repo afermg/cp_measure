@@ -105,18 +105,10 @@ def _run(
     n = offsets.size - 1
     if n == 0:
         return None
-    means = None
-    if compute_pearson:
-        # NumPy's pairwise mean reduction matters for constant and high-offset
-        # signals: a serial JIT sum can turn an undefined correlation finite.
-        # Reuse exactly that reduction, without changing the other fused metrics.
-        means = numpy.zeros((2, n))
-        for k in range(n):
-            lo, hi = offsets[k : k + 2]
-            if hi > lo:
-                means[0, k] = numpy.mean(g1[lo:hi])
-                means[1, k] = numpy.mean(g2[lo:hi])
-    return coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means)
+    # Pearson's means use NumPy's pairwise summation (see coloc_per_object).
+    return coloc_per_object(
+        g1, g2, offsets, n, thr_frac, compute_rwc, compute_pearson, NUMPY_SUM_CHUNK
+    )
 
 
 def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **kwargs):

@@ -19,6 +19,8 @@ never the kernel.
 import numpy as np
 from numba import njit
 
+from cp_measure.primitives._segment_numba import numpy_sum
+
 
 @njit(cache=True, nogil=True)
 def _dense_rank(vals):
@@ -41,7 +43,9 @@ def _dense_rank(vals):
 
 
 @njit(cache=True, nogil=True, error_model="numpy")
-def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
+def coloc_per_object(
+    g1, g2, offsets, n, thr_frac, compute_rwc, numpy_means=False, chunk=0
+):
     """Per-object colocalization features over grouped value blocks.
 
     ``g1``/``g2`` hold both channels' intensities with object ``k`` in
@@ -51,8 +55,10 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
     it. Returns nine length-``n`` arrays:
     ``(corr, slope, m1, m2, overlap, k1, k2, rwc1, rwc2)``.
 
-    The public Pearson wrapper supplies NumPy-reduced ``means`` (shape ``(2, n)``)
-    to preserve its pairwise summation semantics, especially for constant signals.
+    With ``numpy_means`` (the public Pearson wrapper) the object means use NumPy's
+    pairwise summation (``chunk`` is ``NUMPY_SUM_CHUNK``), so they equal
+    ``numpy.mean`` exactly; a serial sum can turn an undefined correlation of a
+    constant or high-offset signal finite.
 
     Threshold-derived features default to ``0.0`` for an object with no pixel
     above the combined threshold (matching the reference's initialised values);
@@ -90,8 +96,12 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
                 mx1 = v1
             if np.isnan(v2) or v2 > mx2:
                 mx2 = v2
-        mean1 = s1 / cnt if means is None else means[0, k]
-        mean2 = s2 / cnt if means is None else means[1, k]
+        if numpy_means:
+            mean1 = numpy_sum(g1[lo:hi], chunk) / cnt
+            mean2 = numpy_sum(g2[lo:hi], chunk) / cnt
+        else:
+            mean1 = s1 / cnt
+            mean2 = s2 / cnt
 
         tff = thr_frac * mx1
         tss = thr_frac * mx2
