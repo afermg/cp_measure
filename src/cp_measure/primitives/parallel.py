@@ -21,21 +21,35 @@ T = TypeVar("T")
 R = TypeVar("R")
 
 
+def _usable_cpus() -> int:
+    """CPUs this process may use, as scirpy's ``_get_usable_cpus``: the affinity set
+    (which Slurm and cgroups restrict, unlike ``os.cpu_count()``), else the machine's
+    count (macOS has no ``sched_getaffinity``), capped by ``NUMBA_NUM_THREADS``."""
+    from numba import config
+
+    try:
+        usable = len(os.sched_getaffinity(0))
+    except AttributeError:
+        usable = os.cpu_count() or 1
+    return min(usable, config.NUMBA_NUM_THREADS)
+
+
 def map_images(
     func: Callable[[T], R], items: Sequence[T], *, max_workers: int | None = None
 ) -> list[R]:
     """Return ``[func(x) for x in items]``, parallel across a thread pool for
     batches of two or more, serial for zero or one item.
 
-    Order matches ``items``. ``max_workers`` defaults to ``os.cpu_count()`` and is
+    Order matches ``items``. ``max_workers`` defaults to the CPUs this process may
+    use (see :func:`_usable_cpus`) and is
     capped at ``len(items)`` so a batch never spawns more threads than images (an
     explicit ``0`` is passed through and rejected by ``ThreadPoolExecutor``).
     Parallelism requires ``func`` to release the GIL during its heavy work.
     """
     if len(items) <= 1:
         return [func(x) for x in items]
-    workers = max_workers if max_workers is not None else os.cpu_count()
-    if workers:  # os.cpu_count() may return None → defer to the pool's own default
+    workers = max_workers if max_workers is not None else _usable_cpus()
+    if workers:
         workers = min(workers, len(items))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         return list(executor.map(func, items))
