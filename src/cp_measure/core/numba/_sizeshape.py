@@ -1,18 +1,17 @@
 """Numba 2D size/shape geometry, isolated from PR #78's integration-stack base.
 
-Accelerates convex hull construction and label-aware perimeter/topology reductions.
+Accelerates convex hull construction and rasterization, label-aware perimeter/topology
+reductions, and a per-object bbox pass (bbox, centroid, filled area, Euclidean distance
+radii) that replaces regionprops and scipy's distance transform with bit-identical results.
 Moments and their derived features retain the NumPy backend's batched products:
 changing their reduction order can flip orientation at the +/-90 degree boundary.
-The skimage hull rasterizer and scipy Euclidean distance transform remain on host.
 """
 
 from typing import NamedTuple
 
 import numba
 import numpy
-import scipy.ndimage
 from numpy.typing import NDArray
-from skimage.measure import grid_points_in_poly, regionprops_table
 
 from cp_measure.core import measureobjectsizeshape as _ss
 from cp_measure.primitives._moments import (
@@ -46,11 +45,11 @@ def _foreground_prep(labels: NDArray[numpy.integer]) -> _Prep:
 # --- Convex hull (area_convex / solidity) --------------------------------------------------
 # skimage's `area_convex` is the pixel count inside the convex hull of each object's pixels,
 # where each pixel contributes its 4 edge-midpoints (±0.5 "diamond" offsets) and the count comes
-# from `grid_points_in_poly`. We replace only the slow per-region hull *construction* (scipy
-# QHull) with a fused numba monotone-chain over each object's BOUNDARY pixels (hull(boundary) ==
-# hull(object); ~6-17x fewer points), and keep skimage's exact `grid_points_in_poly` raster — so
-# the area retains skimage's pixel-inclusion convention. Coordinates are scaled x2 so offsets are
-# integers and the hull is exact.
+# from `grid_points_in_poly`. We replace the per-region hull construction (scipy QHull) with a
+# fused numba monotone-chain over each object's BOUNDARY pixels (hull(boundary) ==
+# hull(object); ~6-17x fewer points), and the raster with an exact integer scanline count that
+# keeps skimage's pixel-inclusion convention (inside, vertex or edge). Coordinates are scaled x2
+# so offsets are integers and the hull is exact.
 
 
 def _boundary_mask(masks: NDArray[numpy.integer]) -> NDArray[numpy.bool_]:
@@ -182,25 +181,79 @@ def convex_area_2d(
     px = numpy.concatenate([r2 - 1, r2 + 1, r2, r2])
     py = numpy.concatenate([c2, c2, c2 - 1, c2 + 1])
     obj4 = numpy.concatenate([obj, obj, obj, obj])
-    order = numpy.argsort(obj4, kind="stable")
-    px, py, obj4 = px[order], py[order], obj4[order]
-    grp = numpy.zeros(n + 1, numpy.int64)
-    numpy.add.at(grp, obj4 + 1, 1)
-    numpy.cumsum(grp, out=grp)
+    order, grp = _group_by_object(obj4, n)
+    px, py = px[order], py[order]
     stride = 4 * max(labels.shape) + 10
     hx, hy, hoff = _hull_kernel(px, py, grp, n, stride)
-
     counts = numpy.diff(offsets)  # full per-object pixel counts (for degenerate hulls)
+    return _hull_areas(hx, hy, hoff, rmin, cmin, rmax, cmax, counts)
+
+
+@numba.njit(cache=True)
+def _group_by_object(obj, n):
+    """Stable counting sort by object: the order of ``argsort(obj, kind="stable")``,
+    plus the CSR offsets of each object's group."""
+    grp = numpy.zeros(n + 1, numpy.int64)
+    for o in obj:
+        grp[o + 1] += 1
+    for o in range(n):
+        grp[o + 1] += grp[o]
+    cursor = grp[:-1].copy()
+    order = numpy.empty(obj.size, numpy.int64)
+    for i in range(obj.size):
+        order[cursor[obj[i]]] = i
+        cursor[obj[i]] += 1
+    return order, grp
+
+
+@numba.njit(cache=True)
+def _hull_areas(hx, hy, hoff, rmin, cmin, rmax, cmax, counts):
+    """Per-object grid-point count of the closed hull polygon, i.e. skimage's
+    ``grid_points_in_poly(..., binarize=False) >= 1`` (inside, vertex or edge).
+
+    Hull vertices lie on the half-pixel grid, so doubling them gives integers and each
+    scanline's crossings are exact rationals: per row, the closed polygon spans
+    ``[min ceil(crossing), max floor(crossing)]`` over the edges that reach the row.
+    """
+    n = hoff.size - 1
     area = numpy.empty(n)
     for o in range(n):
-        verts = numpy.column_stack(
-            [hx[hoff[o] : hoff[o + 1]] - rmin[o], hy[hoff[o] : hoff[o + 1]] - cmin[o]]
-        )
-        if len(verts) < 3:
+        start, end = hoff[o], hoff[o + 1]
+        nv = end - start
+        if nv < 3:
             area[o] = counts[o]  # point / line: hull is the pixels themselves
-        else:
-            shape = (int(rmax[o] - rmin[o] + 1), int(cmax[o] - cmin[o] + 1))
-            area[o] = (grid_points_in_poly(shape, verts, binarize=False) >= 1).sum()
+            continue
+        height = rmax[o] - rmin[o] + 1
+        width = cmax[o] - cmin[o] + 1
+        total = 0
+        for r in range(height):
+            y = 2 * r
+            lo = width
+            hi = -1
+            for e in range(nv):
+                f = start + (e + 1) % nv
+                r1 = int(2 * (hx[start + e] - rmin[o]))
+                c1 = int(2 * (hy[start + e] - cmin[o]))
+                r2 = int(2 * (hx[f] - rmin[o]))
+                c2 = int(2 * (hy[f] - cmin[o]))
+                if (y < r1 and y < r2) or (y > r1 and y > r2):
+                    continue
+                if r1 == r2:  # horizontal edge on this row: both endpoints
+                    a, b = min(c1, c2), max(c1, c2)
+                    col_lo, col_hi = -((-a) // 2), b // 2
+                else:  # doubled crossing column num / den, den > 0
+                    den = r2 - r1
+                    num = c1 * den + (y - r1) * (c2 - c1)
+                    if den < 0:
+                        den, num = -den, -num
+                    col_lo, col_hi = -((-num) // (2 * den)), num // (2 * den)
+                lo = min(lo, col_lo)
+                hi = max(hi, col_hi)
+            lo = max(lo, 0)
+            hi = min(hi, width - 1)
+            if hi >= lo:
+                total += hi - lo + 1
+        area[o] = total
     return area
 
 
@@ -396,23 +449,169 @@ def crofton_euler_2d(
     return hist @ _CROFTON_COEFS_4, hist @ _EULER_COEFS_8
 
 
-# --- Full get_sizeshape wrapper -------------------------------------------------------------
-# Assembles the complete sizeshape feature dict, sourcing QHull / per-region geometry
-# pieces from the numba kernels above and keeping only cheap, moment-free regionprops props
-# (area / bbox / centroid / extent / area_filled / image) plus the scipy Euclidean EDT radius
-# loop. With option B (axes/eccentricity/orientation derived from the central moments),
-# regionprops computes no moments at all.
+# --- Per-object bbox pass: bbox, centroid, filled area, EDT radii --------------------------
+# Replaces regionprops_table's area / bbox / centroid / area_filled and the per-object scipy
+# EDT radius loop with one pass over each object's bounding box. Every output is bit-identical:
+# EDT distances are sqrt of exact integer squared distances (as scipy's), the centroid is the
+# serial coordinate sum numpy uses for an axis-0 mean, and holes are filled with skimage's full
+# 3x3 structure. Only the mean radius stays a numpy mean (pairwise summation).
 
-# moment-free regionprops props (verified 0 ms einsum); `image` feeds the EDT radius loop.
-_CHEAP_PROPS = [
-    "image",
-    "area",
-    "area_bbox",
-    "equivalent_diameter_area",
-    "bbox",
-    "centroid",
-    "extent",
-]
+
+@numba.njit(cache=True)
+def _squared_edt_row(g, mask_row, width, v, t, out_row):
+    """Meijster's second phase on one row: squared distance to the nearest background pixel,
+    given ``g`` (per-column vertical distances), written to ``out_row`` where ``mask_row``."""
+    q = 0
+    v[0] = 0
+    t[0] = 0
+    for u in range(1, width):
+        gu = g[u] * g[u]
+        while q >= 0:
+            s = v[q]
+            if (t[q] - s) * (t[q] - s) + g[s] * g[s] <= (t[q] - u) * (t[q] - u) + gu:
+                break
+            q -= 1
+        if q < 0:
+            q = 0
+            v[0] = u
+        else:
+            s = v[q]
+            sep = (u * u - s * s + gu - g[s] * g[s]) // (2 * (u - s)) + 1
+            if sep < width:
+                q += 1
+                v[q] = u
+                t[q] = sep
+    for u in range(width - 1, -1, -1):
+        s = v[q]
+        if mask_row[u]:
+            out_row[u] = (u - s) * (u - s) + g[s] * g[s]
+        if u == t[q]:
+            q -= 1
+
+
+@numba.njit(cache=True)
+def _object_geometry(labels, lut, n):
+    """Per object (ascending label): bbox, pixel count, centroid, filled area, max and median
+    EDT radius, plus the inside EDT distances in raster order as CSR ``(offsets, dist)``.
+
+    The EDT runs on the object's bbox padded by one background pixel, as the numpy backend's
+    ``distance_transform_edt(numpy.pad(image, 1))``; filled area floods the unpadded bbox
+    background from its border with 8-connectivity (skimage's ``image_filled``).
+    """
+    height, width = labels.shape
+    r0 = numpy.full(n, height, numpy.int64)
+    c0 = numpy.full(n, width, numpy.int64)
+    r1 = numpy.zeros(n, numpy.int64)
+    c1 = numpy.zeros(n, numpy.int64)
+    count = numpy.zeros(n, numpy.int64)
+    for r in range(height):
+        for c in range(width):
+            if labels[r, c] > 0:
+                o = lut[labels[r, c]]
+                count[o] += 1
+                r0[o] = min(r0[o], r)
+                c0[o] = min(c0[o], c)
+                r1[o] = max(r1[o], r + 1)
+                c1[o] = max(c1[o], c + 1)
+    offsets = numpy.zeros(n + 1, numpy.int64)
+    max_h = max_w = 1
+    for o in range(n):
+        offsets[o + 1] = offsets[o] + count[o]
+        max_h = max(max_h, r1[o] - r0[o] + 2)
+        max_w = max(max_w, c1[o] - c0[o] + 2)
+    dist = numpy.empty(offsets[n])
+    filled = numpy.zeros(n, numpy.int64)
+    max_radius = numpy.zeros(n)
+    median_radius = numpy.zeros(n)
+    center_y = numpy.zeros(n)
+    center_x = numpy.zeros(n)
+    mask_buf = numpy.zeros((max_h, max_w), numpy.bool_)
+    g_buf = numpy.empty((max_h, max_w), numpy.int64)
+    d2_row = numpy.empty(max_w, numpy.int64)
+    seen_buf = numpy.zeros((max_h, max_w), numpy.bool_)
+    stack = numpy.empty(max_h * max_w, numpy.int64)
+    v = numpy.empty(max_w, numpy.int64)
+    t = numpy.empty(max_w, numpy.int64)
+    for o in range(n):
+        h = r1[o] - r0[o] + 2  # padded by one pixel on each side
+        w = c1[o] - c0[o] + 2
+        mask = mask_buf[:h, :w]
+        mask[:, :] = False
+        for i in range(1, h - 1):
+            for j in range(1, w - 1):
+                lab = labels[r0[o] + i - 1, c0[o] + j - 1]
+                mask[i, j] = lab > 0 and lut[lab] == o
+        # Meijster phase 1: vertical distance to background per column (padding bounds it)
+        g = g_buf[:h, :w]
+        for j in range(w):
+            g[0, j] = 0
+            for i in range(1, h):
+                g[i, j] = g[i - 1, j] + 1 if mask[i, j] else 0
+            for i in range(h - 2, -1, -1):
+                if g[i + 1, j] < g[i, j]:
+                    g[i, j] = g[i + 1, j] + 1
+        k = offsets[o]
+        sum_y = 0.0
+        sum_x = 0.0
+        for i in range(h):
+            _squared_edt_row(g[i], mask[i], w, v, t, d2_row)
+            for j in range(w):
+                if mask[i, j]:
+                    dist[k] = numpy.sqrt(numpy.float64(d2_row[j]))
+                    sum_y += r0[o] + i - 1
+                    sum_x += c0[o] + j - 1
+                    k += 1
+        center_y[o] = sum_y / count[o]
+        center_x[o] = sum_x / count[o]
+        inside = dist[offsets[o] : offsets[o + 1]]
+        max_radius[o] = inside.max()
+        ordered = numpy.sort(inside)
+        mid = count[o] // 2
+        median_radius[o] = (
+            ordered[mid] if count[o] % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
+        )
+        # holes: background of the unpadded bbox not 8-connected to its border
+        bh, bw = h - 2, w - 2
+        seen = seen_buf[:bh, :bw]
+        seen[:, :] = False
+        top = 0
+        for i in range(bh):
+            for j in range(bw):
+                border = i == 0 or j == 0 or i == bh - 1 or j == bw - 1
+                if border and not mask[i + 1, j + 1]:
+                    seen[i, j] = True
+                    stack[top] = i * bw + j
+                    top += 1
+        reached = top
+        while top > 0:
+            top -= 1
+            i, j = stack[top] // bw, stack[top] % bw
+            for a in range(max(i - 1, 0), min(i + 2, bh)):
+                for b in range(max(j - 1, 0), min(j + 2, bw)):
+                    if not seen[a, b] and not mask[a + 1, b + 1]:
+                        seen[a, b] = True
+                        stack[top] = a * bw + b
+                        top += 1
+                        reached += 1
+        filled[o] = bh * bw - reached
+    bbox = (r0, c0, r1, c1)
+    return (
+        bbox,
+        count,
+        center_y,
+        center_x,
+        filled,
+        max_radius,
+        median_radius,
+        offsets,
+        dist,
+    )
+
+
+# --- Full get_sizeshape wrapper -------------------------------------------------------------
+# Assembles the complete sizeshape feature dict from the numba kernels above. With option B
+# (axes/eccentricity/orientation derived from the central moments), no moments go through
+# regionprops.
 
 
 def _sizeshape_2d(
@@ -421,11 +620,45 @@ def _sizeshape_2d(
     calculate_advanced: bool,
     new_features: bool,
 ) -> dict[str, NDArray]:
-    props_list = _CHEAP_PROPS + (["area_filled"] if new_features else [])
-    props = regionprops_table(labels, pixels, properties=props_list)
-    area = props["area"]
-
     prep = _foreground_prep(labels)
+    # The pixels are unused, but the NumPy backend's regionprops validates them (only when
+    # an object exists); keep that contract and message.
+    if (
+        prep.n > 0
+        and pixels is not None
+        and not (
+            numpy.shape(pixels)[: labels.ndim] == labels.shape
+            and numpy.ndim(pixels) in (labels.ndim, labels.ndim + 1)
+        )
+    ):
+        raise ValueError(
+            "Label and intensity image shapes must match, except for channel (last) axis."
+        )
+    (
+        (min_y, min_x, max_y, max_x),
+        count,
+        center_y,
+        center_x,
+        filled,
+        max_radius,
+        median_radius,
+        dist_offsets,
+        dist,
+    ) = _object_geometry(
+        # native-endian, contiguous: one compiled signature, safe for e.g. ">i4" input
+        numpy.ascontiguousarray(labels, dtype=numpy.int64),
+        prep.lut,
+        prep.n,
+    )
+    # Same scalar expressions as skimage's regionprops (pixel area 1.0).
+    area = count * 1.0
+    area_bbox = ((max_y - min_y) * (max_x - min_x)) * 1.0
+    equivalent_diameter = numpy.array([(2 * 2 * a / numpy.pi) ** (1 / 2) for a in area])
+    # numpy's pairwise-summed mean, as the numpy backend's ``inside.mean()``
+    mean_radius = numpy.array(
+        [dist[a:b].mean() for a, b in zip(dist_offsets[:-1], dist_offsets[1:])]
+    )
+
     raw, central, normalized, hu = spatial_moments_2d(labels)
     area_convex = convex_area_2d(labels, prep)
     perimeter = perimeter_2d(labels, prep)
@@ -440,36 +673,24 @@ def _sizeshape_2d(
     compactness = perimeter**2 / denom
     solidity = area / area_convex
 
-    nobjects = len(props["image"])
-    max_radius = numpy.zeros(nobjects)
-    mean_radius = numpy.zeros(nobjects)
-    median_radius = numpy.zeros(nobjects)
-    for index, mini_image in enumerate(props["image"]):
-        mini_image = numpy.pad(mini_image, 1)
-        distances = scipy.ndimage.distance_transform_edt(mini_image)
-        inside = distances[mini_image]
-        max_radius[index] = inside.max()
-        mean_radius[index] = inside.mean()
-        median_radius[index] = numpy.median(inside)
-
     results = {
         _ss.F_AREA: area,
-        _ss.F_BBOX_AREA: props["area_bbox"],
+        _ss.F_BBOX_AREA: area_bbox,
         _ss.F_CONVEX_AREA: area_convex,
-        _ss.F_EQUIVALENT_DIAMETER: props["equivalent_diameter_area"],
+        _ss.F_EQUIVALENT_DIAMETER: equivalent_diameter,
         _ss.F_PERIMETER: perimeter,
         _ss.F_MAJOR_AXIS_LENGTH: axis_major,
         _ss.F_MINOR_AXIS_LENGTH: axis_minor,
         _ss.F_ECCENTRICITY: eccentricity,
         _ss.F_ORIENTATION: orientation * (180 / numpy.pi),
-        _ss.F_CENTER_X: props["centroid-1"],
-        _ss.F_CENTER_Y: props["centroid-0"],
-        _ss.F_MIN_X: props["bbox-1"],
-        _ss.F_MAX_X: props["bbox-3"],
-        _ss.F_MIN_Y: props["bbox-0"],
-        _ss.F_MAX_Y: props["bbox-2"],
+        _ss.F_CENTER_X: center_x,
+        _ss.F_CENTER_Y: center_y,
+        _ss.F_MIN_X: min_x,
+        _ss.F_MAX_X: max_x,
+        _ss.F_MIN_Y: min_y,
+        _ss.F_MAX_Y: max_y,
         _ss.F_FORM_FACTOR: formfactor,
-        _ss.F_EXTENT: props["extent"],
+        _ss.F_EXTENT: area / area_bbox,
         _ss.F_SOLIDITY: solidity,
         _ss.F_COMPACTNESS: compactness,
         _ss.F_EULER_NUMBER: euler,
@@ -478,7 +699,7 @@ def _sizeshape_2d(
         _ss.F_MEDIAN_RADIUS: median_radius,
     }
     if new_features:
-        results |= {_ss.F_FILLED_AREA: props["area_filled"]}
+        results |= {_ss.F_FILLED_AREA: filled * 1.0}
 
     if calculate_advanced:
         results |= moment_feature_dict(raw, central, normalized, hu, inertia)

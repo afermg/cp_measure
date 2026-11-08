@@ -236,7 +236,7 @@ def test_sizeshape_moment_comparison_budget():
 @requires_numba
 @pytest.mark.parametrize("calculate_advanced", [False, True])
 @pytest.mark.parametrize("new_features", [False, True])
-@pytest.mark.parametrize("kind", ["empty", "ring", "degenerate", "irregular"])
+@pytest.mark.parametrize("kind", ["empty", "ring", "degenerate", "irregular", "holes"])
 def test_get_sizeshape_schema_and_numerics(kind, calculate_advanced, new_features):
     from cp_measure.core.measureobjectsizeshape import get_sizeshape as baseline
     from cp_measure.core.numba._sizeshape import get_sizeshape
@@ -250,6 +250,16 @@ def test_get_sizeshape_schema_and_numerics(kind, calculate_advanced, new_feature
         masks[10:20, 15] = 2
     elif kind == "irregular":
         masks = numpy.random.default_rng(78).integers(0, 4, (40, 40), dtype=numpy.int32)
+    elif kind == "holes":
+        # FilledArea: a 1-px wall whose hole reaches the outside only diagonally (not
+        # filled: skimage fills with 8-connectivity), and a hole holding another object.
+        masks[:] = 0
+        masks[2:12, 2:12] = 1
+        masks[3:11, 3:11] = 0
+        masks[2, 2] = 0
+        masks[20:34, 20:34] = 2
+        masks[23:31, 23:31] = 0
+        masks[25:29, 25:29] = 3
     pixels = numpy.random.default_rng(0).random(masks.shape)
     before, pixels_before = masks.copy(), pixels.copy()
     kwargs = dict(calculate_advanced=calculate_advanced, new_features=new_features)
