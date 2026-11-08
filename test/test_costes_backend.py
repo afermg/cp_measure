@@ -429,3 +429,18 @@ def test_threaded_batch_matches_per_image_calls(name):
         assert list(item) == list(values)
         for key in values:
             np.testing.assert_array_equal(item[key], values[key])
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_costes_near_constant_float_object_matches_reference(mode):
+    """|mean|/std ~ 1e10: the one-pass search steps must leave every decision the
+    exact kernel would replay to the reference, so values and warnings match."""
+    x = np.array([0.5001220702273792, 0.5001220702273793, 0.5001220702935895,
+                  0.5001220703935095, 0.5001220703053191, 0.5001220702452209,
+                  0.5001220703047751, 0.5001220702836826, 0.500122070423178,
+                  0.5001220703200201])  # fmt: skip
+    y = np.array([0.500122070337724, 0.5001220702661621, 0.5001220702523903,
+                  0.5001220703152156, 0.5001220702994836, 0.5001220703285519,
+                  0.5001220703045545, 0.5001220703443997, 0.5001220703058452,
+                  0.5001220703133079])  # fmt: skip
+    parity(x[None], y[None], np.ones((1, 10), int), scale_max=65535, fast_costes=mode)

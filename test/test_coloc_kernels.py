@@ -88,19 +88,33 @@ def test_fused_kernel_undefined_and_missing_slots():
 @pytest.mark.parametrize(
     "n", [1, 2, 7, 8, 9, 127, 128, 129, 1000, 8191, 8192, 8193, 16385, 100_003]
 )
-def test_numpy_sum_and_var_match_numpy_bitwise(n):
+@pytest.mark.parametrize("bufsize", [None, 4096])
+def test_numpy_sum_and_var_match_numpy_bitwise(n, bufsize):
     """The JIT ports reproduce NumPy's float64 sum, mean and ddof=1 variance exactly,
-    including the pre-2.3 chunking of arrays longer than 8192 elements."""
+    including the pre-2.3 chunking by the current buffer size and signed zeros."""
+    previous = np.getbufsize()
+    if bufsize:
+        np.setbufsize(bufsize)
+    try:
+        _check_numpy_sum_and_var(n)
+    finally:
+        np.setbufsize(previous)
+
+
+def _check_numpy_sum_and_var(n):
     from cp_measure.primitives._segment_numba import (
-        NUMPY_SUM_CHUNK,
         numpy_sum,
+        numpy_sum_chunk,
         numpy_var,
     )
 
+    zeros = np.full(n, -0.0)
+    assert np.signbit(numpy_sum(zeros, numpy_sum_chunk())) == np.signbit(np.sum(zeros))
     rng = np.random.default_rng(n)
     for scale, offset in [(1.0, 0.0), (1e-3, 0.5), (1e3, -7.0)]:
         values = rng.random(n) * scale + offset
-        assert numpy_sum(values, NUMPY_SUM_CHUNK) == np.sum(values)
-        assert numpy_sum(values, NUMPY_SUM_CHUNK) / n == np.mean(values)
+        chunk = numpy_sum_chunk()
+        assert numpy_sum(values, chunk) == np.sum(values)
+        assert numpy_sum(values, chunk) / n == np.mean(values)
         if n > 1:
-            assert numpy_var(values, NUMPY_SUM_CHUNK) == np.var(values, ddof=1)
+            assert numpy_var(values, chunk) == np.var(values, ddof=1)

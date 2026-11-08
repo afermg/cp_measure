@@ -5,7 +5,7 @@ primitives. They loop over the flat ``(values, seg0, coords)`` arrays that
 :func:`flatten_numba` builds — no image shape, no batch axis — so one kernel set
 covers 2D, 3D, and (future) batched inputs unchanged.
 
-All kernels are ``@njit(cache=True)`` and serial: no ``prange``/``nogil``.
+All kernels are ``@njit(cache=True)`` and serial: no ``prange``.
 Parallelism is the job of the (future) batch layer over images, not the kernel.
 """
 
@@ -234,6 +234,17 @@ def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
 
 
 @njit(cache=True, nogil=True)
+def label_counts(masks, n):
+    """Pixels of each label ``1..n`` in a C-contiguous label image; other values
+    (background, negatives) are skipped. One pass, no full-image ``bincount``."""
+    counts = np.zeros(n, np.int64)
+    for v in masks.ravel():
+        if v > 0 and v <= n:
+            counts[v - 1] += 1
+    return counts
+
+
+@njit(cache=True, nogil=True)
 def flatten_pairs_grouped(masks, pix1, pix2, offsets):
     """Flatten two co-registered ``(Z, Y, X)`` channels to per-object blocks.
 
@@ -269,9 +280,17 @@ def flatten_pairs_grouped(masks, pix1, pix2, offsets):
 
 # NumPy reduces a contiguous float64 array with a pairwise sum (``pairwise_sum`` in
 # numpy/_core/src/umath/loops_utils.h.src). Before NumPy 2.3 the reduction ran over
-# 8192-element buffer chunks, added left to right. Callers pass this value into the
-# kernels: a module global would be frozen into numba's on-disk cache across upgrades.
-NUMPY_SUM_CHUNK = 8192 if np.lib.NumpyVersion(np.__version__) < "2.3.0" else 0
+# chunks of its buffer size (``np.getbufsize()``, 8192 by default), added left to
+# right. Note: numba's on-disk cache checks a cached function only against its own
+# file, so a kernel in another file that calls these keeps a stale copy after an edit
+# here; clear the numba caches (``__pycache__/*.nb[ic]``) after editing this file.
+_NUMPY_CHUNKS = tuple(int(p) for p in np.__version__.split(".")[:2]) < (2, 3)
+
+
+def numpy_sum_chunk() -> int:
+    """The ``chunk`` argument of :func:`numpy_sum`: NumPy's current buffer size
+    before 2.3, else 0. Read at call time, as ``np.setbufsize`` changes it."""
+    return np.getbufsize() if _NUMPY_CHUNKS else 0
 
 
 @njit(cache=True, nogil=True)
@@ -283,13 +302,15 @@ def _block_sum(a, lo, n):
         for i in range(lo, lo + n):
             res += a[i]
         return res
-    r = a[lo : lo + 8].copy()
+    r0, r1, r2, r3 = a[lo], a[lo + 1], a[lo + 2], a[lo + 3]
+    r4, r5, r6, r7 = a[lo + 4], a[lo + 5], a[lo + 6], a[lo + 7]
     i = 8
     while i < n - (n % 8):
-        for j in range(8):
-            r[j] += a[lo + i + j]
+        j = lo + i
+        r0, r1, r2, r3 = r0 + a[j], r1 + a[j + 1], r2 + a[j + 2], r3 + a[j + 3]
+        r4, r5, r6, r7 = r4 + a[j + 4], r5 + a[j + 5], r6 + a[j + 6], r7 + a[j + 7]
         i += 8
-    res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]))
+    res = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))
     while i < n:
         res += a[lo + i]
         i += 1
@@ -341,13 +362,13 @@ def _pairwise_sum(a, lo, n):
 @njit(cache=True, nogil=True)
 def numpy_sum(a, chunk):
     """``np.sum(a)`` of a contiguous 1D float64 array, bit for bit (``chunk`` is
-    :data:`NUMPY_SUM_CHUNK`)."""
+    :func:`numpy_sum_chunk`). NumPy starts the reduction from ``0.0``, which turns
+    a ``-0.0`` result into ``0.0``."""
     n = a.size
-    if chunk == 0:
-        return _pairwise_sum(a, 0, n)
+    step = chunk if chunk > 0 else max(n, 1)  # NumPy >= 2.3: one chunk
     res = 0.0
-    for lo in range(0, n, chunk):
-        res += _pairwise_sum(a, lo, min(chunk, n - lo))
+    for lo in range(0, n, step):
+        res += _pairwise_sum(a, lo, min(step, n - lo))
     return res
 
 

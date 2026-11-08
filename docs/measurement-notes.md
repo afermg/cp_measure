@@ -161,17 +161,20 @@ maximum; same-dtype unsigned integers infer their storage maximum. Integer
 normalization uses the shared NumPy preparation, not the old dtype-derived
 `scale=1` float shortcut. All three search modes are supported.
 
-NumPy regression and coefficient reductions surround the compiled threshold
-search. This preserves threshold inclusion: even last-bit changes in the fitted
-line can change the result substantially. Constant/nonfinite or insufficient
-signals retain NaN results and standard `RuntimeWarning` diagnostics. Missing
-raw Costes labels likewise yield NaN and warnings, unlike the zero-valued slots
-of the other colocalization metrics. Undefined searches are replayed per object
-by the reference to preserve precise diagnostics. Near-constant subsets and
-correlations within a reduction-error bound of a search decision also use this
-compatibility path; no correlation is rounded or search cutoff moved.
+One compiled pass measures every object: canonicalization, validation, the
+regression line, the threshold search and the coefficients. The regression and
+coefficient sums reproduce NumPy's pairwise summation exactly (including the
+buffer-sized chunks NumPy used before 2.3), because even last-bit changes in the
+fitted line can change which pixels count and so the result. Constant/nonfinite
+or insufficient signals retain NaN results and standard `RuntimeWarning`
+diagnostics, emitted by the wrapper with the reference's messages. Missing raw
+Costes labels likewise yield NaN and warnings, unlike the zero-valued slots of
+the other colocalization metrics. Near-constant subsets, correlations within a
+reduction-error bound of a search decision, and ill-conditioned regressions are
+replayed per object by the reference to preserve its diagnostics; no
+correlation is rounded or search cutoff moved.
 
-Both backends call the same per-object normalization canonicalization before
+Both backends apply the same per-object normalization canonicalization before
 validation, regression and threshold search. Exact reciprocal-multiply
 acquisition-grid encodings therefore follow the same division encoding in the
 NumPy and Numba paths; arbitrary off-grid floats are unchanged. This is the
