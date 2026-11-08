@@ -34,6 +34,7 @@ from cp_measure.core.measureobjectintensitydistribution import (
     get_radial_distribution as _numpy_radial_distribution,
 )
 from cp_measure.core.numba._radial import (
+    radial_all,
     radial_object,
 )
 from cp_measure.core.numba._zernike import (
@@ -145,32 +146,24 @@ def _radial_distribution_2d(
             bin_count=bin_count,
             maximum_radius=maximum_radius,
         )
-    slices = scipy.ndimage.find_objects(labels)
-    nb = bin_count + 1
-    frac_at_d = numpy.zeros((n, nb))
-    mean_frac = numpy.zeros((n, nb))
-    wedge_sums = numpy.zeros((n, nb, 8))
-    wedge_counts = numpy.zeros((n, nb, 8))
-    for label in range(1, n + 1):
-        sl = slices[label - 1]
-        if sl is None:
-            continue
-        # Crop to the object's bbox grown by 1px and clipped to the image: the
-        # margin gives the EDT its background edge, and the clip keeps the image
-        # border from counting as one, as in the whole-image reference.
-        sl = tuple(
-            slice(max(s.start - 1, 0), min(s.stop + 1, dim))
-            for s, dim in zip(sl, labels.shape)
-        )
-        m = numpy.ascontiguousarray(labels[sl] == label)
-        pix = numpy.ascontiguousarray(pixels[sl], dtype=numpy.float64)
-        d_to_edge = distance_transform_edt(m)
-        (
-            frac_at_d[label - 1],
-            mean_frac[label - 1],
-            wedge_sums[label - 1],
-            wedge_counts[label - 1],
-        ) = radial_object(m, pix, d_to_edge, scaled, bin_count, radius)
+    frac_at_d, mean_frac, wedge_sums, wedge_counts, fallback = radial_all(
+        numpy.ascontiguousarray(labels), pixels, n, scaled, bin_count, radius
+    )
+    # A crop without background (an object filling its image-clipped box) gets
+    # scipy's distance transform, whose result for that case differs.
+    if fallback.any():
+        slices = scipy.ndimage.find_objects(labels)
+        for k in numpy.flatnonzero(fallback):
+            sl = tuple(
+                slice(max(s.start - 1, 0), min(s.stop + 1, dim))
+                for s, dim in zip(slices[k], labels.shape)
+            )
+            m = numpy.ascontiguousarray(labels[sl] == k + 1)
+            pix = numpy.ascontiguousarray(pixels[sl], dtype=numpy.float64)
+            d_to_edge = distance_transform_edt(m)
+            frac_at_d[k], mean_frac[k], wedge_sums[k], wedge_counts[k] = radial_object(
+                m, pix, d_to_edge, scaled, bin_count, radius
+            )
 
     arrays = (frac_at_d, mean_frac, _radial_cv(wedge_sums, wedge_counts))
     return {
