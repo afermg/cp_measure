@@ -12,6 +12,12 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- Numba Pearson, Manders, overlap/K and RWC accelerate float32 inputs in the
+  default `precision="input"` mode instead of falling back to the NumPy
+  reference (1.3 to 5 times faster). Percentage thresholds keep NumPy's float32
+  rounding, so the same pixels count; sums are float64, so values differ from
+  the NumPy backend's float32 sums by about 1e-7 relative. See the measurement
+  notes.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler

@@ -111,15 +111,26 @@ NumPy. Overlap/K remains available through the direct module API only. RWC ranks
 pixels independently within each object; changing another object's signal does
 not change these ranks.
 
-The accelerated float64 path groups paired pixels once per measurement and uses
-a fused kernel. Pearson retains NumPy's mean reductions, including their behavior
+The accelerated path groups paired pixels once per measurement and uses a fused
+float64 kernel. Pearson retains NumPy's mean reductions, including their behavior
 for constant signals. With `precision="float64"`, percentage-threshold metrics
-promote float16/float32 inputs per image and use the same float64 kernel. With
-`precision="input"`, they keep their existing dtype-based reference fallbacks.
-Pearson's non-float64 inputs and integer or wider-float inputs retain the reference path. Undefined outputs also use
-the reference to preserve warnings and errors (including the existing true
-zero-denominator Overlap/K error). Reference fallbacks are not advertised as
-accelerated.
+promote float16/float32 inputs per image and use the same float64 kernel.
+
+Float32 inputs, including one float32 channel paired with a float64 one, are also
+accelerated with `precision="input"`. A float32 channel's percentage threshold is
+computed with the reference's own expression on float32 maxima, so
+the same pixels pass each threshold as in NumPy. The sums are float64, whereas the
+NumPy reference sums float32 pixels in float32, so values differ by float32 rounding
+(about `1e-7` relative). The float64 sums are the more accurate of the two. On the
+#129 boundary fixture they reproduce CellProfiler's stored Manders value exactly,
+where NumPy's input mode returns it rounded to float32. NumPy's own float32 sums also
+change with the NumPy version for objects above 8192 pixels (NumPy 2.3 dropped the
+8192-element chunking), so input-mode float32 values are not bit-stable across NumPy
+versions in either backend.
+
+Float16, integer and wider-float inputs retain the reference path. Undefined outputs also use the reference to preserve warnings and errors
+(including the existing true zero-denominator Overlap/K error). Reference fallbacks
+are not advertised as accelerated.
 
 All three inputs must have matching spatial ranks and extents. A 2D mask is not
 broadcast over Z, nor is the first intensity plane selected implicitly. Matching

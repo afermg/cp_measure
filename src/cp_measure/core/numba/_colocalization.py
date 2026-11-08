@@ -41,7 +41,16 @@ def _dense_rank(vals):
 
 
 @njit(cache=True, error_model="numpy")
-def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
+def coloc_per_object(
+    g1,
+    g2,
+    offsets,
+    n,
+    thr_frac,
+    compute_rwc,
+    means=None,
+    thresholds=None,
+):
     """Per-object colocalization features over grouped value blocks.
 
     ``g1``/``g2`` hold both channels' intensities with object ``k`` in
@@ -53,6 +62,11 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
 
     The public Pearson wrapper supplies NumPy-reduced ``means`` (shape ``(2, n)``)
     to preserve its pairwise summation semantics, especially for constant signals.
+
+    ``thresholds`` (shape ``(2, n)``), when given, replaces ``thr_frac * max`` with
+    host-computed per-object thresholds. The wrapper uses it for float32 channels in
+    ``precision="input"`` mode, where NumPy rounds the threshold to float32, so the
+    ``>=`` membership is identical to the reference while sums stay float64.
 
     Threshold-derived features default to ``0.0`` for an object with no pixel
     above the combined threshold (matching the reference's initialised values);
@@ -93,8 +107,12 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
         mean1 = s1 / cnt if means is None else means[0, k]
         mean2 = s2 / cnt if means is None else means[1, k]
 
-        tff = thr_frac * mx1
-        tss = thr_frac * mx2
+        if thresholds is None:
+            tff = thr_frac * mx1
+            tss = thr_frac * mx2
+        else:
+            tff = thresholds[0, k]
+            tss = thresholds[1, k]
 
         # Per-pixel RWC weights need the object's dense ranks up front.
         if compute_rwc:

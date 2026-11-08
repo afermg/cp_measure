@@ -36,9 +36,19 @@ from cp_measure.core.numba._costes import _bisection, _linear, _regression_ab
 from cp_measure.primitives._segment_numba import flatten_pairs_grouped
 from cp_measure.primitives.shapes import to_bzyx
 
+# Pixel dtypes the fused kernel reproduces: float64, and float32 (widened exactly; its
+# percentage thresholds keep NumPy's float32 rounding, see coloc_per_object).
+_KERNEL_DTYPES = (numpy.dtype(numpy.float64), numpy.dtype(numpy.float32))
+
 
 def _run(
-    masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc, compute_pearson=False
+    masks_zyx,
+    pixels_1_zyx,
+    pixels_2_zyx,
+    thr_frac,
+    compute_rwc,
+    compute_pearson=False,
+    threshold=None,
 ):
     """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
 
@@ -78,7 +88,42 @@ def _run(
             if hi > lo:
                 means[0, k] = numpy.mean(g1[lo:hi])
                 means[1, k] = numpy.mean(g2[lo:hi])
-    return coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means)
+    thresholds = None
+    if numpy.float32 in (pixels_1_zyx.dtype, pixels_2_zyx.dtype):
+        thresholds = _float32_thresholds(
+            (g1, g2),
+            (pixels_1_zyx.dtype, pixels_2_zyx.dtype),
+            offsets,
+            threshold,
+            thr_frac,
+        )
+    return coloc_per_object(
+        g1, g2, offsets, n, thr_frac, compute_rwc, means, thresholds
+    )
+
+
+def _float32_thresholds(grouped, dtypes, offsets, threshold, thr_frac):
+    """Per-object percentage thresholds with the reference's dtype rules, shape (2, n).
+
+    A float32 channel gets the reference's own expression, ``(thr / 100) * max``
+    evaluated by NumPy on float32 maxima (so it rounds as the reference does for any
+    ``thr`` type and NumPy version); a float64 channel keeps the kernel's
+    ``thr_frac * max``. Only the threshold, i.e. which pixels count, follows the
+    input dtype; the kernel's sums stay float64.
+    """
+    n = offsets.size - 1
+    nonempty = offsets[1:] > offsets[:-1]
+    out = numpy.zeros((2, n))
+    for row, (values, dtype) in enumerate(zip(grouped, dtypes)):
+        maxima = numpy.full(n, numpy.nan)
+        if nonempty.any():
+            maxima[nonempty] = numpy.maximum.reduceat(values, offsets[:-1][nonempty])
+        if dtype == numpy.float32:
+            # same expression as reference._percentage_threshold in input mode
+            out[row] = (threshold / 100) * maxima.astype(numpy.float32)
+        else:
+            out[row] = thr_frac * maxima
+    return out
 
 
 def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **kwargs):
@@ -108,7 +153,7 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
                 promote_float_pixels(p1, precision),
                 promote_float_pixels(p2, precision),
             )
-        if p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
+        if p1.dtype not in _KERNEL_DTYPES or p2.dtype not in _KERNEL_DTYPES:
             result = ref(p1, p2, m, **kwargs)
         else:
             result = build(
@@ -119,6 +164,7 @@ def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **
                     frac,
                     compute_rwc,
                     compute_pearson=ref is reference.get_correlation_pearson,
+                    threshold=threshold,
                 )
             )
             if any(not numpy.isfinite(values).all() for values in result.values()):
