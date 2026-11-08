@@ -346,6 +346,15 @@ def _r_or_exact(g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv
     )
     r = cov / np.sqrt(varu * varv)
     bound = 2 * (err_c / np.sqrt(varu * varv) + abs(r) * (err_u / varu + err_v / varv))
+    # The exact kernel replays the reference when ITS r is within its own error
+    # bound of a cutoff (gamma * conditioning, see _count_pearson_combt). Its
+    # conditioning grows with |mean| / norm, so near-constant objects need that
+    # margin too, or this path would decide a step the exact kernel replays.
+    ops = 64 * m * eps
+    conditioning = 1 + np.sqrt(m) * (
+        abs(mean1) / np.sqrt(varu) + abs(mean2) / np.sqrt(varv)
+    )
+    bound += 2 * ops / (1 - ops) * conditioning
     for cutoff in _CUTOFFS:
         if abs(r - cutoff) <= bound:
             return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)
