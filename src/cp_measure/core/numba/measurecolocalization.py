@@ -108,7 +108,7 @@ def _run(
         return None
     # Pearson's means use NumPy's pairwise summation (see coloc_per_object).
     return coloc_per_object(
-        g1, g2, offsets, n, thr_frac, compute_rwc, compute_pearson, NUMPY_SUM_CHUNK
+        g1, g2, offsets, n, thr_frac, compute_rwc, compute_pearson, numpy_sum_chunk()
     )
 
 

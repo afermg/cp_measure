@@ -56,7 +56,7 @@ def coloc_per_object(
     ``(corr, slope, m1, m2, overlap, k1, k2, rwc1, rwc2)``.
 
     With ``numpy_means`` (the public Pearson wrapper) the object means use NumPy's
-    pairwise summation (``chunk`` is ``NUMPY_SUM_CHUNK``), so they equal
+    pairwise summation (``chunk`` is ``numpy_sum_chunk()``), so they equal
     ``numpy.mean`` exactly; a serial sum can turn an undefined correlation of a
     constant or high-offset signal finite.
 
