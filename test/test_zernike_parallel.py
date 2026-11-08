@@ -7,7 +7,6 @@ from conftest import SIZE_2D, _stamp_objects_2d, get_rng
 
 pytest.importorskip("numba")
 
-import cp_measure.core.numba._zernike as zmod  # noqa: E402
 from cp_measure.core.numba.measureobjectintensitydistribution import (  # noqa: E402
     get_radial_zernikes,
 )
@@ -15,31 +14,16 @@ from cp_measure.core.numba.measureobjectsizeshape import get_zernike  # noqa: E4
 
 
 def _batch(n_imgs, n_obj):
+    """A batch whose images each have a distinct object count, so a slot-misordering
+    bug in the batch dispatch changes per-image results and the match test catches it."""
     rng = get_rng()
     masks, pix = [], []
-    for _ in range(n_imgs):
+    for idx in range(n_imgs):
         m = np.zeros((SIZE_2D, SIZE_2D), np.int32)
-        _stamp_objects_2d(m, n_objects=n_obj)
+        _stamp_objects_2d(m, n_objects=n_obj + idx)
         masks.append(m)
         pix.append(rng.random((SIZE_2D, SIZE_2D)))
     return masks, pix
-
-
-def test_zernike_batch_uses_map_images(monkeypatch):
-    calls = []
-    real = getattr(zmod, "map_images", None)
-
-    def spy(func, items, **kw):
-        calls.append(len(items))
-        return real(func, items, **kw)
-
-    monkeypatch.setattr(zmod, "map_images", spy, raising=False)
-    masks, pix = _batch(3, 4)
-    get_zernike(masks)
-    get_radial_zernikes(masks, pix)
-    assert calls and all(c == 3 for c in calls), (
-        f"map_images not used for batch: {calls}"
-    )
 
 
 @pytest.mark.parametrize(

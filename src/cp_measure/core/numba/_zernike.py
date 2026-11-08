@@ -53,6 +53,10 @@ def zernike_coeffs(
     return lut, nterms, m_arr
 
 
+# nogil is load-bearing: it lets map_images run this across a thread pool for a
+# batch. Thread-safety holds only because every call allocates its own vr/vi/zr/zi
+# and reads lut/nterms/m_arr (and the hoisted coeffs/zernike_indexes) read-only.
+# A future shared scratch/output buffer would make batches race — keep it per-call.
 @njit(cache=True, nogil=True)
 def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
     """Fused per-object weighted-complex Zernike sum (single pass, no (M,K) buffer).
@@ -144,7 +148,7 @@ def zernike_moments_per_object(labels, pixels, coeffs):
     return vr, vi, radii, counts
 
 
-def zernike_per_image(labels, pixels, degree, features):
+def zernike_per_image(labels, pixels, degree, features, *, max_workers=None):
     """Batch driver shared by the numba ``get_zernike`` and ``get_radial_zernikes``.
 
     Accepts a single 2D image or a batch (list/tuple of images, or a 4D
@@ -184,4 +188,4 @@ def zernike_per_image(labels, pixels, degree, features):
 
     # Per-image work is independent; map_images runs a batch across a thread pool
     # (the nogil zernike_moments kernel releases the GIL) and one image serially.
-    return unwrap(map_images(one, range(len(masks_bzyx))))
+    return unwrap(map_images(one, range(len(masks_bzyx)), max_workers=max_workers))

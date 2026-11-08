@@ -41,12 +41,14 @@ from cp_measure.core.numba._zernike import (
 from cp_measure.primitives.shapes import to_bzyx
 
 
-def get_radial_zernikes(labels, pixels, zernike_degree: int = 9):
+def get_radial_zernikes(labels, pixels, zernike_degree: int = 9, *, max_workers=None):
     """Radial Zernike magnitude/phase per object; single image/volume or batch.
 
     Measured 2D entries require matching label and intensity shapes; mismatches
     raise ``ValueError`` rather than selecting an intensity plane. Compare phases
-    modulo 2π; near-zero moments have numerically unstable phases.
+    modulo 2π; near-zero moments have numerically unstable phases. ``max_workers``
+    caps the batch thread pool (default ``os.cpu_count()``); pass it when nesting
+    under an outer parallel map.
     """
     return zernike_per_image(
         labels,
@@ -55,6 +57,7 @@ def get_radial_zernikes(labels, pixels, zernike_degree: int = 9):
         lambda vr, vi, _radii, counts, indexes: _radial_zernike_features(
             vr, vi, counts, indexes
         ),
+        max_workers=max_workers,
     )
 
 

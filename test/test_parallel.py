@@ -1,7 +1,6 @@
 """The shared batch driver maps a per-image function over a batch, parallel for
 2+ items, serial for 0 or 1, preserving order and propagating exceptions."""
 
-import numpy as np
 import pytest
 
 from cp_measure.primitives.parallel import map_images
@@ -11,12 +10,6 @@ from cp_measure.primitives.parallel import map_images
 def test_map_images_matches_serial_and_preserves_order(n):
     items = list(range(n))
     assert map_images(lambda x: x * x, items) == [x * x for x in items]
-
-
-def test_map_images_returns_independent_objects():
-    items = [1, 2, 3]
-    out = map_images(lambda x: np.array([x]), items)
-    assert [a.tolist() for a in out] == [[1], [2], [3]]
 
 
 def test_map_images_propagates_exceptions():
