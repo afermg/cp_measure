@@ -15,8 +15,8 @@ expressions where they differ, and why.
 import numpy
 from numpy.typing import NDArray
 
-from cp_measure.core.measuretexture import _pack, _prep
-from cp_measure.core.numba._texture import DELTAS_2D, DELTAS_3D, haralick_object
+from cp_measure.core.measuretexture import _pack, _prep_levels
+from cp_measure.core.numba._texture import DELTAS_2D, DELTAS_3D, haralick_all
 from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import _stack
 
@@ -67,14 +67,13 @@ def _texture_image(
     scale: int,
     gray_levels: int,
 ) -> dict[str, NDArray[numpy.floating]]:
-    props, n_directions = _prep(masks, pixels, scale, gray_levels)
+    levels, n_directions = _prep_levels(masks, pixels, scale, gray_levels)
     deltas = DELTAS_2D if n_directions == 4 else DELTAS_3D
     offsets = numpy.ascontiguousarray(scale * deltas)
-
-    features = numpy.empty((n_directions, 13, len(props)))
-    for index, prop in enumerate(props):
-        crop = numpy.ascontiguousarray(prop.image_intensity)  # uint8 from regionprops
-        if crop.ndim == 2:
-            crop = crop[numpy.newaxis]  # the kernel always takes (Z, Y, X)
-        features[:, :, index] = haralick_object(crop, offsets)
+    labels = numpy.asarray(masks)
+    if labels.ndim == 2:  # the kernel always takes (Z, Y, X)
+        labels, levels = labels[numpy.newaxis], levels[numpy.newaxis]
+    features = haralick_all(
+        numpy.ascontiguousarray(labels), numpy.ascontiguousarray(levels), offsets
+    )
     return _pack(features, scale, gray_levels)

@@ -176,6 +176,14 @@ def _prep(
     array it has already normalised, or a 2D image and a single-slice volume
     become indistinguishable.
     """
+    pixels, n_directions = _prep_levels(masks, pixels, scale, gray_levels)
+    return skimage.measure.regionprops(masks, pixels), n_directions
+
+
+def _prep_levels(masks, pixels, scale, gray_levels):
+    """Validate, then return the image as ``uint8`` grey levels
+    ``0..gray_levels - 1``, zero outside the objects, and the direction count
+    (4 in 2D, 13 in 3D)."""
     if scale < 1:
         raise ValueError(f"scale must be at least 1 pixel, got {scale}")
     if masks.shape != pixels.shape:
@@ -184,7 +192,6 @@ def _prep(
             f"and {pixels.shape}"
         )
     n_directions = 13 if pixels.ndim > 2 else 4
-
     # mahotas.features.haralick bricks itself when provided a
     # dtype larger than uint8 (version 1.4.3)
     pixels = skimage.util.img_as_ubyte(pixels, force_copy=True)
@@ -193,7 +200,7 @@ def _prep(
         pixels = skimage.exposure.rescale_intensity(
             pixels, in_range=(0, 255), out_range=(0, gray_levels - 1)
         ).astype(numpy.uint8)
-    return skimage.measure.regionprops(masks, pixels), n_directions
+    return pixels, n_directions
 
 
 def _pack(
