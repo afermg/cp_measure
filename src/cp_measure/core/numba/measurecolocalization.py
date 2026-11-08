@@ -33,32 +33,40 @@ from cp_measure.core.measurecolocalization import (
 )
 from cp_measure.core.numba._colocalization import coloc_per_object
 from cp_measure.core.numba._costes import (
+    CONSTANT_CHANNEL,
+    EMPTY_OBJECT,
+    FEW_NONZERO,
+    FEW_OR_NONFINITE,
     NO_VALID_THRESHOLD,
+    OUT_OF_RANGE,
+    REPLAY,
     UNDEFINED_BACKGROUND,
-    SEARCHED,
     UNDEFINED_IN_SEARCH,
-    _bisection,
-    _linear,
-    _regression_ab,
+    ZERO_DENOMINATOR,
+    costes_per_object,
 )
-from cp_measure.primitives._segment_numba import flatten_pairs_grouped
+from cp_measure.primitives._segment_numba import NUMPY_SUM_CHUNK, flatten_pairs_grouped
 from cp_measure.primitives.shapes import to_bzyx
 
-# The reference's warning text for each undefined search status.
+# The reference's warning text for each undefined Costes status.
 _UNDEFINED_REASONS = {
     NO_VALID_THRESHOLD: "no finite nonnegative background correlation found",
     UNDEFINED_IN_SEARCH: "background correlation became undefined during linear search",
     UNDEFINED_BACKGROUND: "chosen background subset has undefined correlation",
+    EMPTY_OBJECT: "missing or empty object label",
+    FEW_OR_NONFINITE: "fewer than three paired pixels or non-finite signal",
+    FEW_NONZERO: "fewer than three nonzero paired pixels",
+    CONSTANT_CHANNEL: "constant channel in the regression subset",
+    ZERO_DENOMINATOR: "zero above-threshold intensity denominator",
 }
+_COSTES_MODES = {M_FASTER: 0, M_FAST: 1, M_ACCURATE: 2}
 
 
-def _run(
-    masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc, compute_pearson=False
-):
-    """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
+def _grouped(masks_zyx, pixels_1_zyx, pixels_2_zyx):
+    """Each object's pixels of both channels as contiguous float64 blocks.
 
-    Returns the nine per-object arrays from ``coloc_per_object``, or ``None`` when
-    the image holds no objects (the callers then emit empty feature arrays).
+    Returns ``(g1, g2, offsets)``: object ``k`` owns ``g1[offsets[k] : offsets[k + 1]]``,
+    in raster order like the reference's per-label extraction.
     """
     # Numba requires native-endian labels; convert values, never reinterpret or
     # byteswap the caller's array in place. Native contiguous inputs stay zero-copy.
@@ -69,19 +77,33 @@ def _run(
     # segment index is label - 1 and the CSR block bounds are the cumulative
     # per-label pixel counts — one bincount, no lookup table.
     n = int(masks.max(initial=0))
-    if n == 0:
-        return None
     offsets = numpy.zeros(n + 1, dtype=numpy.int64)
     # bincount rejects uint64 even when these bounded label IDs fit intp.
     if masks.dtype == numpy.uint64:
         masks = masks.astype(numpy.intp)
-    offsets[1:] = numpy.cumsum(numpy.bincount(masks.ravel(), minlength=n + 1)[1:])
+    if n:
+        offsets[1:] = numpy.cumsum(numpy.bincount(masks.ravel(), minlength=n + 1)[1:])
     g1, g2 = flatten_pairs_grouped(
         masks,
         numpy.ascontiguousarray(pixels_1_zyx, dtype=numpy.float64),
         numpy.ascontiguousarray(pixels_2_zyx, dtype=numpy.float64),
         offsets,
     )
+    return g1, g2, offsets
+
+
+def _run(
+    masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc, compute_pearson=False
+):
+    """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
+
+    Returns the nine per-object arrays from ``coloc_per_object``, or ``None`` when
+    the image holds no objects (the callers then emit empty feature arrays).
+    """
+    g1, g2, offsets = _grouped(masks_zyx, pixels_1_zyx, pixels_2_zyx)
+    n = offsets.size - 1
+    if n == 0:
+        return None
     means = None
     if compute_pearson:
         # NumPy's pairwise mean reduction matters for constant and high-offset
@@ -247,38 +269,6 @@ def get_correlation_overlap(
     )
 
 
-def _costes_pair(fi, si, scale, mode):
-    """Share canonicalization, reductions and diagnostics with the reference."""
-    fi = reference._canonical_costes_pixels(fi, scale)
-    si = reference._canonical_costes_pixels(si, scale)
-    if not reference._valid_costes_pixels(fi, si):
-        return numpy.nan, numpy.nan
-    a, b = _regression_ab(fi, si, 0, fi.size)
-    if not (numpy.isfinite(a) and numpy.isfinite(b)):
-        return reference._costes_pair(fi, si, scale, mode)
-    if mode == M_FASTER:
-        first, second, status = _bisection(fi, si, 0, fi.size, a, b, scale)
-    else:
-        first, second, status = _linear(
-            fi, si, 0, fi.size, a, b, scale, mode == M_ACCURATE
-        )
-    if status != SEARCHED:
-        # Same result and warning as the reference, without replaying its search.
-        return reference._undefined_costes(_UNDEFINED_REASONS[status])
-    if not (numpy.isfinite(first) and numpy.isfinite(second)):
-        # The kernel does not emit Python warnings. Replay only exceptional
-        # objects to preserve the reference's precise warning categories/messages.
-        return reference._costes_pair(fi, si, scale, mode)
-    combined = (fi > first) & (si > second)
-    total_first = fi[fi >= first].sum()
-    total_second = si[si >= second].sum()
-    if total_first <= 0 or total_second <= 0:
-        return reference._undefined_costes("zero above-threshold intensity denominator")
-    return float(fi[combined].sum() / total_first), float(
-        si[combined].sum() / total_second
-    )
-
-
 def get_correlation_costes(
     pixels_1: NDArray[numpy.number],
     pixels_2: NDArray[numpy.number],
@@ -307,14 +297,25 @@ def get_correlation_costes(
         raise ValueError("Unknown Costes threshold-search mode")
 
     def measure(p1, p2, mask):
-        c1, c2 = [], []
-        for fi, si in reference._iter_label_pixels(p1, p2, mask):
-            if fi is None or si is None or fi.size == 0:
-                v1, v2 = reference._undefined_costes("missing or empty object label")
+        zyx = (mask, p1, p2) if mask.ndim == 3 else (mask[None], p1[None], p2[None])
+        g1, g2, offsets = _grouped(*zyx)
+        c1, c2, status = costes_per_object(
+            g1, g2, offsets, float(scale), _COSTES_MODES[fast_costes], NUMPY_SUM_CHUNK
+        )
+        # Warnings, errors and replays in object order, as the reference emits them.
+        for k in numpy.flatnonzero(status):
+            if status[k] == OUT_OF_RANGE:
+                raise ValueError(
+                    "Costes expects normalized pixels in [0, 1]; check scale_max"
+                )
+            if status[k] == REPLAY:
+                lo, hi = offsets[k], offsets[k + 1]
+                c1[k], c2[k] = reference._costes_pair(
+                    g1[lo:hi], g2[lo:hi], scale, fast_costes
+                )
             else:
-                v1, v2 = _costes_pair(fi, si, scale, fast_costes)
-            c1.append(v1)
-            c2.append(v2)
+                reference._undefined_costes(_UNDEFINED_REASONS[status[k]])
+        c1, c2 = c1.tolist(), c2.tolist()
         return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
 
     # Single arrays retain their original rank, including singleton Z. Explicit

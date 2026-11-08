@@ -11,6 +11,8 @@ sums but make the exact kernel's decisions. No fastmath or grid rounding is used
 import numpy as np
 from numba import njit
 
+from cp_measure.primitives._segment_numba import numpy_sum, numpy_var
+
 # Search status, returned with the thresholds. SEARCHED: use the thresholds, or replay the
 # reference when they are NaN (its warnings need SciPy's exact diagnostics). The other two
 # are undefined results whose reference warning the wrapper can emit without a replay.
@@ -20,6 +22,16 @@ UNDEFINED_IN_SEARCH = 2  # linear: a background subset had < 3 pixels or was con
 UNDEFINED_BACKGROUND = (
     3  # the chosen threshold's background subset is < 3 pixels or constant
 )
+# Per-object statuses of costes_per_object, beyond the search's: undefined results the
+# wrapper reports with the reference's warning, an out-of-range pixel it raises for, and
+# REPLAY for cases whose diagnostics need the reference itself.
+EMPTY_OBJECT = 4
+FEW_OR_NONFINITE = 5
+FEW_NONZERO = 6
+CONSTANT_CHANNEL = 7
+ZERO_DENOMINATOR = 8
+OUT_OF_RANGE = 9
+REPLAY = 10
 
 
 def _regression_ab(g1, g2, lo, hi):
@@ -383,3 +395,132 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
                 break
             cur = _next_candidate(cur, r, accurate, i_step)
     return _finish(g1, g2, lo, hi, thr_fi_c, thr_si_c)
+
+
+@njit(cache=True)
+def _canonical(v, scale):
+    """The reference's ``_canonical_costes_pixels`` for one value: snap a value encoded
+    as ``level * (1 / scale)`` to ``level / scale``; leave every other value alone."""
+    if v >= 1.0 / scale and v <= 1:
+        level = np.rint(v * scale)
+        if v == level * (1.0 / scale):
+            return level / scale
+    return v
+
+
+@njit(cache=True)
+def _gather_sum(values, lo, hi, keep, buf, chunk):
+    """``values[lo:hi][keep].sum()`` with NumPy's summation order."""
+    m = 0
+    for i in range(lo, hi):
+        if keep[i - lo]:
+            buf[m] = values[i]
+            m += 1
+    return numpy_sum(buf[:m], chunk)
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def costes_per_object(g1, g2, offsets, scale, mode, chunk):
+    """Costes coefficients of every object in one pass, as the reference computes them.
+
+    ``g1``/``g2`` are the grouped pixels (object ``k`` owns ``offsets[k]:offsets[k+1]``),
+    already divided by the acquisition scale. ``mode`` is 0 (Faster, bisection),
+    1 (Fast) or 2 (Accurate); ``chunk`` is ``NUMPY_SUM_CHUNK``. Canonicalization,
+    validity checks, the regression line (NumPy's pairwise sums, so the same pixels
+    count), the search and the coefficients follow ``reference._costes_pair``.
+    Returns ``(c1, c2, status)``; a non-zero status leaves NaN for the wrapper to
+    report (see the status codes at the top of the module).
+    """
+    n = offsets.size - 1
+    c1 = np.full(n, np.nan)
+    c2 = np.full(n, np.nan)
+    status = np.zeros(n, np.int64)
+    f = np.empty(g1.size)
+    s = np.empty(g2.size)
+    for i in range(g1.size):
+        f[i] = _canonical(g1[i], scale)
+        s[i] = _canonical(g2[i], scale)
+    longest = 0
+    for k in range(n):
+        longest = max(longest, offsets[k + 1] - offsets[k])
+    bx = np.empty(longest)
+    by = np.empty(longest)
+    bz = np.empty(longest)
+    keep = np.empty(longest, np.bool_)
+    for k in range(n):
+        lo, hi = offsets[k], offsets[k + 1]
+        if hi == lo:
+            status[k] = EMPTY_OBJECT
+            continue
+        # _valid_costes_pixels
+        finite = True
+        for i in range(lo, hi):
+            if not (np.isfinite(f[i]) and np.isfinite(s[i])):
+                finite = False
+                break
+        if hi - lo < 3 or not finite:
+            status[k] = FEW_OR_NONFINITE
+            continue
+        outside = False
+        for i in range(lo, hi):
+            if f[i] < 0 or s[i] < 0 or f[i] > 1 or s[i] > 1:
+                outside = True
+                break
+        if outside:
+            status[k] = OUT_OF_RANGE
+            continue
+        m = 0
+        for i in range(lo, hi):
+            if f[i] > 0 or s[i] > 0:
+                bx[m] = f[i]
+                by[m] = s[i]
+                bz[m] = f[i] + s[i]
+                m += 1
+        if m < 3:
+            status[k] = FEW_NONZERO
+            continue
+        if bx[:m].min() == bx[:m].max() or by[:m].min() == by[:m].max():
+            status[k] = CONSTANT_CHANNEL
+            continue
+        # The reference's regression (bisection_costes / linear_costes), same sums.
+        xvar = numpy_var(bx[:m], chunk)
+        yvar = numpy_var(by[:m], chunk)
+        xmean = numpy_sum(bx[:m], chunk) / m
+        ymean = numpy_sum(by[:m], chunk) / m
+        zvar = numpy_var(bz[:m], chunk)
+        covar = 0.5 * (zvar - (xvar + yvar))
+        num = (yvar - xvar) + np.sqrt(
+            (yvar - xvar) * (yvar - xvar) + 4 * (covar * covar)
+        )
+        if abs(covar) <= 8 * np.finfo(np.float64).eps * max(xvar, yvar):
+            status[k] = REPLAY  # rare; the reference also reports NumPy's own warnings
+            continue
+        a = num / (2 * covar)
+        b = ymean - a * xmean
+        if not (np.isfinite(a) and np.isfinite(b)):
+            status[k] = REPLAY
+            continue
+        if mode == 0:
+            thr1, thr2, st = _bisection(f, s, lo, hi, a, b, scale)
+        else:
+            thr1, thr2, st = _linear(f, s, lo, hi, a, b, scale, mode == 2)
+        if st != SEARCHED:
+            status[k] = st
+            continue
+        if not (np.isfinite(thr1) and np.isfinite(thr2)):
+            status[k] = REPLAY
+            continue
+        for i in range(lo, hi):
+            keep[i - lo] = f[i] >= thr1
+        tot1 = _gather_sum(f, lo, hi, keep, bx, chunk)
+        for i in range(lo, hi):
+            keep[i - lo] = s[i] >= thr2
+        tot2 = _gather_sum(s, lo, hi, keep, bx, chunk)
+        if tot1 <= 0 or tot2 <= 0:
+            status[k] = ZERO_DENOMINATOR
+            continue
+        for i in range(lo, hi):
+            keep[i - lo] = f[i] > thr1 and s[i] > thr2
+        c1[k] = _gather_sum(f, lo, hi, keep, bx, chunk) / tot1
+        c2[k] = _gather_sum(s, lo, hi, keep, bx, chunk) / tot2
+    return c1, c2, status

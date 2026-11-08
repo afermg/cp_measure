@@ -265,3 +265,60 @@ def flatten_pairs_grouped(masks, pix1, pix2, offsets):
                     g2[p] = pix2[z, y, x]
                     fill[k] = p + 1
     return g1, g2
+
+
+# NumPy reduces a contiguous float64 array with a pairwise sum (``pairwise_sum`` in
+# numpy/_core/src/umath/loops_utils.h.src). Before NumPy 2.3 the reduction ran over
+# 8192-element buffer chunks, added left to right. Callers pass this value into the
+# kernels: a module global would be frozen into numba's on-disk cache across upgrades.
+NUMPY_SUM_CHUNK = 8192 if np.lib.NumpyVersion(np.__version__) < "2.3.0" else 0
+
+
+@njit(cache=True, nogil=True)
+def _pairwise_sum(a, lo, n):
+    """NumPy's ``pairwise_sum`` over ``a[lo : lo + n]``."""
+    if n < 8:
+        res = 0.0
+        for i in range(lo, lo + n):
+            res += a[i]
+        return res
+    if n <= 128:
+        r = a[lo : lo + 8].copy()
+        i = 8
+        while i < n - (n % 8):
+            for j in range(8):
+                r[j] += a[lo + i + j]
+            i += 8
+        res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]))
+        while i < n:
+            res += a[lo + i]
+            i += 1
+        return res
+    n2 = n // 2
+    n2 -= n2 % 8
+    return _pairwise_sum(a, lo, n2) + _pairwise_sum(a, lo + n2, n - n2)
+
+
+@njit(cache=True, nogil=True)
+def numpy_sum(a, chunk):
+    """``np.sum(a)`` of a contiguous 1D float64 array, bit for bit (``chunk`` is
+    :data:`NUMPY_SUM_CHUNK`)."""
+    n = a.size
+    if chunk == 0:
+        return _pairwise_sum(a, 0, n)
+    res = 0.0
+    for lo in range(0, n, chunk):
+        res += _pairwise_sum(a, lo, min(chunk, n - lo))
+    return res
+
+
+@njit(cache=True, nogil=True)
+def numpy_var(a, chunk):
+    """``np.var(a, ddof=1)`` of a contiguous 1D float64 array, bit for bit."""
+    n = a.size
+    mean = numpy_sum(a, chunk) / n
+    sq = np.empty(n)
+    for i in range(n):
+        d = a[i] - mean
+        sq[i] = d * d
+    return numpy_sum(sq, chunk) / (n - 1)

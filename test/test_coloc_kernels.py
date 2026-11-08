@@ -82,3 +82,25 @@ def test_fused_kernel_undefined_and_missing_slots():
     assert np.isnan(result[1][2])
     for values in result[2:]:
         assert values[2] == 0  # NaN max means no combined-threshold pixels
+
+
+@requires_numba
+@pytest.mark.parametrize(
+    "n", [1, 2, 7, 8, 9, 127, 128, 129, 1000, 8191, 8192, 8193, 16385, 100_003]
+)
+def test_numpy_sum_and_var_match_numpy_bitwise(n):
+    """The JIT ports reproduce NumPy's float64 sum, mean and ddof=1 variance exactly,
+    including the pre-2.3 chunking of arrays longer than 8192 elements."""
+    from cp_measure.primitives._segment_numba import (
+        NUMPY_SUM_CHUNK,
+        numpy_sum,
+        numpy_var,
+    )
+
+    rng = np.random.default_rng(n)
+    for scale, offset in [(1.0, 0.0), (1e-3, 0.5), (1e3, -7.0)]:
+        values = rng.random(n) * scale + offset
+        assert numpy_sum(values, NUMPY_SUM_CHUNK) == np.sum(values)
+        assert numpy_sum(values, NUMPY_SUM_CHUNK) / n == np.mean(values)
+        if n > 1:
+            assert numpy_var(values, NUMPY_SUM_CHUNK) == np.var(values, ddof=1)
