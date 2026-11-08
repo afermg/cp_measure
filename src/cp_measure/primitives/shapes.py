@@ -191,3 +191,22 @@ def each_volume(masks, pixels):
         return results if is_batch else results[0]
 
     return items, unwrap
+
+
+def is_batch(masks) -> bool:
+    """Whether ``masks`` is a batch: a list/tuple of images or a 4D array."""
+    return isinstance(masks, (list, tuple)) or numpy.ndim(masks) == 4
+
+
+def apply_per_image(func, masks, pixels, **kwargs) -> list:
+    """Run a single-image ``func(mask, pixels, **kwargs)`` over each image of a batch.
+
+    Uses :func:`each_volume`, so it shares its batch contract (matching structure,
+    no ragged batches, no broadcasting) and makes no batch copy. Each image is
+    passed at its original rank: a 2D image stays 2D. Returns one result per image.
+    """
+    items, _ = each_volume(masks, pixels)
+    return [
+        func(m if ndim == 3 else m[0], p if ndim == 3 else p[0], **kwargs)
+        for m, p, ndim in items
+    ]

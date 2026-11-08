@@ -225,3 +225,37 @@ def test_set_accelerator_numba_absent_raises(monkeypatch):
             cp_measure.bulk.get_core_measurements()
     finally:
         cp_measure.set_accelerator(None)
+
+
+@pytest.mark.parametrize(
+    "feature",
+    ["intensity", "texture", "granularity", "radial_distribution", "radial_zernikes"],
+)
+@pytest.mark.parametrize("dim", ["2d", "3d"])
+def test_numpy_channel_features_accept_batches(feature, dim):
+    """A list/tuple or 4D batch returns one result per image, in order, equal to
+    calling each image alone. 2D images stay 2D; a 4D batch holds singleton-Z
+    volumes and matches those."""
+    fn = cp_measure.bulk.get_core_measurements()[feature]
+    mask, pixels = _mask_pixels_2d() if dim == "2d" else _mask_pixels_3d()
+    # two distinct images, so a misordered batch is caught
+    masks = [mask, np.ascontiguousarray(np.flip(mask, -1))]
+    images = [pixels, np.ascontiguousarray(np.flip(pixels, -1)) * 0.5]
+    stacked = (
+        [x if dim == "3d" else x[None] for x in masks],
+        [x if dim == "3d" else x[None] for x in images],
+    )
+    cases = [
+        ((masks, images), [fn(m, p) for m, p in zip(masks, images)]),
+        ((tuple(masks), tuple(images)), [fn(m, p) for m, p in zip(masks, images)]),
+        (tuple(np.stack(x) for x in stacked), [fn(m, p) for m, p in zip(*stacked)]),
+    ]
+    for batch, expected in cases:
+        got = fn(*batch)
+        assert isinstance(got, list) and len(got) == 2
+        for result, want in zip(got, expected):
+            assert list(result) == list(want)
+            for key in want:
+                np.testing.assert_array_equal(result[key], want[key], err_msg=key)
+    with pytest.raises(ValueError, match="same shape"):
+        fn([masks[0], masks[0][..., :-1]], [images[0], images[0][..., :-1]])

@@ -12,6 +12,10 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- The NumPy intensity, texture, granularity, radial distribution and radial
+  Zernike functions accept a batch (a list/tuple of images or a 4D
+  `(B, Z, Y, X)` array) and return one result per image, as the numba backend
+  does. Single-image calls are unchanged.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
   and processes them sequentially.

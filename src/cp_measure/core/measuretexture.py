@@ -156,6 +156,7 @@ import skimage.exposure
 import skimage.measure
 from numpy.typing import NDArray
 import skimage.util
+from cp_measure.primitives.shapes import apply_per_image, is_batch
 
 F_HARALICK = """AngularSecondMoment Contrast Correlation Variance
 InverseDifferenceMoment SumAverage SumVariance SumEntropy Entropy
@@ -277,6 +278,10 @@ def get_texture(
     CellProfiler 3 versions it was fixed at 256.  The minimum number of levels is
     2, the maximum is 256.
     """
+    if is_batch(masks):  # list/tuple or 4D: one result per image
+        return apply_per_image(
+            get_texture, masks, pixels, scale=scale, gray_levels=gray_levels
+        )
     # MODIFIED: We assume that the mask provided has the same shape
     # as pixels, thus no cropping is performed
     props, n_directions = _prep(masks, pixels, scale, gray_levels)
