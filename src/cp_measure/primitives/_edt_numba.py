@@ -9,6 +9,10 @@ The squared distances are computed exactly in integers with Meijster's two-phase
 algorithm, and the result is their square root, which is how scipy forms its
 distances too, so the values are bit-identical. A mask without any background
 goes to scipy, whose result for that case measures to a point outside the array.
+
+numba's on-disk cache checks a cached function only against its own file, so the
+radial kernel that calls ``squared_edt_2d`` keeps a stale copy after an edit here;
+clear the numba caches (``__pycache__/*.nb[ic]``) after editing this file.
 """
 
 import numpy as np
