@@ -16,6 +16,13 @@ Notable user-facing changes are documented here.
   `r^2 > 1 + 1e-9`, both backends). Values change for objects whose on-circle
   pixels were dropped (about 40-50% of real nuclei; a few percent per moment),
   and differ from CellProfiler only in those pixels.
+- NumPy `granularity` opens the background with edge padding. A background grid
+  with only 2 samples along an axis (3D volumes with 8 to 11 slices at default
+  sizes) made SciPy's reflect padding read outside the array, so results were
+  wrong and changed between identical calls. Other inputs are unchanged.
+- Numba `granularity` keeps float32 backgrounds in float32, as NumPy does (#123),
+  measures integer images as float64 (no wraparound), and rejects masks and
+  pixels of different shapes instead of reading outside the image.
 - `radial_distribution` sums intensities in float64. Integer images no longer
   wrap around (uint8/uint16 results were wrong), and float32 results gain
   precision (relative changes up to ~2e-4).
@@ -64,6 +71,10 @@ Notable user-facing changes are documented here.
   between images that use the same mask.
 - Numba Feret computes the convex hull and diameters in Numba instead of
   centrosome, so batch images run fully in parallel. Results are bit-identical.
+- Numba `granularity` measures 3D volumes with numba kernels, bit-identical to
+  NumPy (about 45 times faster on cells3d volumes), and batches on threads. NumPy
+  `granularity` accepts a batch (a list/tuple of images or a 4D `(B, Z, Y, X)`
+  array) and returns one result per image.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
   and measures them on a thread pool.

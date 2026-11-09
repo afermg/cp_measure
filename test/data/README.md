@@ -22,10 +22,15 @@ and [pinned-environment instructions](https://github.com/afermg/cpm_benchmark/bl
 `granularity_input_precision_reference.json` records the NumPy and Numba outputs
 separately at main commit `8513bf33a17f78c056ca1891ba485b2d7c80e2f7`, immediately
 before #129. The full uint16 image, float32 normalization and measurement settings
-are embedded. It checks preservation of default/`precision="input"` behavior,
-including existing float32 differences between backends; it is **not** a
-CellProfiler or cross-backend parity oracle. Float64-mode tests instead use
+are embedded. It checks preservation of default/`precision="input"` behavior; it is
+**not** a CellProfiler or cross-backend parity oracle. The Numba entries were set
+to the NumPy values once Numba kept float32 backgrounds in float32 (#125), which
+made the two backends agree bit for bit on it. Float64-mode tests instead use
 explicitly widened reference inputs. No live CellProfiler dependency is needed.
+
+`granularity_float32_cellprofiler_reference.json` holds CellProfiler 4.2.8
+granularity outputs for float32 inputs (#125); its generator lives outside this
+repository, as for the other CellProfiler references.
 
 ## Costes reference fixtures
 
