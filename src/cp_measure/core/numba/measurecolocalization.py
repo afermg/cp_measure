@@ -460,23 +460,24 @@ def get_correlation_costes(
     def finish(staged):
         g1, g2, offsets, c1, c2, status, states, scale = staged
         # Warnings, errors and replays on the calling thread, in image and object
-        # order, as the reference emits them.
-        for k in numpy.flatnonzero(status):
-            if status[k] == OUT_OF_RANGE:
+        # order, as the reference emits them. Only flagged objects need Python.
+        flagged = numpy.flatnonzero(status)
+        for k, code in zip(flagged.tolist(), status[flagged].tolist()):
+            if code == OUT_OF_RANGE:
                 raise ValueError(
                     "Costes expects normalized pixels in [0, 1]; check scale_max"
                 )
-            lo, hi = offsets[k], offsets[k + 1]
-            if status[k] == RESUME:
+            if code == RESUME:
                 c1[k], c2[k] = _resume_bisection(
-                    g1, g2, lo, hi, scale, states[k], chunk
+                    g1, g2, offsets[k], offsets[k + 1], scale, states[k], chunk
                 )
-            elif status[k] == REPLAY:
+            elif code == REPLAY:
+                lo, hi = offsets[k], offsets[k + 1]
                 c1[k], c2[k] = reference._costes_pair(
                     g1[lo:hi], g2[lo:hi], scale, fast_costes
                 )
             else:
-                reference._undefined_costes(_UNDEFINED_REASONS[status[k]])
+                reference._undefined_costes(_UNDEFINED_REASONS[code])
         return {
             f"{F_COSTES_FORMAT}_1": c1.tolist(),
             f"{F_COSTES_FORMAT}_2": c2.tolist(),
