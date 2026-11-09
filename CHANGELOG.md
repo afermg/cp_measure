@@ -12,6 +12,15 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- The numba backend's Costes decides every threshold-search step itself. When a
+  step's background correlation is within rounding of a decision point (often
+  exactly 0 on small integer-grid objects) or the subset is nearly constant, the
+  NumPy backend's result depends on SciPy's last bits, so the two backends can
+  differ on those objects, and the numba backend does not emit SciPy's
+  `NearConstantInputWarning`. In randomized tests 8 of 6000 images had a
+  differing value. `scipy_ties=True` (accepted by both backends; no effect in
+  the NumPy backend) restores SciPy decisions and bit-identical results. See
+  [measurement notes](docs/measurement-notes.md#costes).
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler

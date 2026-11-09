@@ -95,13 +95,13 @@ def _count_combt(g1, g2, lo, hi, thr_fi, thr_si):
 
 
 @njit(cache=True, error_model="numpy")
-def _pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs):
+def _pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs, defer):
     """Background Pearson r; fewer than three or constant pairs are undefined."""
-    return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs)[1]
+    return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs, defer)[1]
 
 
 @njit(cache=True, error_model="numpy")
-def _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs):
+def _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs, defer):
     """Fuse subset count and Pearson passes; mirror SciPy's scaled norms."""
     cnt = 0
     s1 = 0.0
@@ -135,9 +135,10 @@ def _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs):
     normy = ymax * np.sqrt(ny)
     # SciPy warns on near-constant subsets. Replay those searches on the host
     # rather than silently dropping the warning or branching on unstable r.
-    if normx < np.finfo(np.float64).eps ** 0.75 * abs(m1) or normy < np.finfo(
-        np.float64
-    ).eps ** 0.75 * abs(m2):
+    if defer and (
+        normx < np.finfo(np.float64).eps ** 0.75 * abs(m1)
+        or normy < np.finfo(np.float64).eps ** 0.75 * abs(m2)
+    ):
         return cnt, np.inf
     r = 0.0
     for i in range(lo, hi):
@@ -154,7 +155,7 @@ def _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs):
     conditioning = 1 + np.sqrt(cnt) * (abs(m1) / normx + abs(m2) / normy)
     error_bound = gamma * conditioning
     for cutoff in cutoffs:
-        if abs(r - cutoff) <= error_bound:
+        if defer and abs(r - cutoff) <= error_bound:
             return cnt, np.inf
     return cnt, min(1.0, max(-1.0, r))
 
@@ -175,7 +176,7 @@ def _bisection_state(a, b, scale):
 
 
 @njit(cache=True, error_model="numpy")
-def _bisection_steps(g1, g2, lo, hi, scale, state, totals):
+def _bisection_steps(g1, g2, lo, hi, scale, state, totals, defer):
     """Run ``bisection_costes``' loop from ``state`` (updated in place).
 
     Returns ``STEPS_DONE``, ``STEPS_NOT_CONVERGED``, or ``STEPS_AMBIGUOUS`` when a
@@ -195,7 +196,7 @@ def _bisection_steps(g1, g2, lo, hi, scale, state, totals):
         thr_fi = mid / scale
         thr_si = a * thr_fi + b
         cnt, r = _direct_count_pearson(
-            g1, g2, lo, hi, totals, thr_fi, thr_si, _SIGN_CUTOFF
+            g1, g2, lo, hi, totals, thr_fi, thr_si, _SIGN_CUTOFF, defer
         )
         if np.isinf(r):
             code = STEPS_AMBIGUOUS
@@ -216,12 +217,12 @@ def _bisection_steps(g1, g2, lo, hi, scale, state, totals):
 
 
 @njit(cache=True, error_model="numpy")
-def _bisection_end(g1, g2, lo, hi, scale, state):
+def _bisection_end(g1, g2, lo, hi, scale, state, defer):
     """The thresholds of a finished bisection: ``(thr_fi, thr_si, status)``."""
     if np.isnan(state[_VALID]):
         return np.nan, np.nan, NO_VALID_THRESHOLD
     thr_fi_c = (state[_VALID] - 1) / scale
-    return _finish(g1, g2, lo, hi, thr_fi_c, state[_A] * thr_fi_c + state[_B])
+    return _finish(g1, g2, lo, hi, thr_fi_c, state[_A] * thr_fi_c + state[_B], defer)
 
 
 @njit(cache=True, error_model="numpy")
@@ -232,17 +233,18 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
     only the reference can decide (see the status codes at the top of the module).
     """
     state = _bisection_state(a, b, scale)
-    if _bisection_steps(g1, g2, lo, hi, scale, state, _moment_totals(g1, g2, lo, hi)):
+    totals = _moment_totals(g1, g2, lo, hi)
+    if _bisection_steps(g1, g2, lo, hi, scale, state, totals, True):
         return np.nan, np.nan, SEARCHED
-    return _bisection_end(g1, g2, lo, hi, scale, state)
+    return _bisection_end(g1, g2, lo, hi, scale, state, True)
 
 
 @njit(cache=True, error_model="numpy")
-def _finish(g1, g2, lo, hi, thr_fi, thr_si):
+def _finish(g1, g2, lo, hi, thr_fi, thr_si, defer):
     """The reference's final check: the chosen background subset must have a defined
     correlation. Too few or constant pixels (NaN) is decided exactly, so the wrapper
     warns without a replay; only SciPy's near-constant diagnostics (inf) need one."""
-    r = _pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, _NO_CUTOFFS)
+    r = _pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, _NO_CUTOFFS, defer)
     if np.isnan(r):
         return np.nan, np.nan, UNDEFINED_BACKGROUND
     if np.isinf(r):
@@ -330,7 +332,7 @@ def _sweep_prep(g1, g2, a, b):
 
 
 @njit(cache=True, error_model="numpy")
-def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si, cutoffs):
+def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si, cutoffs, defer):
     """Same ``(count, r)`` as :func:`_count_pearson_combt`, from the prefix tables.
 
     Exactness: ``g1 < t`` is the same comparison either way, but ``q`` vs ``t`` can
@@ -346,7 +348,7 @@ def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si, cutoffs):
     tol = 64 * eps * (1.0 + abs(t) + (1.0 + abs(b)) / abs(a))
     j = np.searchsorted(qs, t - tol)
     if j < qs.size and qs[j] <= t + tol:
-        return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs)
+        return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs, defer)
     if a > 0:
         cut = np.searchsorted(k1, t)  # keys < t stay in the background
         excluded = P1[:, -1] - P1[:, cut]
@@ -372,12 +374,13 @@ def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si, cutoffs):
         totals[3] - excluded[3],
         totals[4] - excluded[4],
         cutoffs,
+        defer,
     )
 
 
 @njit(cache=True, error_model="numpy")
 def _r_or_exact(
-    g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv, cutoffs
+    g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv, cutoffs, defer
 ):
     """``(count, r)`` of the background subset from its centred moments, or from the
     exact kernel when the moments cannot decide the search exactly.
@@ -408,7 +411,7 @@ def _r_or_exact(
         or varu <= flag * mean1 * mean1
         or varv <= flag * mean2 * mean2
     ):
-        return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs)
+        return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs, defer)
     err_c = e * (
         np.sqrt(totals[2] * totals[3]) + (abs(su) * totals[6] + abs(sv) * totals[5]) / m
     )
@@ -425,12 +428,12 @@ def _r_or_exact(
     bound += 2 * ops / (1 - ops) * conditioning
     for cutoff in cutoffs:
         if abs(r - cutoff) <= bound:
-            return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs)
+            return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs, defer)
     return m, min(1.0, max(-1.0, r))
 
 
 @njit(cache=True, error_model="numpy")
-def _direct_count_pearson(g1, g2, lo, hi, totals, thr_fi, thr_si, cutoffs):
+def _direct_count_pearson(g1, g2, lo, hi, totals, thr_fi, thr_si, cutoffs, defer):
     """Same ``(count, r)`` decisions as :func:`_count_pearson_combt` in one pass over
     the object (the exact kernel takes four), via :func:`_r_or_exact`."""
     c1, c2 = totals[7], totals[8]
@@ -447,7 +450,7 @@ def _direct_count_pearson(g1, g2, lo, hi, totals, thr_fi, thr_si, cutoffs):
             svv += v * v
             suv += u * v
     return _r_or_exact(
-        g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv, cutoffs
+        g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv, cutoffs, defer
     )
 
 
@@ -467,7 +470,7 @@ def _next_candidate(cur, r, accurate, i_step):
 
 
 @njit(cache=True, error_model="numpy")
-def _linear(g1, g2, lo, hi, a, b, scale, accurate):
+def _linear(g1, g2, lo, hi, a, b, scale, accurate, defer):
     """``linear_costes`` (M_FAST / M_ACCURATE): step the threshold down to R≈0.
 
     Returns ``(thr_fi, thr_si, status)``; see the status codes at the top of the module.
@@ -485,7 +488,7 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
     cur = i_step * ((img_max // i_step) + 1)
     # The reference calls SciPy on the full object before its first candidate;
     # preserve possible near-constant diagnostics even if later subsets differ.
-    if np.isinf(_pearson_combt(g1, g2, lo, hi, np.inf, np.inf, _NO_CUTOFFS)):
+    if np.isinf(_pearson_combt(g1, g2, lo, hi, np.inf, np.inf, _NO_CUTOFFS, defer)):
         return np.nan, np.nan, SEARCHED
     thr_fi_c = cur
     thr_si_c = a * cur + b
@@ -501,7 +504,7 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
         cnt = _count_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c)
         evaluated += 1
         if cnt != num_true:
-            r = _pearson_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c, cutoffs)
+            r = _pearson_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c, cutoffs, defer)
             num_true = cnt
         if not np.isfinite(r):
             return np.nan, np.nan, UNDEFINED_IN_SEARCH if np.isnan(r) else SEARCHED
@@ -516,7 +519,7 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
             thr_fi_c = cur
             thr_si_c = a * cur + b
             cnt, r_new = _sweep_count_pearson(
-                g1, g2, lo, hi, a, b, tab, cur, thr_si_c, cutoffs
+                g1, g2, lo, hi, a, b, tab, cur, thr_si_c, cutoffs, defer
             )
             # the reference recomputes r only when the count changes
             if cnt != num_true:
@@ -527,7 +530,7 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
             if r <= 0:
                 break
             cur = _next_candidate(cur, r, accurate, i_step)
-    return _finish(g1, g2, lo, hi, thr_fi_c, thr_si_c)
+    return _finish(g1, g2, lo, hi, thr_fi_c, thr_si_c, defer)
 
 
 @njit(cache=True)
@@ -621,7 +624,7 @@ def _prepare(g1, g2, offsets, scale):
 
 
 @njit(cache=True, nogil=True, error_model="numpy")
-def costes_faster(g1, g2, offsets, scale, chunk):
+def costes_faster(g1, g2, offsets, scale, defer, chunk):
     """Costes coefficients of every object, Faster mode (bisection).
 
     ``g1``/``g2`` are private grouped pixels (object ``k`` owns
@@ -645,14 +648,14 @@ def costes_faster(g1, g2, offsets, scale, chunk):
             else:
                 state = _bisection_state(a, b, scale)
                 totals = _moment_totals(g1, g2, lo, hi)
-                code = _bisection_steps(g1, g2, lo, hi, scale, state, totals)
+                code = _bisection_steps(g1, g2, lo, hi, scale, state, totals, defer)
                 if code == STEPS_AMBIGUOUS:
                     st = RESUME
                     states[k] = state
                 elif code == STEPS_NOT_CONVERGED:
                     st = REPLAY
                 else:
-                    thr1, thr2, st = _bisection_end(g1, g2, lo, hi, scale, state)
+                    thr1, thr2, st = _bisection_end(g1, g2, lo, hi, scale, state, defer)
                     if st == SEARCHED and not (np.isfinite(thr1) and np.isfinite(thr2)):
                         st = REPLAY
                     elif st == SEARCHED:
@@ -666,7 +669,7 @@ def costes_faster(g1, g2, offsets, scale, chunk):
 
 
 @njit(cache=True, nogil=True, error_model="numpy")
-def costes_linear(g1, g2, offsets, scale, accurate, chunk):
+def costes_linear(g1, g2, offsets, scale, accurate, defer, chunk):
     """:func:`costes_faster` for the Fast and Accurate modes (linear search)."""
     c1, c2, status, buf, keep = _prepare(g1, g2, offsets, scale)
     for k in range(offsets.size - 1):
@@ -677,7 +680,7 @@ def costes_linear(g1, g2, offsets, scale, accurate, chunk):
             if not (np.isfinite(a) and np.isfinite(b)):
                 st = REPLAY
             else:
-                thr1, thr2, st = _linear(g1, g2, lo, hi, a, b, scale, accurate)
+                thr1, thr2, st = _linear(g1, g2, lo, hi, a, b, scale, accurate, defer)
                 if st == SEARCHED and not (np.isfinite(thr1) and np.isfinite(thr2)):
                     st = REPLAY
                 elif st == SEARCHED:

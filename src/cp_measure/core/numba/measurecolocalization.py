@@ -304,10 +304,10 @@ def _resume_bisection(g1, g2, lo, hi, scale, state, chunk):
         state[3] = mid
         divisor = 6 / 5 if right - left > 6 else 2
         state[0], state[1], state[2] = left, right, ((right - left) // divisor) + left
-        code = _bisection_steps(g1, g2, lo, hi, scale, state, totals)
+        code = _bisection_steps(g1, g2, lo, hi, scale, state, totals, True)
         if code == STEPS_NOT_CONVERGED:
             return reference._undefined_costes("bisection did not converge")
-    thr1, thr2, status = _bisection_end(g1, g2, lo, hi, scale, state)
+    thr1, thr2, status = _bisection_end(g1, g2, lo, hi, scale, state, True)
     if status != SEARCHED:
         return reference._undefined_costes(_UNDEFINED_REASONS[status])
     if not (numpy.isfinite(thr1) and numpy.isfinite(thr2)):
@@ -342,6 +342,7 @@ def get_correlation_costes(
     thr: int = 15,
     *,
     scale_max: int | None = None,
+    scipy_ties: bool = False,
 ) -> dict[str, list[float]]:
     """Costes coefficients using the current NumPy scale and warning contracts.
 
@@ -351,6 +352,13 @@ def get_correlation_costes(
     same pixels count. Undefined results warn with the reference's messages, and
     near-constant searches replay the reference for its diagnostics. See the NumPy
     API for details.
+
+    The kernel decides every search step itself. When r is within rounding of a
+    decision point (often exactly 0 on small integer-grid objects) or the subset is
+    nearly constant, the NumPy backend's result depends on SciPy's last bits; there
+    the two backends can differ (see the measurement notes). ``scipy_ties=True``
+    asks SciPy for those steps, as the NumPy backend does, and also emits SciPy's
+    near-constant warnings: the result is then bit-identical to the NumPy backend.
     """
     # Share acquisition-scale preparation; the kernel canonicalizes each object.
     first, second, scale = reference._prepare_costes_inputs(
@@ -370,12 +378,12 @@ def get_correlation_costes(
         states = None
         if fast_costes == M_FASTER:
             c1, c2, status, states = costes_faster(
-                g1, g2, offsets, float(scale), numpy_sum_chunk()
+                g1, g2, offsets, float(scale), scipy_ties, numpy_sum_chunk()
             )
         else:
             accurate = fast_costes == M_ACCURATE
             c1, c2, status = costes_linear(
-                g1, g2, offsets, float(scale), accurate, numpy_sum_chunk()
+                g1, g2, offsets, float(scale), accurate, scipy_ties, numpy_sum_chunk()
             )
         # Warnings, errors and replays in object order, as the reference emits them.
         for k in numpy.flatnonzero(status):

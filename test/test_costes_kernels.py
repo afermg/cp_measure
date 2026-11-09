@@ -56,12 +56,12 @@ def test_pearson_combt_matches_scipy(seed):
 
     fi, si = _obj(seed)
     thr_fi, thr_si = 0.4, 0.35
-    got = _pearson_combt(fi, si, 0, fi.size, thr_fi, thr_si, _FAST_CUTOFFS)
+    got = _pearson_combt(fi, si, 0, fi.size, thr_fi, thr_si, _FAST_CUTOFFS, True)
     combt = (fi < thr_fi) | (si < thr_si)
     r_ref, _ = scipy.stats.pearsonr(fi[combt], si[combt])
     np.testing.assert_allclose(got, r_ref, rtol=1e-9, atol=1e-12)
     # full-block (inf thresholds) == pearson over everything
-    got_full = _pearson_combt(fi, si, 0, fi.size, np.inf, np.inf, _FAST_CUTOFFS)
+    got_full = _pearson_combt(fi, si, 0, fi.size, np.inf, np.inf, _FAST_CUTOFFS, True)
     np.testing.assert_allclose(got_full, scipy.stats.pearsonr(fi, si)[0], rtol=1e-9)
 
 
@@ -153,7 +153,7 @@ def test_linear_matches_reference(seed, mode_name):
     fi, si = _obj(seed)
     a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
     thr_fi, thr_si, _ = _linear(
-        fi, si, 0, fi.size, a, b, 255.0, mode_name == "Accurate"
+        fi, si, 0, fi.size, a, b, 255.0, mode_name == "Accurate", True
     )
     thr_fi_ref, thr_si_ref = ref.linear_costes(
         fi, si, fi, si, 255, fast_costes=mode_name
@@ -173,7 +173,9 @@ def test_linear_long_walk_matches_reference(seed, mode_name):
     fi, si = _obj(seed, n=1500)
     fi, si = np.round(fi * scale) / scale, np.round(si * scale) / scale
     a, b = _regression_ab(fi, si, 0, fi.size, numpy_sum_chunk())
-    got = _linear(fi, si, 0, fi.size, a, b, float(scale), mode_name == "Accurate")[:2]
+    got = _linear(
+        fi, si, 0, fi.size, a, b, float(scale), mode_name == "Accurate", True
+    )[:2]
     want = ref.linear_costes(fi, si, fi, si, scale, fast_costes=mode_name)
     assert (max(fi.max(), si.max()) - got[0]) * scale > 2 * _SWEEP_AFTER
     np.testing.assert_array_equal(got, want)
@@ -204,7 +206,7 @@ def test_bisection_ignores_linear_step_cutoffs():
     fi = np.array([3, 5, 4, 5, 3, 6, 6, 6, 6, 4]) / 255
     si = np.array([5, 5, 3, 5, 4, 5, 4, 3, 6, 2]) / 255
     c1, c2, status, _ = costes_faster(
-        fi.copy(), si.copy(), np.array([0, 10]), 255.0, numpy_sum_chunk()
+        fi.copy(), si.copy(), np.array([0, 10]), 255.0, True, numpy_sum_chunk()
     )
     assert status[0] != REPLAY
     expected = ref.get_correlation_costes(

@@ -789,6 +789,7 @@ def get_correlation_costes(
     thr: int = 15,
     *,
     scale_max: int | None = None,
+    scipy_ties: bool = False,
 ) -> dict[str, list[float]]:
     """Per-object Costes coefficients with an explicit acquisition grid.
 
@@ -806,7 +807,9 @@ def get_correlation_costes(
     return NaN and emit :class:`RuntimeWarning`, rather than plausible
     zero/one coefficients. ``thr`` is retained but unused. Input arrays are
     never modified. Labels must be contiguous ``1..N``; use the bulk API or
-    :func:`cp_measure._sanitize.sanitize` for arbitrary IDs.
+    :func:`cp_measure._sanitize.sanitize` for arbitrary IDs. ``scipy_ties`` only
+    affects the numba backend (this backend always decides with SciPy); it is
+    accepted here so the same parameters work with both backends.
     """
     first, second, scale = _prepare_costes_inputs(pixels_1, pixels_2, scale_max)
     if masks.shape != first.shape or not numpy.issubdtype(masks.dtype, numpy.integer):

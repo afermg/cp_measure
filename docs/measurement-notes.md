@@ -162,6 +162,17 @@ reduction-error bound of a search decision, and ill-conditioned regressions are
 replayed per object by the reference to preserve its diagnostics; no
 correlation is rounded or search cutoff moved.
 
+Some search steps are ties: the background correlation is within rounding of
+a decision point (r = 0, or Fast mode's 0.25/0.35/0.45), which on small
+integer-grid objects is often exactly 0, or the subset is nearly constant. The
+NumPy backend's answer there follows SciPy's last bits (its sums and dot
+product), not the data. By default the numba backend decides these steps with
+its own arithmetic, so the backends can differ on such objects (8 of 6000
+randomized test images), and it does not emit SciPy's
+`NearConstantInputWarning`. With `scipy_ties=True` the numba backend asks SciPy
+for exactly those steps and resumes its own search, so results and warnings
+are bit-identical to the NumPy backend.
+
 Both backends apply the same per-object normalization canonicalization before
 validation, regression and threshold search. Exact reciprocal-multiply
 acquisition-grid encodings therefore follow the same division encoding in the
