@@ -30,7 +30,7 @@ def parity(first, second, masks, **kwargs):
     assert list(actual) == list(expected)
     assert diagnostics[0] == diagnostics[1]
     for key in expected:
-        assert isinstance(actual[key], list)
+        assert isinstance(actual[key], np.ndarray)
         np.testing.assert_allclose(actual[key], expected[key], rtol=1e-12, atol=1e-12)
         assert np.asarray(actual[key]).dtype == np.asarray(expected[key]).dtype
     for before, after in zip(original, (first, second, masks)):

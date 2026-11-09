@@ -128,6 +128,30 @@ def test_float32_threshold_boundary_keeps_current_numpy_semantics(name):
     assert_parity(name, first, second, np.ones(first.shape, np.int32))
 
 
+@pytest.mark.parametrize("name", NAMES + ("costes",))
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+@pytest.mark.parametrize("objects", [2, 0], ids=["objects", "empty"])
+def test_values_are_float64_arrays(name, backend, objects):
+    """Every feature is a 1D float64 array with one value per label, for one image
+    and for each image of a batch, in both backends."""
+    function = functions(name)[backend == "numba"]
+    kwargs = {"scale_max": 255} if name == "costes" else {}
+    first = np.arange(1, 13, dtype=float).reshape(3, 4) / 13
+    second = first[::-1].copy()
+    masks = np.zeros(first.shape, np.int32)
+    if objects:
+        masks[:2], masks[2] = 1, 2
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        single = function(first, second, masks, **kwargs)
+        batch = function([first, first], [second, second], [masks, masks], **kwargs)
+    assert isinstance(batch, list) and len(batch) == 2
+    for result in (single, *batch):
+        for values in result.values():
+            assert isinstance(values, np.ndarray)
+            assert values.dtype == np.float64 and values.shape == (objects,)
+
+
 @pytest.mark.parametrize(
     "thr",
     [15, 73.5, np.float32(15), np.float64(15)],

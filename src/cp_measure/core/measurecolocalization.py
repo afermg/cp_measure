@@ -742,11 +742,16 @@ def infer_scale(data: numpy.ndarray) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _values(per_object: list[float]) -> NDArray[numpy.float64]:
+    """One feature's per-object values, in label order."""
+    return numpy.array(per_object, dtype=numpy.float64)
+
+
 def get_correlation_pearson(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
-) -> dict[str, list[float]] | list[dict[str, list[float]]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object Pearson correlation and slope between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
@@ -763,7 +768,7 @@ def get_correlation_pearson(
         corr, slope = _pearson_pair(fi, si)
         corrs.append(corr)
         slopes.append(slope)
-    return {F_CORRELATION_FORMAT: corrs, F_SLOPE_FORMAT: slopes}
+    return {F_CORRELATION_FORMAT: _values(corrs), F_SLOPE_FORMAT: _values(slopes)}
 
 
 def get_correlation_manders_fold(
@@ -773,7 +778,7 @@ def get_correlation_manders_fold(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]] | list[dict[str, list[float]]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object Manders fold coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
@@ -800,7 +805,10 @@ def get_correlation_manders_fold(
         M1, M2 = _manders_pair(fi, si, thr, precision=precision)
         m1_list.append(M1)
         m2_list.append(M2)
-    return {f"{F_MANDERS_FORMAT}_1": m1_list, f"{F_MANDERS_FORMAT}_2": m2_list}
+    return {
+        f"{F_MANDERS_FORMAT}_1": _values(m1_list),
+        f"{F_MANDERS_FORMAT}_2": _values(m2_list),
+    }
 
 
 def _rwc_object_set(
@@ -808,11 +816,14 @@ def _rwc_object_set(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: float,
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     """CP-style dense ranks across foreground, with per-object reductions."""
     nobjects = int(masks.max(initial=0))
     if nobjects == 0:
-        return {f"{F_RWC_FORMAT}_1": [], f"{F_RWC_FORMAT}_2": []}
+        return {
+            f"{F_RWC_FORMAT}_1": numpy.zeros(0),
+            f"{F_RWC_FORMAT}_2": numpy.zeros(0),
+        }
     foreground = masks > 0
     labels = masks[foreground].astype(numpy.intp, copy=False)
     fi, si = pixels_1[foreground], pixels_2[foreground]
@@ -841,7 +852,7 @@ def _rwc_object_set(
         ].astype(numpy.float64, copy=False)
 
     has_joint = numpy.bincount(labels[joint], minlength=nobjects + 1)[1:] > 0
-    results: list[list[float]] = []
+    results: list[NDArray[numpy.float64]] = []
     for pixels, above in ((fi, above1), (si, above2)):
         numerator = reduce(pixels[joint] * weights[joint], joint)
         denominator = reduce(pixels[above], above)
@@ -850,7 +861,7 @@ def _rwc_object_set(
         # an object with joint pixels but zero total signal returns NaN.
         with numpy.errstate(divide="ignore", invalid="ignore"):
             numpy.divide(numerator, denominator, out=result, where=has_joint)
-        results.append(result.tolist())
+        results.append(result)
     return {f"{F_RWC_FORMAT}_1": results[0], f"{F_RWC_FORMAT}_2": results[1]}
 
 
@@ -862,7 +873,7 @@ def get_correlation_rwc(
     *,
     precision: Precision = "input",
     rank_scope: str = "object",
-) -> dict[str, list[float]] | list[dict[str, list[float]]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object rank-weighted colocalization coefficients between two channels.
 
     ``rank_scope="object"`` preserves the historical default: rank each object's
@@ -906,7 +917,7 @@ def get_correlation_rwc(
         RWC1, RWC2 = _rwc_pair(fi, si, thr, precision=precision)
         r1.append(RWC1)
         r2.append(RWC2)
-    return {f"{F_RWC_FORMAT}_1": r1, f"{F_RWC_FORMAT}_2": r2}
+    return {f"{F_RWC_FORMAT}_1": _values(r1), f"{F_RWC_FORMAT}_2": _values(r2)}
 
 
 def get_correlation_costes(
@@ -918,7 +929,7 @@ def get_correlation_costes(
     *,
     scale_max: int | None = None,
     scipy_ties: bool = False,
-) -> dict[str, list[float]] | list[dict[str, list[float]]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object Costes coefficients with an explicit acquisition grid.
 
     Float pixels must already be in [0, 1] and require ``scale_max`` (e.g.
@@ -971,7 +982,7 @@ def get_correlation_costes(
         c1.append(C1)
         c2.append(C2)
     _warn_undefined_costes(undefined)
-    return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
+    return {f"{F_COSTES_FORMAT}_1": _values(c1), f"{F_COSTES_FORMAT}_2": _values(c2)}
 
 
 def get_correlation_overlap(
@@ -981,7 +992,7 @@ def get_correlation_overlap(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]] | list[dict[str, list[float]]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object overlap and k1/k2 colocalization coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
@@ -1012,7 +1023,7 @@ def get_correlation_overlap(
         k1_list.append(K1)
         k2_list.append(K2)
     return {
-        F_OVERLAP_FORMAT: overlap_list,
-        f"{F_K_FORMAT}_1": k1_list,
-        f"{F_K_FORMAT}_2": k2_list,
+        F_OVERLAP_FORMAT: _values(overlap_list),
+        f"{F_K_FORMAT}_1": _values(k1_list),
+        f"{F_K_FORMAT}_2": _values(k2_list),
     }
