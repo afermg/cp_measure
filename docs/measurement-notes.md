@@ -38,38 +38,7 @@ For integer images, Costes divides by `scale_max`; normalized floats require the
 
 Both public Costes functions recognize **exact** reciprocal-multiply encodings of integer acquisition-grid levels, as produced by `img_as_float`, and map them to the existing division encoding before fitting thresholds and computing coefficients. This is performed per object, without modifying caller inputs. Other float values are left unchanged: there is no blanket quantization or epsilon-based snapping of nearby values. Explicit lower-bit-depth scales, such as `4095` for 12-bit images in `uint16`, use the same rule.
 
-This normalization correction resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes. It does not itself change threshold comparisons or NaN rules. The separate boundary-policy rollback is described below.
-
-## Costes boundary results and downstream quality control
-
-NumPy and Numba retain CellProfiler-style numerical boundary results instead of
-vetoing them based on the final background subset. This selectively reverses the
-background-search safeguards added in #110, not its acquisition-scale correction:
-
-- Neither search rechecks final background size, variation or correlation before
-  returning its thresholds. A final background with 0–2 pixels or a constant
-  channel can therefore produce finite coefficients, including zero or one.
-- Faster/bisection retains the `valid=1` fallback: if no nonnegative candidate is
-  found, the thresholds are `(0, fitted_intercept)`. During the search, subsets
-  with at most two pixels still move the lower bound; a constant subset leaves
-  the bounds unchanged, matching CP's numerical comparisons.
-- Fast/Accurate linear searches accept two-pixel correlations. Fewer than two
-  pixels end the search at the current thresholds; constant subsets follow the
-  ordinary one-step descent rather than causing an explicit NaN veto.
-
-Finite results are **not** a confidence or quality flag; filtering belongs to the
-caller. This does not promise the absence of NaNs: empty/missing labels,
-nonfinite/constant/insufficient input signals (including fewer than three usable
-input pairs), undefined or ill-conditioned regressions, nonconvergence, and zero
-coefficient denominators retain their existing diagnostics. Constant background
-subsets are handled without calling SciPy, so CP's incidental constant-input
-warnings are not reproduced. No NaNs are imputed or replaced after calculation.
-
-Per-object threshold fitting, scale validation, normalization, coefficient
-formulas and input immutability are unchanged. CP's object workflow still fits
-thresholds image-wide, so this rollback does not establish full CP/CPM pipeline
-equivalence. Historical NaN rates and timings must not be reused as measurements
-of this new policy.
+This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes.
 
 ## Singleton-Z measurement eligibility
 
@@ -185,9 +154,8 @@ search. This preserves threshold inclusion: even last-bit changes in the fitted
 line can change the result substantially. Constant/nonfinite or insufficient
 signals retain NaN results and standard `RuntimeWarning` diagnostics. Missing
 raw Costes labels likewise yield NaN and warnings, unlike the zero-valued slots
-of the other colocalization metrics. Small/constant search backgrounds use the
-permissive boundary policy above, not an output veto. Exceptional searches are
-replayed per object by the reference to preserve precise diagnostics. Near-constant subsets and
+of the other colocalization metrics. Exceptional searches are replayed per object
+by the reference to preserve precise diagnostics. Near-constant subsets and
 correlations within a reduction-error bound of a search decision also use this
 compatibility path; no correlation is rounded or search cutoff moved.
 

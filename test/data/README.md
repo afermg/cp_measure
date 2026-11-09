@@ -57,23 +57,7 @@ python test/make_costes_reference.py --source /path/to/measurecolocalization.py 
 
 CI reads the small JSON fixture; no download or CellProfiler install is needed.
 Both thresholds and coefficients are compared with rtol=1e-10, atol=1e-12.
-Separate tests cover scale conversion and undefined inputs. Guards for invalid
-input signals, undefined regressions and zero denominators remain. Background
-search boundaries now retain upstream numerical results rather than imposing an
-additional final-background veto.
-
-`costes_cellprofiler_boundaries.json` adds 33 cases from the **same hash-verified,
-unmodified methods**, covering all three modes at scales 255/65535 and a coarse
-scale of 2. They include final backgrounds with 0, 1 or 2 pixels, constant
-backgrounds and searches without a nonnegative candidate. Sample names describe
-the Faster case; linear outcomes can differ. The fixture records generator
-NumPy/SciPy versions. Fractions are computed separately using CPM's retained
-zero-denominator rule (`null` represents NaN for both directions), not a full CP
-application run. Both NumPy public APIs and Numba are checked against them.
-
-```bash
-python test/make_costes_boundary_reference.py --source /path/to/measurecolocalization.py --out /path/to/new-boundaries.json
-```
+Separate tests cover scale conversion and undefined inputs.
 
 **Scope:** parity of these threshold routines on these fixtures, not validation
 of all datasets, biology, significance or the full CellProfiler pipeline.
