@@ -92,14 +92,21 @@ def spatial_moments_2d(
         _powers(rows[None, :] - centre_r[:, None]).transpose(0, 2, 1) @ col_moments
     )
 
-    normalized = numpy.full((n, _ORDER, _ORDER), numpy.nan)
+    return raw, central, *normalized_and_hu(central)
+
+
+def normalized_and_hu(
+    central: NDArray[numpy.floating],
+) -> tuple[NDArray[numpy.floating], NDArray[numpy.floating]]:
+    """Normalized moments ``(n, 4, 4)`` (NaN where ``p + q < 2``) and the 7 Hu invariants
+    ``(n, 7)`` from per-object central moments ``(n, 4, 4)``."""
+    normalized = numpy.full(central.shape, numpy.nan)
     mu00 = central[:, 0, 0]
     for p in range(_ORDER):
         for q in range(_ORDER):
             if p + q >= 2:
                 normalized[:, p, q] = central[:, p, q] / mu00 ** ((p + q) / 2 + 1)
-
-    return raw, central, normalized, _hu_from_normalized(normalized)
+    return normalized, _hu_from_normalized(normalized)
 
 
 def inertia_2d(

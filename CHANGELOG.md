@@ -89,7 +89,11 @@ Notable user-facing changes are documented here.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
-  output remains integer and the existing moment implementation is retained.
+  output remains integer.
+- Numba size/shape computes the 2D spatial moments in one GIL-free kernel, so
+  batch images scale across threads. Raw moments are unchanged; the
+  inertia-derived features (inertia tensor, eigenvalues, axis lengths,
+  eccentricity) match NumPy within 1e-12.
 - Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
   (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
   widening of float16/float32 before arithmetic in both backends). Opting in can
