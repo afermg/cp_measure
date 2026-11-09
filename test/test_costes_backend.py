@@ -363,16 +363,18 @@ def test_costes_zero_correlation_branch_replays_reference(mode, monkeypatch):
         ).reshape(1, -1)
         / 8
     )
-    original = ref._costes_pair
-    calls = []
-
-    def recording(*args):
-        calls.append(True)
-        return original(*args)
-
-    monkeypatch.setattr(ref, "_costes_pair", recording)
     parity(a, b, np.ones(a.shape, int), scale_max=255, fast_costes=mode)
-    assert len(calls) == 2  # reference baseline plus candidate replay
+    # The reference decides the ambiguous zero crossing: by replaying the object,
+    # or (Faster) by deciding only that step and resuming the compiled search.
+    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
+
+    decided = []
+    for name in ("_costes_pair", "_costes_background_correlation"):
+        original = getattr(ref, name)
+        recording = lambda *args, _f=original, _n=name: decided.append(_n) or _f(*args)  # noqa: E731
+        monkeypatch.setattr(ref, name, recording)
+    get_correlation_costes(a, b, np.ones(a.shape, int), scale_max=255, fast_costes=mode)
+    assert decided
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -444,3 +446,19 @@ def test_costes_near_constant_float_object_matches_reference(mode):
                   0.5001220703045545, 0.5001220703443997, 0.5001220703058452,
                   0.5001220703133079])  # fmt: skip
     parity(x[None], y[None], np.ones((1, 10), int), scale_max=65535, fast_costes=mode)
+
+
+def test_costes_resumed_bisection_matches_reference():
+    """r is exactly 0 at a bisection step of this 8-bit object, so SciPy's last bits
+    decide it: the kernel pauses, the reference decides that step, the kernel
+    resumes, and values and warnings equal the reference."""
+    from cp_measure.core.numba._costes import RESUME, costes_faster
+    from cp_measure.primitives._segment_numba import numpy_sum_chunk
+
+    a = np.array([[2, 2, 4, 4, 0, 7, 5, 6, 0, 5]]) / 255
+    b = np.array([[4, 2, 6, 3, 1, 6, 8, 8, 8, 0]]) / 255
+    status = costes_faster(
+        a[0].copy(), b[0].copy(), np.array([0, 10]), 255.0, numpy_sum_chunk()
+    )[2]
+    assert status[0] == RESUME
+    parity(a, b, np.ones(a.shape, int), scale_max=255)

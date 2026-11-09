@@ -203,7 +203,7 @@ def test_bisection_ignores_linear_step_cutoffs():
 
     fi = np.array([3, 5, 4, 5, 3, 6, 6, 6, 6, 4]) / 255
     si = np.array([5, 5, 3, 5, 4, 5, 4, 3, 6, 2]) / 255
-    c1, c2, status = costes_faster(
+    c1, c2, status, _ = costes_faster(
         fi.copy(), si.copy(), np.array([0, 10]), 255.0, numpy_sum_chunk()
     )
     assert status[0] != REPLAY
