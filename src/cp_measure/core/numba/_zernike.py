@@ -274,7 +274,15 @@ def zernike_per_image(labels, pixels, degree, features, *, max_workers=None):
     # zernike_moments kernel releases the GIL) and a single group serially.
     results: list = [{} for _ in range(len(masks_bzyx))]
     grouped = list(groups.values())
-    for items, outs in zip(grouped, map_images(one, grouped, max_workers=max_workers)):
+    for items, outs in zip(
+        grouped,
+        map_images(
+            one,
+            grouped,
+            max_workers=max_workers,
+            pixels=sum(masks_bzyx[i].size for items in grouped for i in items),
+        ),
+    ):
         for i, out in zip(items, outs):
             results[i] = out
     return unwrap(results)

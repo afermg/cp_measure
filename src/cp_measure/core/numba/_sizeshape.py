@@ -736,6 +736,7 @@ def get_sizeshape(
             ),
             per_image(masks, pixels),
             max_workers=max_workers,
+            pixels=sum(numpy.size(m) for m in masks),
         )
     return _sizeshape_one(masks, pixels, calculate_advanced, new_features, spacing)
 

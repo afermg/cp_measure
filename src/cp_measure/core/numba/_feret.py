@@ -368,4 +368,5 @@ def get_feret(
         lambda item: _diameters(_boundary(item[0])),
         per_image(masks, None),
         max_workers=max_workers,
+        pixels=sum(numpy.size(m) for m in masks),
     )

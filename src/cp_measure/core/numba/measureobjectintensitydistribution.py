@@ -105,7 +105,14 @@ def get_radial_distribution(
     # map_images runs a batch on threads.
     measured: list = [{} for _ in volumes]
     grouped = list(groups.values())
-    for items, outs in zip(grouped, map_images(one, grouped)):
+    for items, outs in zip(
+        grouped,
+        map_images(
+            one,
+            grouped,
+            pixels=sum(volumes[i][0].size for items in grouped for i in items),
+        ),
+    ):
         for i, out in zip(items, outs):
             measured[i] = out
     return unwrap(_with_radial_cv(measured, scaled, bin_count))
