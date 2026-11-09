@@ -363,16 +363,22 @@ def test_costes_zero_correlation_branch_replays_reference(mode, monkeypatch):
         ).reshape(1, -1)
         / 8
     )
-    original = ref._costes_pair
-    calls = []
+    parity(
+        a, b, np.ones(a.shape, int), scale_max=255, fast_costes=mode, scipy_ties=True
+    )
+    # The reference decides the ambiguous zero crossing: by replaying the object,
+    # or (Faster) by deciding only that step and resuming the compiled search.
+    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
 
-    def recording(*args):
-        calls.append(True)
-        return original(*args)
-
-    monkeypatch.setattr(ref, "_costes_pair", recording)
-    parity(a, b, np.ones(a.shape, int), scale_max=255, fast_costes=mode)
-    assert len(calls) == 2  # reference baseline plus candidate replay
+    decided = []
+    for name in ("_costes_pair", "_costes_background_correlation"):
+        original = getattr(ref, name)
+        recording = lambda *args, _f=original, _n=name: decided.append(_n) or _f(*args)  # noqa: E731
+        monkeypatch.setattr(ref, name, recording)
+    get_correlation_costes(
+        a, b, np.ones(a.shape, int), scale_max=255, fast_costes=mode, scipy_ties=True
+    )
+    assert decided
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -380,7 +386,9 @@ def test_costes_near_constant_scipy_diagnostics(mode):
     rng = np.random.default_rng(13)
     a = 0.1 + rng.random((2, 12)) * 1e-14
     b = 0.1 + rng.random((2, 12)) * 1e-14
-    parity(a, b, np.ones(a.shape, int), scale_max=255, fast_costes=mode)
+    parity(
+        a, b, np.ones(a.shape, int), scale_max=255, fast_costes=mode, scipy_ties=True
+    )
 
 
 @pytest.mark.parametrize("scale", [2, 4095, 65535, 2**32 - 1])
@@ -395,3 +403,127 @@ def test_costes_background_ignored_and_unused_threshold():
     b = np.pad(b / 255, 1, constant_values=999)
     masks = np.pad(np.ones((8, 16), int), 1)
     parity(a, b, masks, scale_max=255, thr=93)
+
+
+@pytest.mark.parametrize("name", ["get_correlation_costes", "get_correlation_rwc"])
+def test_threaded_batch_matches_per_image_calls(name):
+    """A batch runs on threads; values and warnings equal per-image calls, in order,
+    including images whose objects warn or fall back to the reference."""
+    from cp_measure.core.numba import measurecolocalization as numba_coloc
+
+    function = getattr(numba_coloc, name)
+    kwargs = {"scale_max": 255} if name == "get_correlation_costes" else {}
+    a = np.array([[0.1, 0.2, 0.4, 0.7], [0.3, 0.5, 0.8, 1.0]] * 4)
+    masks = np.repeat(np.arange(1, 5), 2)[:, None] * np.ones((1, 4), dtype=np.int32)
+    constant, with_nan = a.copy(), a.copy()
+    constant[:2] = 0.1
+    with_nan[3, 1] = np.nan
+    firsts = [a, constant, a, with_nan, a]
+    seconds = [a[:, ::-1].copy(), a[:, ::-1].copy(), 1 - a, a[::-1].copy(), a**2]
+
+    def run(call):
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            values = call()
+        return values, [(w.category, str(w.message)) for w in recorded]
+
+    expected = [
+        run(lambda f=f, s=s: function(f, s, masks, **kwargs))
+        for f, s in zip(firsts, seconds)
+    ]
+    got, got_warnings = run(lambda: function(firsts, seconds, [masks] * 5, **kwargs))
+    assert got_warnings == [w for _, ws in expected for w in ws]
+    for item, (values, _) in zip(got, expected):
+        assert list(item) == list(values)
+        for key in values:
+            np.testing.assert_array_equal(item[key], values[key])
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_costes_near_constant_float_object_matches_reference(mode):
+    """|mean|/std ~ 1e10: the one-pass search steps must leave every decision the
+    exact kernel would replay to the reference, so values and warnings match."""
+    x = np.array([0.5001220702273792, 0.5001220702273793, 0.5001220702935895,
+                  0.5001220703935095, 0.5001220703053191, 0.5001220702452209,
+                  0.5001220703047751, 0.5001220702836826, 0.500122070423178,
+                  0.5001220703200201])  # fmt: skip
+    y = np.array([0.500122070337724, 0.5001220702661621, 0.5001220702523903,
+                  0.5001220703152156, 0.5001220702994836, 0.5001220703285519,
+                  0.5001220703045545, 0.5001220703443997, 0.5001220703058452,
+                  0.5001220703133079])  # fmt: skip
+    parity(
+        x[None],
+        y[None],
+        np.ones((1, 10), int),
+        scale_max=65535,
+        fast_costes=mode,
+        scipy_ties=True,
+    )
+
+
+def test_costes_resumed_bisection_matches_reference():
+    """r is exactly 0 at a bisection step of this 8-bit object, so SciPy's last bits
+    decide it: the kernel pauses, the reference decides that step, the kernel
+    resumes, and values and warnings equal the reference."""
+    from cp_measure.core.numba._costes import RESUME, costes_faster
+    from cp_measure.primitives._segment_numba import numpy_sum_chunk
+
+    a = np.array([[2, 2, 4, 4, 0, 7, 5, 6, 0, 5]]) / 255
+    b = np.array([[4, 2, 6, 3, 1, 6, 8, 8, 8, 0]]) / 255
+    status = costes_faster(
+        a[0].copy(), b[0].copy(), np.array([0, 10]), 255.0, True, numpy_sum_chunk()
+    )[2]
+    assert status[0] == RESUME
+    parity(a, b, np.ones(a.shape, int), scale_max=255, scipy_ties=True)
+
+
+def test_costes_kernel_decides_ties_by_default():
+    """By default the kernel decides an exact-zero tie and a near-constant subset
+    itself: no SciPy call, no SciPy warning, and the same result every run."""
+    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
+
+    tie = (
+        np.array([[2, 2, 4, 4, 0, 7, 5, 6, 0, 5]]) / 255,
+        np.array([[4, 2, 6, 3, 1, 6, 8, 8, 8, 0]]) / 255,
+    )
+    rng = np.random.default_rng(13)
+    near_constant = 0.1 + rng.random((2, 12)) * 1e-14, 0.1 + rng.random((2, 12)) * 1e-14
+    for a, b in (tie, near_constant):
+        masks = np.ones(a.shape, int)
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            first = get_correlation_costes(a, b, masks, scale_max=255)
+        assert not [w for w in recorded if "nearly constant" in str(w.message)]
+        again = get_correlation_costes(a, b, masks, scale_max=255)
+        for key in first:
+            np.testing.assert_array_equal(first[key], again[key])
+
+
+@pytest.mark.parametrize("mode", ["Fast", "Accurate"])
+def test_scipy_ties_two_pair_background_keeps_scipy_warnings(mode):
+    """A two-pair background that SciPy finds near-constant: with scipy_ties=True
+    the numba backend must replay it, keeping SciPy's warning and decision."""
+    import warnings
+
+    from cp_measure.core.numba.measurecolocalization import (
+        get_correlation_costes as nb_costes,
+    )
+
+    fi = np.array([0.02, 0.02 + 1e-14, 0.3, 0.5, 0.7, 0.9])
+    si = np.array([0.05, 0.06, 0.32, 0.48, 0.71, 0.88])
+    labels = np.ones((1, 6), np.int32)
+    runs = []
+    for fn, extra in (
+        (ref.get_correlation_costes, {}),
+        (nb_costes, {"scipy_ties": True}),
+    ):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            out = fn(
+                fi[None], si[None], labels, fast_costes=mode, scale_max=1000, **extra
+            )
+        runs.append((out, [(w.category, str(w.message)) for w in caught]))
+    (expected, expected_warnings), (got, got_warnings) = runs
+    assert got_warnings == expected_warnings
+    for key in expected:
+        np.testing.assert_array_equal(got[key], expected[key])

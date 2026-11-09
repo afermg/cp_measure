@@ -36,9 +36,13 @@ def assert_parity(name, first, second, masks, **kwargs):
             return
         actual = accelerated(first, second, masks, **kwargs)
     assert list(actual) == list(expected)
+    # Numba keeps the reference's float32 thresholds (which pixels count) but sums
+    # float32 inputs in float64, where NumPy sums in float32 (pairwise, and NumPy-
+    # version dependent above 8192 values): compare values at float32 resolution.
+    rtol = 1e-6 if np.float32 in (first.dtype, second.dtype) else 1e-12
     for key in expected:
         assert isinstance(actual[key], type(expected[key]))
-        np.testing.assert_allclose(actual[key], expected[key], rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(actual[key], expected[key], rtol=rtol, atol=1e-12)
         assert np.asarray(actual[key]).dtype == np.asarray(expected[key]).dtype
     for original, value in zip(originals, (first, second, masks)):
         np.testing.assert_array_equal(original, value)
@@ -100,6 +104,20 @@ def test_current_main_dtype_and_threshold(name, dtype, thr):
     masks[3:] = 2
     kwargs = {} if name == "pearson" else {"thr": thr}
     assert_parity(name, first, second, masks, **kwargs)
+
+
+@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("swap", [False, True])
+def test_mixed_float32_float64_channels(name, swap):
+    # Each channel keeps its own dtype's threshold rounding, as in the reference.
+    rng = np.random.default_rng(61)
+    first = rng.random((7, 8)).astype(np.float32)
+    second = rng.random((7, 8))
+    if swap:
+        first, second = second, first
+    masks = np.ones(first.shape, np.int32)
+    masks[3:] = 2
+    assert_parity(name, first, second, masks)
 
 
 @pytest.mark.parametrize("name", NAMES)
