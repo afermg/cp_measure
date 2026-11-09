@@ -7,42 +7,55 @@ import skimage.morphology as M
 
 from cp_measure.core.numba._granularity import (
     _disk_halfwidths,
-    bilinear_gather,
+    ball_dilation_3d,
+    ball_erosion_3d,
+    erosion_6conn_3d,
+    reconstruction_by_dilation_3d,
+    upsample_label_sums_3d,
     disk_dilation_2d,
     disk_erosion_2d,
     dilation_4conn_2d,
     erosion_4conn_2d,
+    label_sums,
+    readback_sums,
+    readback_tables,
     reconstruction_by_dilation_2d,
 )
 
 
 @pytest.mark.parametrize("seed", [0, 1, 7])
-def test_bilinear_gather_matches_map_coordinates(seed):
-    """The gather must match scipy order-1 map_coordinates (mode=constant) to ~eps,
-    including points on the array boundary (where a corner is out of range)."""
+@pytest.mark.parametrize("shape", [(37, 41), (64, 64)])
+def test_readback_matches_upsample_then_label_mean(seed, shape):
+    """Per-label sums of the bilinear readback equal upsampling the coarse grid with
+    order-1 map_coordinates (the baseline) and summing per label, to rounding; with
+    unit scales they equal a bincount of the grid at the object pixels exactly."""
     rng = numpy.random.default_rng(seed)
-    img = rng.random((37, 41))
-    H, W = img.shape
-    npts = 500
-    # Constant mode zeros the entire sample outside the domain, even by one ULP;
-    # it does not interpolate with zero-valued exterior corners (grid-constant).
-    sy = numpy.concatenate(
-        [
-            rng.uniform(0, H - 1, npts),
-            [0.0, H - 1, H - 1, -0.25, numpy.nextafter(H - 1.0, numpy.inf), 1, 1],
-        ]
+    labels = rng.integers(0, 6, size=shape)
+    labels[labels == 3] = 0  # an absent label
+    pixels = rng.random(shape)
+    n = int(labels.max())
+
+    def per_label(values):  # labels 1..n; background is never read back
+        flat = numpy.bincount(labels.ravel(), weights=values.ravel(), minlength=n + 1)
+        return flat[1:]
+
+    coarse = (shape[0] // 4, shape[1] // 3)
+    grid = rng.random(coarse)
+    sy = (coarse[0] - 1) / (shape[0] - 1)
+    sx = (coarse[1] - 1) / (shape[1] - 1)
+    counts, *tables = readback_tables(labels, n, sy, sx, *coarse)
+    sums = label_sums(labels, pixels, n)
+    yy, xx = numpy.indices(shape).astype(float)
+    upsampled = scipy.ndimage.map_coordinates(grid, (yy * sy, xx * sx), order=1)
+    numpy.testing.assert_allclose(
+        readback_sums(grid, *tables)[1:], per_label(upsampled), rtol=0, atol=1e-12
     )
-    sx = numpy.concatenate(
-        [
-            rng.uniform(0, W - 1, npts),
-            [0.0, W - 1, 0.0, 1, 1, -0.25, numpy.nextafter(W - 1.0, numpy.inf)],
-        ]
-    )
-    ref = scipy.ndimage.map_coordinates(img, (sy, sx), order=1)
-    y0 = numpy.floor(sy).astype(numpy.int64)
-    x0 = numpy.floor(sx).astype(numpy.int64)
-    got = bilinear_gather(img, y0, x0, sy - y0, sx - x0, H, W)
-    numpy.testing.assert_allclose(got, ref, rtol=0, atol=1e-12)
+    numpy.testing.assert_array_equal(counts[1:], per_label(numpy.ones(shape)))
+    numpy.testing.assert_array_equal(sums[1:], per_label(pixels))
+    # unit scales: same sums as a bincount at the object pixels, bit for bit
+    fine = rng.random(shape)
+    _, *unit = readback_tables(labels, n, 1.0, 1.0, *shape)
+    numpy.testing.assert_array_equal(readback_sums(fine, *unit)[1:], per_label(fine))
 
 
 def _images(seed):
@@ -163,4 +176,90 @@ def test_reconstruction_long_geodesic(offset):
     seed = numpy.pad(seed, padding)
     got = reconstruction_by_dilation_2d(seed, mask)
     expected = M.reconstruction(seed, mask, footprint=M.disk(1))
+    numpy.testing.assert_array_equal(got, expected)
+
+
+def _volumes(seed, shape=(5, 17, 15)):
+    rng = numpy.random.default_rng(seed)
+    hot = numpy.zeros(shape)
+    hot[0], hot[-1], hot[:, 0], hot[:, -1], hot[:, :, 0], hot[:, :, -1] = (7.0,) * 6
+    spike = numpy.zeros(shape)
+    spike[shape[0] // 2, shape[1] // 2, shape[2] // 2] = 5.0
+    return {
+        "random": rng.random(shape),
+        "int_ties": rng.integers(0, 5, size=shape).astype(numpy.float64),
+        "gradient": numpy.indices(shape).sum(0).astype(float),
+        "border_hot": hot,
+        "single_spike": spike,
+    }
+
+
+VOLUME_NAMES = ["random", "int_ties", "gradient", "border_hot", "single_spike"]
+
+
+@pytest.mark.parametrize("radius", [1, 2, 3, 5])
+@pytest.mark.parametrize("shape", [(5, 17, 15), (1, 12, 13), (3, 9, 30)])
+@pytest.mark.parametrize("name", VOLUME_NAMES)
+def test_ball_erosion_dilation_3d_bit_exact(radius, shape, name):
+    img = _volumes(radius, shape)[name]
+    numpy.testing.assert_array_equal(
+        ball_erosion_3d(img, radius), M.erosion(img, M.ball(radius))
+    )
+    numpy.testing.assert_array_equal(
+        ball_dilation_3d(img, radius), M.dilation(img, M.ball(radius))
+    )
+
+
+@pytest.mark.parametrize("shape", [(5, 17, 15), (1, 12, 13)])
+@pytest.mark.parametrize("name", VOLUME_NAMES)
+def test_6conn_erosion_3d_bit_exact(shape, name):
+    img = _volumes(0, shape)[name]
+    numpy.testing.assert_array_equal(erosion_6conn_3d(img), M.erosion(img, M.ball(1)))
+
+
+@pytest.mark.parametrize("shape", [(5, 17, 15), (1, 12, 13), (7, 6, 40)])
+@pytest.mark.parametrize("name", ["random", "int_ties", "gradient", "single_spike"])
+def test_reconstruction_3d_cascade_bit_exact(shape, name):
+    """The spectrum's cascade (rec_g is the next step's mask) matches skimage each step."""
+    pixels = _volumes(3, shape)[name]
+    ero, recon_mask = pixels.copy(), pixels
+    for _ in range(4):
+        ero = erosion_6conn_3d(ero)
+        rec = reconstruction_by_dilation_3d(ero, recon_mask)
+        expected = M.reconstruction(ero, recon_mask, footprint=M.ball(1))
+        numpy.testing.assert_array_equal(rec, expected)
+        recon_mask = rec
+
+
+@pytest.mark.parametrize("seed", range(6))
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+def test_upsample_label_sums_3d_bit_exact(seed, dtype):
+    """Equal, bit for bit, to the baseline's trilinear map_coordinates upsample of a
+    grid of that dtype followed by ndimage.mean, including the last plane, row and
+    column and an absent label."""
+    rng = numpy.random.default_rng(seed)
+    shape = tuple(int(v) for v in rng.integers(4, 40, 3))
+    coarse = tuple(max(2, int(s * f)) for s, f in zip(shape, rng.uniform(0.2, 1, 3)))
+    labels = rng.integers(0, 6, size=shape)
+    labels[labels == 3] = 0
+    n = int(labels.max())
+    grid = rng.random(coarse).astype(dtype)
+    scales = [float(c - 1) / float(s - 1) for c, s in zip(coarse, shape)]
+    kk, yy, xx = numpy.indices(shape).astype(float)
+    upsampled = scipy.ndimage.map_coordinates(
+        grid, (kk * scales[0], yy * scales[1], xx * scales[2]), order=1
+    )
+    expected = scipy.ndimage.mean(upsampled, labels, numpy.arange(1, n + 1))
+    counts = numpy.bincount(labels.ravel(), minlength=n + 1)[1:]
+    with numpy.errstate(invalid="ignore", divide="ignore"):
+        got = (
+            upsample_label_sums_3d(
+                grid.astype(numpy.float64),
+                labels,
+                n,
+                tuple(scales),
+                dtype is numpy.float32,
+            )[1:]
+            / counts
+        )
     numpy.testing.assert_array_equal(got, expected)

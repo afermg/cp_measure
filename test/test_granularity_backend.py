@@ -1,5 +1,9 @@
 """Correctness of the numba granularity backend vs the numpy baseline."""
 
+import hashlib
+import json
+from pathlib import Path
+
 import numpy
 import pytest
 
@@ -75,6 +79,43 @@ def test_subsampled_boundary_object_matches_baseline(transpose):
     )
 
 
+@pytest.mark.parametrize(
+    "case_index",
+    range(3),
+    ids=["resample-both", "resample-background", "no-background-resampling"],
+)
+def test_float32_background_matches_numpy_and_cellprofiler(case_index):
+    reference = json.loads(
+        (
+            Path(__file__).parent
+            / "data/granularity_float32_cellprofiler_reference.json"
+        ).read_text()
+    )
+    y, x = numpy.indices((64, 80))
+    raw = ((73 * y + 157 * x + ((13 * x + 29 * y) % 31) * 101) % 40000 + 1000).astype(
+        numpy.uint16
+    )
+    pixels = raw.astype(numpy.float32) / numpy.float32(65535)
+    labels = numpy.zeros(raw.shape, numpy.int32)
+    labels[8:28, 8:28] = 1
+    labels[32:58, 37:68] = 2
+    assert hashlib.sha256(pixels.tobytes()).hexdigest() == reference["pixels_sha256"]
+    assert hashlib.sha256(labels.tobytes()).hexdigest() == reference["labels_sha256"]
+    case = reference["cases"][case_index]
+    params = dict(
+        subsample_size=case["subsample_size"],
+        image_sample_size=case["image_sample_size"],
+        element_size=2,
+        granular_spectrum_length=6,
+    )
+    before = pixels.copy()
+    baseline = gran_numpy(labels, pixels, **params)
+    accelerated = gran_numba(labels, pixels, **params)
+    _assert_same(baseline, case["expected"])
+    _assert_same(accelerated, baseline)
+    numpy.testing.assert_array_equal(pixels, before)
+
+
 def test_single_object():
     mask = numpy.zeros((60, 60), numpy.int32)
     mask[20:40, 20:40] = 1
@@ -124,6 +165,32 @@ def test_batch_sequence_precision_matches_per_image(container, precision):
         _assert_same(got, gran_numba(m, p, precision=precision))
         if precision == "float64":
             _assert_same(got, gran_numpy(m, p, precision=precision))
+
+
+@pytest.mark.parametrize("max_workers", [None, 1])
+def test_batch_shared_mask_matches_per_image(max_workers):
+    """A list repeating one mask object (the featurizer's one mask per channel),
+    mixed with a different mask, equals per-image calls exactly and in order,
+    whether the batch runs on threads or serially."""
+    mask, pixels = _scene(seed=0)
+    other_mask, other_pixels = _scene(n=3, seed=1)
+    channels = [pixels, pixels[::-1].copy(), numpy.sqrt(pixels)]
+    masks = [mask, mask, other_mask, mask]
+    images = [channels[0], channels[1], other_pixels, channels[2]]
+    out = gran_numba(masks, images, max_workers=max_workers)
+    assert isinstance(out, list) and len(out) == 4
+    for m, p, got in zip(masks, images, out):
+        want = gran_numba(m, p)
+        assert list(got) == list(want)
+        for k in want:
+            numpy.testing.assert_array_equal(got[k], want[k], err_msg=k)
+
+
+def test_batch_list_ragged_rejected():
+    a = _scene(H=80, W=80, seed=0)
+    b = _scene(H=64, W=96, n=3, seed=1)
+    with pytest.raises(ValueError, match="same shape"):
+        gran_numba([a[0], b[0]], [a[1], b[1]])
 
 
 @pytest.mark.parametrize("container", [list, tuple])
@@ -194,22 +261,101 @@ def test_featurizer_batch_matches_numpy(monkeypatch, is_3d):
     numpy.testing.assert_array_equal(masks, masks_before)
 
 
+def _assert_same_or_same_error(mask, pixels, **params):
+    """3D numba equals numpy bit for bit, or raises numpy's error (e.g. scipy
+    rejects float16)."""
+    try:
+        expected = gran_numpy(mask, pixels, **params)
+    except Exception as error:
+        with pytest.raises(type(error), match=str(error)):
+            gran_numba(mask, pixels, **params)
+        return
+    actual = gran_numba(mask, pixels, **params)
+    assert actual.keys() == expected.keys()
+    for key in expected:
+        numpy.testing.assert_array_equal(actual[key], expected[key], err_msg=key)
+
+
+def _volume(Z=9, H=48, W=40, seed=0):
+    """A textured 3D volume and a mask with objects touching every face and an
+    absent label, so the readback covers the last plane, row and column."""
+    rng = numpy.random.default_rng(seed)
+    z, y, x = numpy.indices((Z, H, W))
+    pixels = rng.random((Z, H, W)) + 0.3 * numpy.sin(z / 2 + y / 4) * numpy.cos(x / 5)
+    mask = numpy.zeros((Z, H, W), numpy.int32)
+    mask[:, 5:20, 4:16] = 1
+    mask[2:, 30:, 20:] = 2  # touches the last plane, row and column
+    mask[0:3, 0:6, 30:] = 4  # label 3 is absent
+    return mask, pixels
+
+
+@pytest.mark.parametrize(
+    "sub,img", [(1.0, 1.0), (0.5, 0.5), (0.5, 0.25), (0.25, 1.0), (1.0, 0.5)]
+)
+@pytest.mark.parametrize("dtype", [numpy.float16, numpy.float32, numpy.float64])
 @pytest.mark.parametrize("precision", ["input", "float64"])
-def test_3d_volume_falls_back_to_numpy(precision):
-    # Z>1 dispatches to the numpy baseline. Use fullres to exercise morphology;
-    # default subsampling would collapse Z and return NaNs instead.
-    rng = numpy.random.default_rng(5)
-    pixels = rng.random((3, 40, 40)).astype(numpy.float32)
-    mask = numpy.zeros((3, 40, 40), numpy.int32)
-    mask[:, 10:25, 10:25] = 1
-    _assert_same(
-        gran_numba(
-            mask, pixels, subsample_size=1.0, image_sample_size=1.0, precision=precision
-        ),
-        gran_numpy(
-            mask,
-            pixels if precision == "input" else pixels.astype(numpy.float64),
-            subsample_size=1.0,
-            image_sample_size=1.0,
-        ),
+def test_3d_matches_baseline(sub, img, dtype, precision):
+    if dtype is numpy.float16 and precision == "input" and sub == img == 1.0:
+        pytest.skip(
+            "scipy rejects float16; without a resample numba measures it anyway, "
+            "as in 2D"
+        )
+    mask, pixels = _volume(Z=12 if sub < 0.5 else 9)
+    pixels = pixels.astype(dtype)
+    pixels.setflags(write=False)
+    params = dict(
+        subsample_size=sub,
+        image_sample_size=img,
+        element_size=2,
+        granular_spectrum_length=6,
+        precision=precision,
     )
+    _assert_same_or_same_error(mask, pixels, **params)
+
+
+@pytest.mark.parametrize("shape", [(1, 17, 15), (2, 17, 15), (3, 1, 15), (4, 7, 17)])
+@pytest.mark.parametrize("sub", [0.25, 0.5, 1.0])
+@pytest.mark.parametrize("has_objects", [False, True])
+def test_small_volume_matches_baseline(shape, sub, has_objects):
+    """Thin, singleton-Z and collapsing volumes: same values, or the same error."""
+    mask = numpy.full(shape, int(has_objects), dtype=numpy.int32)
+    pixels = numpy.random.default_rng(0).random(shape)
+    params = dict(subsample_size=sub, image_sample_size=1.0, element_size=1)
+    _assert_same_or_same_error(mask, pixels, **params)
+
+
+@pytest.mark.parametrize("depth", [0, 6], ids=["2d", "3d"])
+@pytest.mark.parametrize("sub,img", [(1.0, 1.0), (1.0, 0.5), (0.5, 0.5)])
+def test_integer_images_measure_as_float64(depth, sub, img):
+    """Integer pixels are measured as their exact float64 values: the background
+    subtraction must not wrap around (or round) in the integer dtype. Sparse
+    bright spots make the resampled background exceed some pixels."""
+    if depth:
+        mask, _ = _volume(Z=depth * 2, seed=3)
+    else:
+        mask, _ = _scene(seed=3)
+    rng = numpy.random.default_rng(3)
+    pixels = rng.integers(500, 1500, mask.shape).astype(numpy.uint16)
+    pixels[rng.random(mask.shape) < 0.01] = 60000
+    params = dict(subsample_size=sub, image_sample_size=img, element_size=2)
+    got = gran_numba(mask, pixels, **params)
+    ref = gran_numba(mask, pixels.astype(numpy.float64), **params)
+    for key in ref:
+        numpy.testing.assert_array_equal(got[key], ref[key], err_msg=key)
+
+
+def test_thin_volume_background_is_deterministic():
+    """An 8-slice volume at default sizes has a 2-sample background grid along Z;
+    the NumPy opening must not read outside it (mode="reflect" did), so repeated
+    calls agree and match the numba backend."""
+    pixels = numpy.random.default_rng(0).random((8, 16, 16))
+    mask = numpy.ones(pixels.shape, numpy.int32)
+    mask[:, :8] = 2
+    first = gran_numpy(mask, pixels)
+    for _ in range(3):
+        again = gran_numpy(mask, pixels)
+        for key in first:
+            numpy.testing.assert_array_equal(again[key], first[key], err_msg=key)
+    got = gran_numba(mask, pixels)
+    for key in first:
+        numpy.testing.assert_array_equal(got[key], first[key], err_msg=key)
