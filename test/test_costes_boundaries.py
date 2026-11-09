@@ -60,10 +60,13 @@ def test_boundary_coefficients_are_not_vetoed(case, backend):
         np.array(list(actual.values())).ravel(), expected, rtol=1e-12, atol=1e-12
     )
     if np.isnan(expected).any():
+        # Label APIs count the objects per reason; the single-object API does not.
+        count = "" if backend == "single" else " for 1 object"
         assert [(w.category, str(w.message)) for w in recorded] == [
             (
                 RuntimeWarning,
-                "Undefined Costes result: zero above-threshold intensity denominator",
+                f"Undefined Costes result{count}: zero above-threshold intensity "
+                "denominator",
             )
         ]
     else:

@@ -140,10 +140,39 @@ def test_costes_mixed_statuses_keep_reference_order(mode, scipy_ties):
     parity(a, b, masks, scale_max=255, fast_costes=mode, scipy_ties=scipy_ties)
 
 
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+def test_undefined_costes_warnings_are_summarized(backend):
+    """One RuntimeWarning per undefined reason and image, with the number of objects,
+    in the order the reasons first occur. A batch warns for each image."""
+    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
+
+    function = (
+        get_correlation_costes if backend == "numba" else ref.get_correlation_costes
+    )
+    a, b, masks = mixed_status_objects()
+    # labels 1, 2, 5 and 7 remain: defined, constant, all zero, constant
+    masks = np.where(np.isin(masks, [3, 6]), 0, masks)
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        result = function([a, a], [b, b], [masks, masks], scale_max=255)
+    image = [
+        "Undefined Costes result for 2 objects: constant channel in the regression subset",
+        "Undefined Costes result for 3 objects: missing or empty object label",
+        "Undefined Costes result for 1 object: fewer than three nonzero paired pixels",
+    ]
+    assert [(w.category, str(w.message)) for w in recorded] == [
+        (RuntimeWarning, message) for message in image * 2
+    ]
+    for values in result:
+        assert np.isfinite(values["Correlation_Costes_1"][0])
+        assert np.isnan(values["Correlation_Costes_1"][1:]).all()
+
+
 @pytest.mark.parametrize("mode", MODES)
 def test_costes_out_of_range_after_warnings_matches_reference(mode):
     """An out-of-range object raises after the objects before it were measured,
-    with the same warnings emitted first by both backends."""
+    with the same warnings emitted first by both backends: SciPy's from replayed
+    objects, but no undefined-result summary, as the call does not finish."""
     from cp_measure.core.numba.measurecolocalization import get_correlation_costes
 
     a, b, masks = mixed_status_objects()
@@ -159,6 +188,7 @@ def test_costes_out_of_range_after_warnings_matches_reference(mode):
                 function(a, b, masks, scale_max=255, fast_costes=mode, **extra)
         runs.append([(w.category, str(w.message)) for w in recorded])
     assert runs[0] == runs[1]
+    assert runs[0] and not [m for _, m in runs[0] if "Undefined Costes" in m]
 
 
 @pytest.mark.parametrize("scale", [None, 0, 1, -1, True, 255.0, np.nan, np.inf, 2**32])

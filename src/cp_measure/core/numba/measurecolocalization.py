@@ -349,8 +349,8 @@ def _resume_bisection(g1, g2, lo, hi, scale, state, chunk):
 
     The reference decides each ambiguous step (SciPy's last bits pick the side of
     r = 0, and SciPy emits its own warnings); the kernel runs the steps in between.
-    Same values and warnings as replaying ``reference._costes_pair``, with one
-    SciPy call per ambiguous step instead of one per step.
+    Same result as replaying ``reference._costes_pair``, ``(c1, c2, reason)``, with
+    one SciPy call per ambiguous step instead of one per step.
     """
     fi, si = g1[lo:hi], g2[lo:hi]
     a, b = float(state[6]), float(state[7])
@@ -376,7 +376,7 @@ def _resume_bisection(g1, g2, lo, hi, scale, state, chunk):
         state[0], state[1], state[2] = left, right, ((right - left) // divisor) + left
         code = _bisection_steps(g1, g2, lo, hi, scale, state, totals, True)
         if code == STEPS_NOT_CONVERGED:
-            return reference._undefined_costes("bisection did not converge")
+            return numpy.nan, numpy.nan, "bisection did not converge"
     thr1, thr2 = _bisection_end(scale, state)
     status, c1, c2 = _coefficients(
         g1,
@@ -390,8 +390,8 @@ def _resume_bisection(g1, g2, lo, hi, scale, state, chunk):
         chunk,
     )
     if status != SEARCHED:
-        return reference._undefined_costes(_UNDEFINED_REASONS[status])
-    return c1, c2
+        return numpy.nan, numpy.nan, _UNDEFINED_REASONS[status]
+    return c1, c2, None
 
 
 def get_correlation_costes(
@@ -409,9 +409,9 @@ def get_correlation_costes(
     Floats require an explicit acquisition ``scale_max``; same-dtype unsigned
     integers infer it. ``thr`` is retained but unused. One compiled pass measures
     all objects; its regression and coefficient sums reproduce NumPy's, so the
-    same pixels count. Undefined results warn with the reference's messages, and
-    near-constant searches replay the reference for its diagnostics. See the NumPy
-    API for details.
+    same pixels count. Undefined results warn as the reference does, once per reason
+    and image with the number of objects, and near-constant searches replay the
+    reference for its diagnostics. See the NumPy API for details.
 
     The kernel decides every search step itself. When r is within rounding of a
     decision point (often exactly 0 on small integer-grid objects) or the subset is
@@ -459,25 +459,39 @@ def get_correlation_costes(
 
     def finish(staged):
         g1, g2, offsets, c1, c2, status, states, scale = staged
-        # Warnings, errors and replays on the calling thread, in image and object
+        # Replays, errors and warnings on the calling thread, in image and object
         # order, as the reference emits them. Only flagged objects need Python.
         flagged = numpy.flatnonzero(status)
-        for k, code in zip(flagged.tolist(), status[flagged].tolist()):
-            if code == OUT_OF_RANGE:
-                raise ValueError(
-                    "Costes expects normalized pixels in [0, 1]; check scale_max"
-                )
+        codes = status[flagged]
+        undefined = []  # (first object, reason, number of objects)
+        replays = (codes == RESUME) | (codes == REPLAY)
+        for k, code in zip(flagged[replays].tolist(), codes[replays].tolist()):
+            lo, hi = offsets[k], offsets[k + 1]
             if code == RESUME:
-                c1[k], c2[k] = _resume_bisection(
-                    g1, g2, offsets[k], offsets[k + 1], scale, states[k], chunk
-                )
-            elif code == REPLAY:
-                lo, hi = offsets[k], offsets[k + 1]
-                c1[k], c2[k] = reference._costes_pair(
-                    g1[lo:hi], g2[lo:hi], scale, fast_costes
+                c1[k], c2[k], reason = _resume_bisection(
+                    g1, g2, lo, hi, scale, states[k], chunk
                 )
             else:
-                reference._undefined_costes(_UNDEFINED_REASONS[code])
+                c1[k], c2[k], reason = reference._costes_pair(
+                    g1[lo:hi], g2[lo:hi], scale, fast_costes
+                )
+            if reason is not None:
+                undefined.append((k, reason, 1))
+        # The kernel stops at the first out-of-range object, so it is the last one.
+        if codes.size and codes[-1] == OUT_OF_RANGE:
+            raise ValueError(
+                "Costes expects normalized pixels in [0, 1]; check scale_max"
+            )
+        found, first, count = numpy.unique(
+            codes[~replays], return_index=True, return_counts=True
+        )
+        others = flagged[~replays]
+        for code, i, n in zip(found.tolist(), first.tolist(), count.tolist()):
+            undefined.append((others[i], _UNDEFINED_REASONS[code], n))
+        counts = {}  # in the order the reasons first occur, as the reference
+        for _, reason, n in sorted(undefined, key=lambda entry: entry[0]):
+            counts[reason] = counts.get(reason, 0) + n
+        reference._warn_undefined_costes(counts)
         return {
             f"{F_COSTES_FORMAT}_1": c1.tolist(),
             f"{F_COSTES_FORMAT}_2": c2.tolist(),
