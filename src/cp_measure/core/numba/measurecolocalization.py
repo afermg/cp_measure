@@ -40,9 +40,17 @@ from cp_measure.core.numba._costes import (
     NO_VALID_THRESHOLD,
     OUT_OF_RANGE,
     REPLAY,
+    RESUME,
+    SEARCHED,
+    STEPS_DONE,
+    STEPS_NOT_CONVERGED,
     UNDEFINED_BACKGROUND,
     UNDEFINED_IN_SEARCH,
     ZERO_DENOMINATOR,
+    _bisection_end,
+    _bisection_steps,
+    _coefficients,
+    _moment_totals,
     costes_faster,
     costes_linear,
 )
@@ -265,6 +273,62 @@ def get_correlation_overlap(
     )
 
 
+def _resume_bisection(g1, g2, lo, hi, scale, state, chunk):
+    """Finish a bisection the kernel paused at an ambiguous step.
+
+    The reference decides each ambiguous step (SciPy's last bits pick the side of
+    r = 0, and SciPy emits its own warnings); the kernel runs the steps in between.
+    Same values and warnings as replaying ``reference._costes_pair``, with one
+    SciPy call per ambiguous step instead of one per step.
+    """
+    fi, si = g1[lo:hi], g2[lo:hi]
+    a, b = float(state[6]), float(state[7])
+    totals = _moment_totals(g1, g2, lo, hi)
+    code = None
+    while code != STEPS_DONE:
+        # bisection_costes' update on Python floats, as the reference computes it.
+        left, right, mid = (float(v) for v in state[:3])
+        thr_fi = mid / scale
+        selected = (fi < thr_fi) | (si < (a * thr_fi) + b)
+        r = reference._costes_background_correlation(fi, si, selected)
+        if not numpy.isfinite(r) or r < 0:
+            left = mid - 1
+        else:
+            right = mid + 1
+            state[4] = mid
+        state[3] = mid
+        divisor = 6 / 5 if right - left > 6 else 2
+        state[0], state[1], state[2] = left, right, ((right - left) // divisor) + left
+        code = _bisection_steps(g1, g2, lo, hi, scale, state, totals)
+        if code == STEPS_NOT_CONVERGED:
+            return reference._undefined_costes("bisection did not converge")
+    thr1, thr2, status = _bisection_end(g1, g2, lo, hi, scale, state)
+    if status != SEARCHED:
+        return reference._undefined_costes(_UNDEFINED_REASONS[status])
+    if not (numpy.isfinite(thr1) and numpy.isfinite(thr2)):
+        # The chosen subset is near-constant: SciPy's check and diagnostics decide.
+        thr_fi = (float(state[4]) - 1) / scale
+        thr1, thr2 = reference._finish_costes_thresholds(
+            fi, si, thr_fi, (a * thr_fi) + b
+        )
+        if not (numpy.isfinite(thr1) and numpy.isfinite(thr2)):
+            return numpy.nan, numpy.nan
+    status, c1, c2 = _coefficients(
+        g1,
+        g2,
+        lo,
+        hi,
+        thr1,
+        thr2,
+        numpy.empty(hi - lo, bool),
+        numpy.empty(hi - lo),
+        chunk,
+    )
+    if status != SEARCHED:
+        return reference._undefined_costes(_UNDEFINED_REASONS[status])
+    return c1, c2
+
+
 def get_correlation_costes(
     pixels_1: NDArray[numpy.number],
     pixels_2: NDArray[numpy.number],
@@ -300,8 +364,9 @@ def get_correlation_costes(
             raise ValueError(f"Costes expects 2D or 3D images, got {mask.ndim}D")
         zyx = (mask, p1, p2) if mask.ndim == 3 else (mask[None], p1[None], p2[None])
         g1, g2, offsets = _grouped(*zyx)
+        states = None
         if fast_costes == M_FASTER:
-            c1, c2, status = costes_faster(
+            c1, c2, status, states = costes_faster(
                 g1, g2, offsets, float(scale), numpy_sum_chunk()
             )
         else:
@@ -309,12 +374,13 @@ def get_correlation_costes(
             c1, c2, status = costes_linear(
                 g1, g2, offsets, float(scale), accurate, numpy_sum_chunk()
             )
-        # Keep the grouped pixels only for objects the reference must replay.
-        replay = (g1, g2) if (status == REPLAY).any() else (None, None)
-        return *replay, offsets, c1, c2, status
+        # Keep the grouped pixels only for objects the reference must decide.
+        needed = ((status == REPLAY) | (status == RESUME)).any()
+        replay = (g1, g2) if needed else (None, None)
+        return *replay, offsets, c1, c2, status, states
 
     def finish(staged):
-        g1, g2, offsets, c1, c2, status = staged
+        g1, g2, offsets, c1, c2, status, states = staged
         # Warnings, errors and replays on the calling thread, in image and object
         # order, as the reference emits them.
         for k in numpy.flatnonzero(status):
@@ -322,8 +388,12 @@ def get_correlation_costes(
                 raise ValueError(
                     "Costes expects normalized pixels in [0, 1]; check scale_max"
                 )
-            if status[k] == REPLAY:
-                lo, hi = offsets[k], offsets[k + 1]
+            lo, hi = offsets[k], offsets[k + 1]
+            if status[k] == RESUME:
+                c1[k], c2[k] = _resume_bisection(
+                    g1, g2, lo, hi, scale, states[k], numpy_sum_chunk()
+                )
+            elif status[k] == REPLAY:
                 c1[k], c2[k] = reference._costes_pair(
                     g1[lo:hi], g2[lo:hi], scale, fast_costes
                 )

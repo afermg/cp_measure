@@ -42,6 +42,11 @@ CONSTANT_CHANNEL = 7
 ZERO_DENOMINATOR = 8
 OUT_OF_RANGE = 9
 REPLAY = 10
+RESUME = 11  # a bisection step was ambiguous; the wrapper asks the reference for it
+
+# _bisection_steps outcomes, and its state layout (one float64 row per object).
+STEPS_DONE, STEPS_AMBIGUOUS, STEPS_NOT_CONVERGED = 0, 1, 2
+_LEFT, _RIGHT, _MID, _LASTMID, _VALID, _ITERATIONS, _A, _B = range(8)
 
 
 @njit(cache=True, error_model="numpy")
@@ -154,30 +159,47 @@ def _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs):
     return cnt, min(1.0, max(-1.0, r))
 
 
-@njit(cache=True, error_model="numpy")
-def _bisection(g1, g2, lo, hi, a, b, scale):
-    """``bisection_costes`` (M_FASTER): narrowing-window search for the threshold.
+@njit(cache=True)
+def _bisection_state(a, b, scale):
+    """The reference's initial bisection window; ``valid`` NaN stands for None."""
+    state = np.empty(8)
+    state[_LEFT] = 1.0
+    state[_RIGHT] = float(scale)
+    state[_MID] = ((state[_RIGHT] - state[_LEFT]) // (6 / 5)) + state[_LEFT]
+    state[_LASTMID] = 0.0
+    state[_VALID] = np.nan
+    state[_ITERATIONS] = 0
+    state[_A] = a
+    state[_B] = b
+    return state
 
-    Returns ``(thr_fi, thr_si, status)``; see the status codes at the top of the module.
+
+@njit(cache=True, error_model="numpy")
+def _bisection_steps(g1, g2, lo, hi, scale, state, totals):
+    """Run ``bisection_costes``' loop from ``state`` (updated in place).
+
+    Returns ``STEPS_DONE``, ``STEPS_NOT_CONVERGED``, or ``STEPS_AMBIGUOUS`` when a
+    step's r is too close to 0 (or the subset too near-constant) to decide like
+    SciPy; ``state[_MID]`` is then that step's candidate, already counted, for the
+    caller to decide with the reference and resume.
     """
-    left = 1.0
-    right = float(scale)
-    mid = ((right - left) // (6 / 5)) + left
-    lastmid = 0.0
-    valid = np.nan
-    iterations = 0
-    totals = _moment_totals(g1, g2, lo, hi)
+    left, right, mid = state[_LEFT], state[_RIGHT], state[_MID]
+    lastmid, valid, iterations = state[_LASTMID], state[_VALID], state[_ITERATIONS]
+    a, b = state[_A], state[_B]
+    code = STEPS_DONE
     while lastmid != mid:
         iterations += 1
         if iterations > 256:
-            return np.nan, np.nan, SEARCHED
+            code = STEPS_NOT_CONVERGED
+            break
         thr_fi = mid / scale
         thr_si = a * thr_fi + b
         cnt, r = _direct_count_pearson(
             g1, g2, lo, hi, totals, thr_fi, thr_si, _SIGN_CUTOFF
         )
         if np.isinf(r):
-            return np.nan, np.nan, SEARCHED
+            code = STEPS_AMBIGUOUS
+            break
         if not np.isfinite(r) or r < 0:
             left = mid - 1
         else:
@@ -188,11 +210,31 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
             mid = ((right - left) // (6 / 5)) + left
         else:
             mid = ((right - left) // 2) + left
-    if np.isnan(valid):
+    state[_LEFT], state[_RIGHT], state[_MID] = left, right, mid
+    state[_LASTMID], state[_VALID], state[_ITERATIONS] = lastmid, valid, iterations
+    return code
+
+
+@njit(cache=True, error_model="numpy")
+def _bisection_end(g1, g2, lo, hi, scale, state):
+    """The thresholds of a finished bisection: ``(thr_fi, thr_si, status)``."""
+    if np.isnan(state[_VALID]):
         return np.nan, np.nan, NO_VALID_THRESHOLD
-    thr_fi_c = (valid - 1) / scale
-    thr_si_c = a * thr_fi_c + b
-    return _finish(g1, g2, lo, hi, thr_fi_c, thr_si_c)
+    thr_fi_c = (state[_VALID] - 1) / scale
+    return _finish(g1, g2, lo, hi, thr_fi_c, state[_A] * thr_fi_c + state[_B])
+
+
+@njit(cache=True, error_model="numpy")
+def _bisection(g1, g2, lo, hi, a, b, scale):
+    """``bisection_costes`` (M_FASTER): narrowing-window search for the threshold.
+
+    Returns ``(thr_fi, thr_si, status)``; NaN thresholds with ``SEARCHED`` where
+    only the reference can decide (see the status codes at the top of the module).
+    """
+    state = _bisection_state(a, b, scale)
+    if _bisection_steps(g1, g2, lo, hi, scale, state, _moment_totals(g1, g2, lo, hi)):
+        return np.nan, np.nan, SEARCHED
+    return _bisection_end(g1, g2, lo, hi, scale, state)
 
 
 @njit(cache=True, error_model="numpy")
@@ -586,11 +628,13 @@ def costes_faster(g1, g2, offsets, scale, chunk):
     ``offsets[k]:offsets[k + 1]``), already divided by the acquisition scale; they
     are canonicalized in place. ``chunk`` is ``numpy_sum_chunk()``. Validity, the
     regression line, the search and the coefficients follow
-    ``reference._costes_pair``. Returns ``(c1, c2, status)``; a non-zero status
-    leaves NaN for the wrapper to report (see the status codes above). The pass
+    ``reference._costes_pair``. Returns ``(c1, c2, status, states)``; a non-zero
+    status leaves NaN for the wrapper to report (see the status codes above), and
+    a ``RESUME`` object's row of ``states`` holds its paused bisection. The pass
     stops at the first ``OUT_OF_RANGE`` object, where the reference raises.
     """
     c1, c2, status, buf, keep = _prepare(g1, g2, offsets, scale)
+    states = np.empty((offsets.size - 1, 8))
     for k in range(offsets.size - 1):
         lo, hi = offsets[k], offsets[k + 1]
         st = _validity(g1, g2, lo, hi) if hi > lo else EMPTY_OBJECT
@@ -599,17 +643,26 @@ def costes_faster(g1, g2, offsets, scale, chunk):
             if not (np.isfinite(a) and np.isfinite(b)):
                 st = REPLAY  # rare; the reference's NumPy diagnostics decide
             else:
-                thr1, thr2, st = _bisection(g1, g2, lo, hi, a, b, scale)
-                if st == SEARCHED and not (np.isfinite(thr1) and np.isfinite(thr2)):
+                state = _bisection_state(a, b, scale)
+                totals = _moment_totals(g1, g2, lo, hi)
+                code = _bisection_steps(g1, g2, lo, hi, scale, state, totals)
+                if code == STEPS_AMBIGUOUS:
+                    st = RESUME
+                    states[k] = state
+                elif code == STEPS_NOT_CONVERGED:
                     st = REPLAY
-                elif st == SEARCHED:
-                    st, c1[k], c2[k] = _coefficients(
-                        g1, g2, lo, hi, thr1, thr2, keep, buf, chunk
-                    )
+                else:
+                    thr1, thr2, st = _bisection_end(g1, g2, lo, hi, scale, state)
+                    if st == SEARCHED and not (np.isfinite(thr1) and np.isfinite(thr2)):
+                        st = REPLAY
+                    elif st == SEARCHED:
+                        st, c1[k], c2[k] = _coefficients(
+                            g1, g2, lo, hi, thr1, thr2, keep, buf, chunk
+                        )
         status[k] = st
         if st == OUT_OF_RANGE:
             break
-    return c1, c2, status
+    return c1, c2, status, states
 
 
 @njit(cache=True, nogil=True, error_model="numpy")
