@@ -8,6 +8,7 @@ asserts the vectorised output matches it to floating-point round-off.
 import numpy
 import pytest
 from centrosome import cpmorphology, zernike
+from conftest import onto_unit_disk
 
 from cp_measure.core.measureobjectintensitydistribution import (
     M_CATEGORY,
@@ -33,7 +34,8 @@ def _reference(labels, pixels, zernike_degree=9):
     ijv = masks_to_ijv(labels)
     pos = ijv[:, 2] - 1  # contiguous 1..N: label -> row
     yx = (ijv[:, :2] - ij[pos]) / r[pos, numpy.newaxis]
-    z = zernike.construct_zernike_polynomials(yx[:, 1], yx[:, 0], zidx)
+    xm, ym = onto_unit_disk(yx[:, 1], yx[:, 0])  # keep on-circle pixels
+    z = zernike.construct_zernike_polynomials(xm, ym, zidx)
     w = pixels[ijv[:, 0], ijv[:, 1]]
     areas = numpy.bincount(pos, minlength=len(ul)).astype(float)
     for i, (n, m) in enumerate(zidx):

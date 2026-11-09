@@ -9,6 +9,13 @@ Notable user-facing changes are documented here.
 - Numba `intensity` skips non-finite pixels as NumPy does: an object without a
   finite pixel gets zeros (not NaN or +-inf), and edge features use only finite
   edge pixels. Values change only for images with NaN/inf pixels.
+- Shape and radial Zernike values no longer depend on where an object sits in
+  the image. The minimum enclosing circle passes exactly through two or three
+  boundary pixels; a strict `r^2 > 1` cutoff let float rounding, which changes
+  with the absolute coordinates, drop them. They now always count (cutoff
+  `r^2 > 1 + 1e-9`, both backends). Values change for objects whose on-circle
+  pixels were dropped (about 40-50% of real nuclei; a few percent per moment),
+  and differ from CellProfiler only in those pixels.
 - `radial_distribution` sums intensities in float64. Integer images no longer
   wrap around (uint8/uint16 results were wrong), and float32 results gain
   precision (relative changes up to ~2e-4).
@@ -50,6 +57,13 @@ Notable user-facing changes are documented here.
 - NumPy `texture` accepts a batch (a list/tuple of images or a 4D
   `(B, Z, Y, X)` array) and returns one result per image. Numba texture builds
   every object's crop in one kernel call and measures batches on threads.
+- NumPy size/shape, Feret, radial distribution and radial Zernike accept a batch
+  (a list/tuple of images or a 4D `(B, Z, Y, X)` array) and return one result per
+  image. The numba backend measures these batches on threads and shares per-mask
+  work (Zernike coordinates and basis, radial crops and distance transforms)
+  between images that use the same mask.
+- Numba Feret computes the convex hull and diameters in Numba instead of
+  centrosome, so batch images run fully in parallel. Results are bit-identical.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
   and measures them on a thread pool.

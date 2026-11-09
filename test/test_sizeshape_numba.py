@@ -236,7 +236,7 @@ def test_sizeshape_moment_comparison_budget():
 @requires_numba
 @pytest.mark.parametrize("calculate_advanced", [False, True])
 @pytest.mark.parametrize("new_features", [False, True])
-@pytest.mark.parametrize("kind", ["empty", "ring", "degenerate", "irregular"])
+@pytest.mark.parametrize("kind", ["empty", "ring", "degenerate", "irregular", "holes"])
 def test_get_sizeshape_schema_and_numerics(kind, calculate_advanced, new_features):
     from cp_measure.core.measureobjectsizeshape import get_sizeshape as baseline
     from cp_measure.core.numba._sizeshape import get_sizeshape
@@ -250,6 +250,16 @@ def test_get_sizeshape_schema_and_numerics(kind, calculate_advanced, new_feature
         masks[10:20, 15] = 2
     elif kind == "irregular":
         masks = numpy.random.default_rng(78).integers(0, 4, (40, 40), dtype=numpy.int32)
+    elif kind == "holes":
+        # FilledArea: a 1-px wall whose hole reaches the outside only diagonally (not
+        # filled: skimage fills with 8-connectivity), and a hole holding another object.
+        masks[:] = 0
+        masks[2:12, 2:12] = 1
+        masks[3:11, 3:11] = 0
+        masks[2, 2] = 0
+        masks[20:34, 20:34] = 2
+        masks[23:31, 23:31] = 0
+        masks[25:29, 25:29] = 3
     pixels = numpy.random.default_rng(0).random(masks.shape)
     before, pixels_before = masks.copy(), pixels.copy()
     kwargs = dict(calculate_advanced=calculate_advanced, new_features=new_features)
@@ -328,14 +338,14 @@ def test_get_sizeshape_3d_fallback(calculate_advanced, new_features):
 
 
 @requires_numba
-@pytest.mark.parametrize("shape", [(2, 1, 40), (2, 40, 1), (1, 1, 40, 40)])
+@pytest.mark.parametrize("shape", [(2, 1, 40), (2, 40, 1)])
 def test_get_sizeshape_preserves_unsupported_rank_errors(shape):
     from cp_measure.core.measureobjectsizeshape import get_sizeshape as baseline
     from cp_measure.core.numba._sizeshape import get_sizeshape
 
     masks = numpy.ones(shape, dtype=numpy.int32)
-    # Only singleton Z is normalized; multi-slice thin axes and raw batches
-    # retain NumPy's existing errors.
+    # Only singleton Z is normalized; multi-slice thin axes retain NumPy's
+    # existing errors (a 4D array is a batch, see test_batch_contract).
     with pytest.raises((ValueError, TypeError)) as ref:
         baseline(masks, None)
     with pytest.raises(type(ref.value)) as got:
@@ -349,7 +359,12 @@ def test_get_sizeshape_signature_and_pixel_shape_validation():
     from cp_measure.core.measureobjectsizeshape import get_sizeshape as baseline
     from cp_measure.core.numba._sizeshape import get_sizeshape
 
-    assert inspect.signature(get_sizeshape) == inspect.signature(baseline)
+    # Same public parameters; the numba backend adds a keyword-only batch pool cap.
+    params = dict(inspect.signature(get_sizeshape).parameters)
+    assert params.pop("max_workers").kind is inspect.Parameter.KEYWORD_ONLY
+    assert list(params.values()) == list(
+        inspect.signature(baseline).parameters.values()
+    )
     for fn in (baseline, get_sizeshape):
         with pytest.raises(ValueError, match="shape"):
             fn(_ring(), numpy.zeros((2, 2)))

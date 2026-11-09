@@ -60,6 +60,8 @@ def _pixels(kind, shape):
         return np.zeros(shape)
     if kind == "uint16":
         return (rng.random(shape) * 4095).astype(np.uint16)
+    if kind == "float16":  # numba has no float16; the backend must widen it
+        return rng.random(shape).astype(np.float16)
     return rng.random(shape)
 
 
@@ -79,7 +81,7 @@ def _assert_close_dict(got, exp):
 @pytest.mark.parametrize(
     "masks_fn", [_issue22_masks, _border_masks, _disconnected_masks]
 )
-@pytest.mark.parametrize("pixels_kind", ["random", "zeros", "uint16"])
+@pytest.mark.parametrize("pixels_kind", ["random", "zeros", "uint16", "float16"])
 @pytest.mark.parametrize(
     "scaled,maximum_radius", [(True, 100), (False, 10), (False, 20)]
 )
