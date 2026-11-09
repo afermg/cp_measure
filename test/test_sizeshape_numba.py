@@ -284,6 +284,16 @@ def test_get_sizeshape_schema_and_numerics(kind, calculate_advanced, new_feature
 
 
 @requires_numba
+def test_get_sizeshape_rejects_negative_labels():
+    from cp_measure.core.numba._sizeshape import get_sizeshape
+
+    masks = _ring()
+    masks[0, 0] = -1
+    with pytest.raises(ValueError, match="no negative elements"):
+        get_sizeshape(masks, None)
+
+
+@requires_numba
 @pytest.mark.parametrize(
     "dtype", [numpy.uint8, numpy.uint16, numpy.uint64, numpy.int32, numpy.int64, ">i4"]
 )
