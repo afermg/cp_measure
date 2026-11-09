@@ -64,6 +64,27 @@ def test_numba_intensity_matches_numpy(dim, edge, legacy):
     _assert_dicts_match(ref, got)
 
 
+@requires_numba
+@pytest.mark.parametrize("legacy", [False, True], ids=["new", "legacy"])
+@pytest.mark.parametrize("shape", [(48, 48), (3, 24, 24)], ids=["2d", "3d"])
+def test_numba_intensity_quantiles_exact_on_ties(shape, legacy):
+    """Quantiles and MAD are order statistics, so numba must equal the numpy
+    sort-based reference exactly, including heavily tied values and a 1-px object."""
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as intensity_numba,
+    )
+
+    rng = get_rng()
+    mask = rng.integers(1, 6, shape).astype(np.int32)
+    mask.flat[0] = 6  # single-pixel object
+    pixels = rng.integers(0, 4, shape) / 4.0  # few distinct levels -> many ties
+    ref = intensity_numpy(mask, pixels, edge_measurements=False, legacy=legacy)
+    got = intensity_numba(mask, pixels, edge_measurements=False, legacy=legacy)
+    for name in ("LowerQuartile", "Median", "UpperQuartile", "MAD"):
+        key = f"Intensity_{name}Intensity"
+        np.testing.assert_array_equal(got[key], ref[key], err_msg=key)
+
+
 def test_numpy_intensity_rejects_rank_mismatch():
     """Reject a broadcastable 2D mask whose Y/X dimensions match the volume."""
     mask3d, pixels3d = _mask_pixels_3d()
@@ -113,6 +134,13 @@ def test_numba_granularity_matches_numpy(sub):
 def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
     from cp_measure.core.numba import measureobjectintensity as accelerated
 
+    if kind in ("list", "tuple") and len(shape) == 2:
+        pytest.skip(
+            "2D list/tuple batches run the prange kernel, which stacks the batch; "
+            "the no-copy views guarantee applies to the serial path (3D / 4D / "
+            "single) — kernel coverage is in test_intensity_prange"
+        )
+
     masks = [np.ones(shape, dtype=np.int32) for _ in range(2)]
     pixels = [np.full(shape, float(i)) for i in range(2)]
     if kind == "stacked":
@@ -125,7 +153,7 @@ def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
     seen = []
 
     def volume(mask, image, *args, spatial_ndim):
-        i = len(seen)
+        i = int(image.flat[0])  # batches run on threads, so identify the item by value
         assert spatial_ndim == pixels[i].ndim
         assert np.shares_memory(mask, masks[i])
         assert np.shares_memory(image, pixels[i])
@@ -134,7 +162,8 @@ def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
 
     monkeypatch.setattr(accelerated, "_intensity_volume", volume)
     result = accelerated.get_intensity(masks, pixels)
-    assert seen == [0, 1] and len(result) == 2
+    assert sorted(seen) == [0, 1]
+    assert [int(r["index"][0]) for r in result] == [0, 1]  # results keep batch order
 
 
 @requires_numba

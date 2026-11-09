@@ -6,6 +6,9 @@ Notable user-facing changes are documented here.
 
 ### Fixed
 
+- Numba `intensity` skips non-finite pixels as NumPy does: an object without a
+  finite pixel gets zeros (not NaN or +-inf), and edge features use only finite
+  edge pixels. Values change only for images with NaN/inf pixels.
 - `radial_distribution` sums intensities in float64. Integer images no longer
   wrap around (uint8/uint16 results were wrong), and float32 results gain
   precision (relative changes up to ~2e-4).
@@ -42,9 +45,11 @@ Notable user-facing changes are documented here.
   Previously rejected searches may now yield finite coefficients (including 0/1),
   leaving quality filtering downstream. Invalid input/regression and zero
   denominator checks remain. See [boundary policy](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
+- NumPy `intensity` accepts a batch (a list/tuple of images or a 4D
+  `(B, Z, Y, X)` array) and returns one result per image.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
-  and processes them sequentially.
+  and measures them on a thread pool.
 - **Breaking:** NumPy intensity now requires matching label/image shapes instead
   of broadcasting a 2D mask over a 3D image. To retain that measurement, pass
   `numpy.broadcast_to(mask_2d, pixels_3d.shape)` explicitly.
