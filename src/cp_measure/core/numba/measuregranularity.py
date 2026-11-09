@@ -39,7 +39,7 @@ from cp_measure.core.numba._granularity import (
     upsample_label_sums_3d,
 )
 from cp_measure.primitives.parallel import map_images
-from cp_measure.primitives.shapes import memory_key, native, to_bzyx
+from cp_measure.primitives.shapes import each_volume, memory_key, native
 
 
 def get_granularity(
@@ -71,43 +71,49 @@ def get_granularity(
     pairs = zip(masks, pixels) if is_sequence else [(masks, pixels)]
     if any(numpy.shape(m) != numpy.shape(p) for m, p in pairs):
         raise ValueError("labels and pixels must have matching shapes and rank")
-    masks_zyx, pixels_zyx, unwrap = to_bzyx(masks, pixels)
-    batch = range(len(masks_zyx))
-    ndims = [
-        numpy.ndim(masks[i]) if is_sequence else min(numpy.ndim(masks), 3)
-        for i in batch
-    ]
-    # The readback tables depend only on the mask, so a list that repeats one mask
-    # object (the featurizer passes one mask per channel) builds them once.
-    # keyed on the caller's arrays: to_bzyx's stack gives every item its own copy
-    keys = [memory_key(numpy.asarray(masks[i])) if is_sequence else i for i in batch]
-    readbacks = {}
-    for i in batch:
-        if keys[i] not in readbacks:
-            mask = masks_zyx[i][0] if ndims[i] == 2 else masks_zyx[i]
-            readbacks[keys[i]] = _readback(mask, subsample_size)
+    # Views of the caller's images: no whole-batch copy (stacking a featurizer
+    # batch copied every image and channel on the calling thread).
+    volumes, unwrap = each_volume(masks, pixels)
+    # A mixed-dtype batch is measured at its common dtype, as when it was stacked;
+    # each image is cast on its own worker thread.
+    dtype = numpy.result_type(*(image.dtype for _, image, _ in volumes))
+    # The readback tables depend only on the mask, so items that view one mask (the
+    # featurizer passes one mask per channel) share them; they are built on threads.
+    keys = [memory_key(mask) for mask, _, _ in volumes]
+    first = {key: i for i, key in reversed(list(enumerate(keys)))}
+
+    def readback(i):
+        mask, _, ndim = volumes[i]
+        return _readback(mask[0] if ndim == 2 else mask, subsample_size)
+
+    pixel_count = sum(mask.size for mask, _, _ in volumes)
+    built = map_images(
+        readback,
+        list(first.values()),
+        max_workers=max_workers,
+        pixels=pixel_count * len(first) // len(volumes),
+    )
+    readbacks = dict(zip(first, built))
 
     def one(i):
+        mask_zyx, pixels_zyx, ndim = volumes[i]
         return _granularity_one(
-            masks_zyx[i],
-            pixels_zyx[i],
+            mask_zyx,
+            pixels_zyx.astype(dtype, copy=False),
             subsample_size,
             image_sample_size,
             element_size,
             granular_spectrum_length,
             precision=precision,
-            spatial_ndim=ndims[i],
-            readback=readbacks.get(keys[i]),
+            spatial_ndim=ndim,
+            readback=readbacks[keys[i]],
         )
 
     # Images are independent; map_images runs a batch on a thread pool (the
     # granularity kernels release the GIL) and a single image serially.
     return unwrap(
         map_images(
-            one,
-            batch,
-            max_workers=max_workers,
-            pixels=numpy.size(masks_zyx[0]) * len(batch),
+            one, range(len(volumes)), max_workers=max_workers, pixels=pixel_count
         )
     )
 
