@@ -102,7 +102,14 @@ def get_granularity(
 
     # Images are independent; map_images runs a batch on a thread pool (the
     # granularity kernels release the GIL) and a single image serially.
-    return unwrap(map_images(one, batch, max_workers=max_workers))
+    return unwrap(
+        map_images(
+            one,
+            batch,
+            max_workers=max_workers,
+            pixels=numpy.size(masks_zyx[0]) * len(batch),
+        )
+    )
 
 
 def _granularity_one(
