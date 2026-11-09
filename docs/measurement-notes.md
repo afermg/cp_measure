@@ -93,6 +93,14 @@ coefficient denominators retain their existing diagnostics. Constant background
 subsets are handled without calling SciPy, so CP's incidental constant-input
 warnings are not reproduced. No NaNs are imputed or replaced after calculation.
 
+The label APIs of both backends emit one `RuntimeWarning` per undefined reason
+for each image, with the number of objects, e.g. `Undefined Costes result for 412
+objects: constant channel in the regression subset`. The reasons come in the
+order of the first object that has them, and a batch warns for each image. If a
+call raises, for example for pixels outside [0, 1], it emits no such summary. The
+single-object functions (`get_correlation_costes_ind`, `linear_costes` and
+`bisection_costes`) still warn with `Undefined Costes result: <reason>`.
+
 Per-object threshold fitting, scale validation, normalization, coefficient
 formulas and input immutability are unchanged. CP's object workflow still fits
 thresholds image-wide, so this rollback does not establish full CP/CPM pipeline

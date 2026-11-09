@@ -262,8 +262,20 @@ def _rwc_pair(
 
 
 def _undefined_costes(reason: str) -> tuple[float, float]:
+    # Single-object APIs warn for their one object.
     warnings.warn(f"Undefined Costes result: {reason}", RuntimeWarning, stacklevel=3)
     return numpy.nan, numpy.nan
+
+
+def _warn_undefined_costes(counts: dict[str, int]) -> None:
+    """One warning per undefined reason, with its number of objects."""
+    for reason, count in counts.items():
+        objects = "object" if count == 1 else "objects"
+        warnings.warn(
+            f"Undefined Costes result for {count} {objects}: {reason}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
 
 def _validate_costes_scale(scale_max: int) -> int:
@@ -323,22 +335,20 @@ def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
     return converted[0], converted[1], scale
 
 
-def _valid_costes_pixels(fi, si) -> bool:
+def _invalid_costes_reason(fi, si) -> str | None:
+    """Why the object's Costes result is undefined, or ``None`` if it is valid."""
     if fi.shape != si.shape or fi.ndim != 1:
         raise ValueError("Costes threshold helpers require equal-shape 1D pixel arrays")
     if fi.size < 3 or not (numpy.isfinite(fi).all() and numpy.isfinite(si).all()):
-        _undefined_costes("fewer than three paired pixels or non-finite signal")
-        return False
+        return "fewer than three paired pixels or non-finite signal"
     if fi.min() < 0 or si.min() < 0 or fi.max() > 1 or si.max() > 1:
         raise ValueError("Costes expects normalized pixels in [0, 1]; check scale_max")
     non_zero = (fi > 0) | (si > 0)
     if numpy.count_nonzero(non_zero) < 3:
-        _undefined_costes("fewer than three nonzero paired pixels")
-        return False
+        return "fewer than three nonzero paired pixels"
     if numpy.ptp(fi[non_zero]) == 0 or numpy.ptp(si[non_zero]) == 0:
-        _undefined_costes("constant channel in the regression subset")
-        return False
-    return True
+        return "constant channel in the regression subset"
+    return None
 
 
 def _costes_background_correlation(fi, si, selected) -> float:
@@ -356,21 +366,25 @@ def _costes_pair(
     si: NDArray[numpy.floating],
     scale: int,
     fast_costes: str,
-) -> tuple[float, float]:
+) -> tuple[float, float, str | None]:
+    """One object's coefficients, and why they are undefined (``None`` if not)."""
     fi = _canonical_costes_pixels(fi, scale)
     si = _canonical_costes_pixels(si, scale)
-    search = bisection_costes if fast_costes == M_FASTER else linear_costes
-    thr_fi, thr_si = search(None, None, fi, si, scale, fast_costes)
+    search = _bisection_search if fast_costes == M_FASTER else _linear_search
+    thr_fi, thr_si, reason = search(fi, si, scale, fast_costes)
+    if reason is not None:
+        return numpy.nan, numpy.nan, reason
     if not (numpy.isfinite(thr_fi) and numpy.isfinite(thr_si)):
-        return numpy.nan, numpy.nan
+        return numpy.nan, numpy.nan, None
     fi_above = fi > thr_fi
     si_above = si > thr_si
     combined = fi_above & si_above
     tot_fi = fi[fi >= thr_fi].sum()
     tot_si = si[si >= thr_si].sum()
     if tot_fi <= 0 or tot_si <= 0:
-        return _undefined_costes("zero above-threshold intensity denominator")
-    return float(fi[combined].sum() / tot_fi), float(si[combined].sum() / tot_si)
+        return numpy.nan, numpy.nan, "zero above-threshold intensity denominator"
+    c1 = float(fi[combined].sum() / tot_fi)
+    return c1, float(si[combined].sum() / tot_si), None
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +489,9 @@ def get_correlation_costes_ind(
         )
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
-    C1, C2 = _costes_pair(first[mask], second[mask], scale, fast_costes)
+    C1, C2, reason = _costes_pair(first[mask], second[mask], scale, fast_costes)
+    if reason is not None:
+        _undefined_costes(reason)
     return {f"{F_COSTES_FORMAT}_1": C1, f"{F_COSTES_FORMAT}_2": C2}
 
 
@@ -527,10 +543,22 @@ def linear_costes(
     As in CellProfiler, insufficient background pixels end the search at the
     current thresholds; no final background-validity veto is applied.
     """
+    thr_fi, thr_si, reason = _linear_search(fi, si, scale_max, fast_costes)
+    return (thr_fi, thr_si) if reason is None else _undefined_costes(reason)
+
+
+def _linear_search(
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    scale_max: int,
+    fast_costes: str,
+) -> tuple[float, float, str | None]:
+    """:func:`linear_costes`' thresholds, and why they are undefined (or ``None``)."""
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
-    if not _valid_costes_pixels(fi, si):
-        return numpy.nan, numpy.nan
+    reason = _invalid_costes_reason(fi, si)
+    if reason is not None:
+        return numpy.nan, numpy.nan, reason
     i_step = 1 / scale_max
     non_zero = (fi > 0) | (si > 0)
     fz = fi[non_zero]
@@ -551,11 +579,11 @@ def linear_costes(
         (yvar - xvar) * (yvar - xvar) + 4 * (covar * covar)
     )
     if abs(covar) <= 8 * numpy.finfo(float).eps * max(xvar, yvar):
-        return _undefined_costes("zero or ill-conditioned covariance")
+        return numpy.nan, numpy.nan, "zero or ill-conditioned covariance"
     a = num / denom
     b = ymean - a * xmean
     if not (numpy.isfinite(a) and numpy.isfinite(b)):
-        return _undefined_costes("non-finite regression")
+        return numpy.nan, numpy.nan, "non-finite regression"
 
     # Start at 1 step above the maximum value
     img_max = max(fi.max(), si.max())
@@ -591,7 +619,7 @@ def linear_costes(
         if fast_costes != M_ACCURATE and i >= i_step * 10:
             multiplier = _costes_step_multiplier(costReg)
         i -= i_step * multiplier
-    return float(thr_fi_c), float(thr_si_c)
+    return float(thr_fi_c), float(thr_si_c), None
 
 
 def bisection_costes(
@@ -613,10 +641,22 @@ def bisection_costes(
     its boundary fallback when no nonnegative candidate is found and does not
     validate the background again after choosing the final thresholds.
     """
+    thr_fi, thr_si, reason = _bisection_search(fi, si, scale_max, fast_costes)
+    return (thr_fi, thr_si) if reason is None else _undefined_costes(reason)
+
+
+def _bisection_search(
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    scale_max: int,
+    fast_costes: str,
+) -> tuple[float, float, str | None]:
+    """:func:`bisection_costes`' thresholds, and why they are undefined (or ``None``)."""
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
-    if not _valid_costes_pixels(fi, si):
-        return numpy.nan, numpy.nan
+    reason = _invalid_costes_reason(fi, si)
+    if reason is not None:
+        return numpy.nan, numpy.nan, reason
 
     non_zero = (fi > 0) | (si > 0)
     fz = fi[non_zero]
@@ -637,11 +677,11 @@ def bisection_costes(
         (yvar - xvar) * (yvar - xvar) + 4 * (covar * covar)
     )
     if abs(covar) <= 8 * numpy.finfo(float).eps * max(xvar, yvar):
-        return _undefined_costes("zero or ill-conditioned covariance")
+        return numpy.nan, numpy.nan, "zero or ill-conditioned covariance"
     a = num / denom
     b = ymean - a * xmean
     if not (numpy.isfinite(a) and numpy.isfinite(b)):
-        return _undefined_costes("non-finite regression")
+        return numpy.nan, numpy.nan, "non-finite regression"
 
     # Initialise variables
     left: float = 1
@@ -655,7 +695,7 @@ def bisection_costes(
     while lastmid != mid:
         iterations += 1
         if iterations > 256:
-            return _undefined_costes("bisection did not converge")
+            return numpy.nan, numpy.nan, "bisection did not converge"
         thr_fi_c = mid / scale_max
         thr_si_c = (a * thr_fi_c) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
@@ -675,7 +715,7 @@ def bisection_costes(
 
     thr_fi_c = (valid - 1) / scale_max
     thr_si_c = (a * thr_fi_c) + b
-    return float(thr_fi_c), float(thr_si_c)
+    return float(thr_fi_c), float(thr_si_c), None
 
 
 # MODIFIED: This reproduces the behaviour of the block at
@@ -894,7 +934,8 @@ def get_correlation_costes(
     Small or constant threshold-search backgrounds do not veto the returned
     coefficients; boundary results (including zero/one) are left for downstream
     quality control. Invalid signals, undefined regressions and zero signal
-    denominators still return NaN with :class:`RuntimeWarning`.
+    denominators still return NaN. Each image warns once per undefined reason
+    (:class:`RuntimeWarning`), with the number of objects.
     ``thr`` is retained but unused. Input arrays are
     never modified. Labels must be contiguous ``1..N``; use the bulk API or
     :func:`cp_measure._sanitize.sanitize` for arbitrary IDs. ``scipy_ties`` only
@@ -918,13 +959,18 @@ def get_correlation_costes(
         raise ValueError("Unknown Costes threshold-search mode")
     c1: list[float] = []
     c2: list[float] = []
+    undefined: dict[str, int] = {}  # objects per reason, in first-seen order
+    reason: str | None
     for fi, si in _iter_label_pixels(first, second, masks):
         if fi is None or si is None or fi.size == 0:
-            C1, C2 = _undefined_costes("missing or empty object label")
+            C1, C2, reason = numpy.nan, numpy.nan, "missing or empty object label"
         else:
-            C1, C2 = _costes_pair(fi, si, scale, fast_costes)
+            C1, C2, reason = _costes_pair(fi, si, scale, fast_costes)
+        if reason is not None:
+            undefined[reason] = undefined.get(reason, 0) + 1
         c1.append(C1)
         c2.append(C2)
+    _warn_undefined_costes(undefined)
     return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
 
 

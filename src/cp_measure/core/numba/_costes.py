@@ -553,7 +553,7 @@ def _canonicalize(g, scale):
 
 @njit(cache=True)
 def _validity(g1, g2, lo, hi):
-    """The reference's ``_valid_costes_pixels`` checks, in its order, as a status."""
+    """The reference's ``_invalid_costes_reason`` checks, in its order, as a status."""
     if hi - lo < 3:
         return FEW_OR_NONFINITE
     for i in range(lo, hi):

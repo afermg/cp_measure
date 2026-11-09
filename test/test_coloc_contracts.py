@@ -128,6 +128,42 @@ def test_float32_threshold_boundary_keeps_current_numpy_semantics(name):
     assert_parity(name, first, second, np.ones(first.shape, np.int32))
 
 
+@pytest.mark.parametrize(
+    "thr",
+    [15, 73.5, np.float32(15), np.float64(15)],
+    ids=["int", "float", "numpy-float32", "numpy-float64"],
+)
+def test_float32_threshold_membership_is_bit_exact(thr):
+    """A float32 channel's threshold is NumPy's ``(thr / 100) * max`` on the float32
+    maximum, for every scalar type. Pixels at and next to that threshold decide
+    membership; objects of fewer than 8 pixels sum serially in both, so the
+    accelerated Manders values equal this oracle exactly."""
+    from cp_measure.core.numba.measurecolocalization import (
+        get_correlation_manders_fold,
+    )
+
+    rng = np.random.default_rng(64)
+    maxima = rng.uniform(0.2, 1.0, 40).astype(np.float32)
+    first = np.empty((40, 5), np.float32)
+    for row, top in zip(first, maxima):
+        cut = ((thr / 100) * np.array([top]))[0]
+        row[:] = [top, cut, np.nextafter(cut, 0), np.nextafter(cut, 1), top / 50]
+    second = first[:, ::-1].copy()
+    masks = np.repeat(np.arange(1, 41, dtype=np.int32), 5).reshape(40, 5)
+    expected = []
+    for fi, si in zip(first.astype(np.float64), second.astype(np.float64)):
+        cuts = [((thr / 100) * np.array([v.max()], np.float32))[0] for v in (fi, si)]
+        above1, above2 = fi >= cuts[0], si >= cuts[1]
+        joint = above1 & above2
+        expected.append(
+            (sum(fi[joint]) / sum(fi[above1]), sum(si[joint]) / sum(si[above2]))
+        )
+    result = get_correlation_manders_fold(first, second, masks, thr=thr)
+    np.testing.assert_array_equal(
+        np.column_stack(list(result.values())), np.array(expected)
+    )
+
+
 @pytest.mark.parametrize("name", NAMES)
 @pytest.mark.parametrize(
     "shapes",

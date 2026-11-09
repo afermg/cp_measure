@@ -104,6 +104,93 @@ def test_costes_undefined_warnings_and_labels(mode, case):
     parity(a, b, masks, scale_max=255, fast_costes=mode)
 
 
+def mixed_status_objects():
+    """One object per row: defined, undefined, resumed and replayed objects, and
+    a missing label, interleaved so the order of warnings and replays shows."""
+    rng = np.random.default_rng(13)
+    tie = (
+        np.array([2, 2, 4, 4, 0, 7, 5, 6, 0, 5]) / 255,
+        np.array([4, 2, 6, 3, 1, 6, 8, 8, 8, 0]) / 255,
+    )
+    near_constant = 0.1 + rng.random((2, 10)) * 1e-14
+    rows = [
+        (np.linspace(0.1, 0.9, 10), np.linspace(0.2, 0.8, 10) ** 2),  # defined
+        (np.full(10, 0.1), np.linspace(0.1, 0.9, 10)),  # constant channel
+        tie,  # a tie: resumed (Faster) or replayed with scipy_ties
+        (np.zeros(10), np.zeros(10)),  # fewer than three nonzero pixels
+        tuple(near_constant),  # near-constant: replayed with SciPy's warnings
+        (np.full(10, 0.1), np.linspace(0.1, 0.9, 10)),  # constant again
+    ]
+    a = np.array([r[0] for r in rows])
+    b = np.array([r[1] for r in rows])
+    # label 4 is missing
+    masks = np.repeat(np.array([1, 2, 3, 5, 6, 7]), 10).reshape(a.shape)
+    return a, b, masks
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("scipy_ties", [False, True])
+def test_costes_mixed_statuses_keep_reference_order(mode, scipy_ties):
+    """Values, warnings and their order match the reference across objects whose
+    statuses interleave, including SciPy's warnings from replayed objects."""
+    a, b, masks = mixed_status_objects()
+    if not scipy_ties:
+        # The kernel decides ties itself: drop the tie and near-constant objects.
+        masks = np.where(np.isin(masks, [3, 6]), 0, masks)
+    parity(a, b, masks, scale_max=255, fast_costes=mode, scipy_ties=scipy_ties)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+def test_undefined_costes_warnings_are_summarized(backend):
+    """One RuntimeWarning per undefined reason and image, with the number of objects,
+    in the order the reasons first occur. A batch warns for each image."""
+    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
+
+    function = (
+        get_correlation_costes if backend == "numba" else ref.get_correlation_costes
+    )
+    a, b, masks = mixed_status_objects()
+    # labels 1, 2, 5 and 7 remain: defined, constant, all zero, constant
+    masks = np.where(np.isin(masks, [3, 6]), 0, masks)
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        result = function([a, a], [b, b], [masks, masks], scale_max=255)
+    image = [
+        "Undefined Costes result for 2 objects: constant channel in the regression subset",
+        "Undefined Costes result for 3 objects: missing or empty object label",
+        "Undefined Costes result for 1 object: fewer than three nonzero paired pixels",
+    ]
+    assert [(w.category, str(w.message)) for w in recorded] == [
+        (RuntimeWarning, message) for message in image * 2
+    ]
+    for values in result:
+        assert np.isfinite(values["Correlation_Costes_1"][0])
+        assert np.isnan(values["Correlation_Costes_1"][1:]).all()
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_costes_out_of_range_after_warnings_matches_reference(mode):
+    """An out-of-range object raises after the objects before it were measured,
+    with the same warnings emitted first by both backends: SciPy's from replayed
+    objects, but no undefined-result summary, as the call does not finish."""
+    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
+
+    a, b, masks = mixed_status_objects()
+    a[5, 3] = 1.5  # the last object
+    runs = []
+    for function, extra in (
+        (ref.get_correlation_costes, {}),
+        (get_correlation_costes, {"scipy_ties": True}),
+    ):
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            with pytest.raises(ValueError, match="normalized pixels"):
+                function(a, b, masks, scale_max=255, fast_costes=mode, **extra)
+        runs.append([(w.category, str(w.message)) for w in recorded])
+    assert runs[0] == runs[1]
+    assert runs[0] and not [m for _, m in runs[0] if "Undefined Costes" in m]
+
+
 @pytest.mark.parametrize("scale", [None, 0, 1, -1, True, 255.0, np.nan, np.inf, 2**32])
 def test_costes_invalid_grid(scale):
     from cp_measure.core.numba.measurecolocalization import get_correlation_costes

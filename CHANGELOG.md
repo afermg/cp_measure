@@ -57,6 +57,12 @@ Notable user-facing changes are documented here.
   differing value. `scipy_ties=True` (accepted by both backends; no effect in
   the NumPy backend) restores SciPy decisions and bit-identical results. See
   [measurement notes](docs/measurement-notes.md#costes).
+- Costes label APIs (NumPy and Numba) emit one `RuntimeWarning` per undefined
+  reason for each image, with the number of objects, e.g. `Undefined Costes
+  result for 412 objects: <reason>`, instead of one warning per object. The
+  category and the `Undefined Costes result` prefix are unchanged, so existing
+  warning filters still match. See the
+  [measurement notes](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
 - Costes (NumPy and Numba) restores permissive CellProfiler-style threshold
   boundaries: remove the final-background validity veto and the no-candidate
   bisection rejection; restore linear handling of tiny/constant backgrounds.

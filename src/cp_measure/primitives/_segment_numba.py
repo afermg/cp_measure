@@ -285,6 +285,23 @@ def flatten_pairs_grouped(masks, pix1, pix2, offsets):
     return g1, g2
 
 
+@njit(cache=True, nogil=True)
+def group_pairs(masks, pix1, pix2):
+    """:func:`flatten_pairs_grouped` with its block bounds, in one GIL-free call.
+
+    Returns ``(g1, g2, offsets)`` for labels ``1..masks.max()``; a missing label
+    gets an empty block. Float32 pixels are widened to float64 exactly.
+    """
+    n = np.int64(0)
+    for v in masks.ravel():
+        if v > n:
+            n = np.int64(v)
+    offsets = np.zeros(n + 1, np.int64)
+    offsets[1:] = np.cumsum(label_counts(masks, n))
+    g1, g2 = flatten_pairs_grouped(masks, pix1, pix2, offsets)
+    return g1, g2, offsets
+
+
 # NumPy reduces a contiguous float64 array with a pairwise sum (``pairwise_sum`` in
 # numpy/_core/src/umath/loops_utils.h.src). Before NumPy 2.3 the reduction ran over
 # chunks of its buffer size (``np.getbufsize()``, 8192 by default), added left to
