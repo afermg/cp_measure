@@ -5,15 +5,16 @@ primitives. They loop over the flat ``(values, seg0, coords)`` arrays that
 :func:`flatten_numba` builds — no image shape, no batch axis — so one kernel set
 covers 2D, 3D, and (future) batched inputs unchanged.
 
-All kernels are ``@njit(cache=True)`` and serial: no ``prange``/``nogil``.
-Parallelism is the job of the (future) batch layer over images, not the kernel.
+All kernels are ``@njit(cache=True, nogil=True)`` and serial: no ``prange``.
+Parallelism is the job of the batch layer over images (threads, which need the
+GIL released), not the kernel.
 """
 
 import numpy as np
 from numba import njit
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def flatten_numba(masks, pixels):
     """Flatten a labeled (Z, Y, X) image to ``(values, seg0, xc, yc, zc)``.
 
@@ -56,7 +57,7 @@ def flatten_numba(masks, pixels):
     return values, seg0, xc, yc, zc
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def segment_moments(values, seg0, xc, yc, zc, n):
     """One pass over the flat pixels accumulating, per segment:
 
@@ -107,7 +108,7 @@ def segment_moments(values, seg0, xc, yc, zc, n):
     return count, sumI, minI, maxI, mx, my, mz, sx, sy, sz, sxI, syI, szI
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def segment_stats(values, seg0, n):
     """One pass accumulating per-segment count, sum, min, max only.
 
@@ -131,7 +132,7 @@ def segment_stats(values, seg0, n):
     return count, sumI, minI, maxI
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def inner_boundary(masks2d):
     """Labeled inner boundary of a 2D label plane (0 = not a boundary pixel).
 
@@ -157,7 +158,7 @@ def inner_boundary(masks2d):
     return out
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def segment_resid_sumsq(values, seg0, n, mean):
     """Second pass: per-segment sum of squared residuals (for population std)."""
     ss = np.zeros(n, np.float64)
@@ -169,13 +170,14 @@ def segment_resid_sumsq(values, seg0, n, mean):
     return ss
 
 
-@njit(cache=True)
-def _interp(sorted_seg, n, frac, legacy):
-    """Linear interpolation within a sorted segment at the chosen convention.
+@njit(cache=True, nogil=True)
+def _interp_pos(n, frac, legacy):
+    """Interpolation position within a segment of ``n`` sorted values.
 
     ``legacy=True`` uses ``pos = n * frac`` (the CellProfiler / cumsum-offset
     convention); ``legacy=False`` uses ``pos = (n - 1) * frac``
-    (``numpy.percentile`` 'linear'). Upper neighbour clamped at the last element.
+    (``numpy.percentile`` 'linear'). Returns ``(lo, hi, f)``: the two neighbouring
+    ranks (upper clamped at the last element) and the weight of ``hi``.
     """
     pos = n * frac if legacy else (n - 1) * frac
     lo = int(pos)
@@ -184,17 +186,18 @@ def _interp(sorted_seg, n, frac, legacy):
     hi = lo + 1
     if hi > n - 1:
         hi = n - 1
-    f = pos - lo
-    return sorted_seg[lo] * (1.0 - f) + sorted_seg[hi] * f
+    return lo, hi, pos - lo
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
-    """Per-segment quartiles/median + MAD via scatter-into-segments + sort.
+    """Per-segment quartiles/median + MAD via scatter-into-segments + selection.
 
     Builds CSR offsets from ``counts``, scatters values into one flat buffer,
-    sorts each segment slice in place, and interpolates with the convention
-    selected by ``legacy`` (see :func:`_interp`). MAD reuses the sorted absolute
+    places the ranks the interpolation reads with ``np.partition`` (O(n)
+    selection instead of an O(n log n) sort; the values at those ranks, and so
+    the results, match the sorted segment's), and interpolates with the
+    convention selected by ``legacy`` (see :func:`_interp_pos`). MAD is the same interpolation over the absolute
     deviations from the median: in legacy mode at ``mad_frac`` (= 1 / original
     ndim), otherwise the textbook median.
     """
@@ -223,17 +226,32 @@ def segment_quantiles(values, seg0, counts, n, mad_frac, legacy):
             continue
         s = starts[k]
         seg = buf[s : s + cnt]
-        seg.sort()
-        lq[k] = _interp(seg, cnt, 0.25, legacy)
-        med[k] = _interp(seg, cnt, 0.5, legacy)
-        uq[k] = _interp(seg, cnt, 0.75, legacy)
+        l1, h1, f1 = _interp_pos(cnt, 0.25, legacy)
+        l2, h2, f2 = _interp_pos(cnt, 0.5, legacy)
+        l3, h3, f3 = _interp_pos(cnt, 0.75, legacy)
+        part = np.partition(seg, np.unique(np.array([l1, h1, l2, h2, l3, h3])))
+        lq[k] = part[l1] * (1.0 - f1) + part[h1] * f1
+        med[k] = part[l2] * (1.0 - f2) + part[h2] * f2
+        uq[k] = part[l3] * (1.0 - f3) + part[h3] * f3
         ad = np.abs(seg - med[k])
-        ad.sort()
-        mad[k] = _interp(ad, cnt, mad_frac if legacy else 0.5, legacy)
+        lm, hm, fm = _interp_pos(cnt, mad_frac if legacy else 0.5, legacy)
+        part = np.partition(ad, np.unique(np.array([lm, hm])))
+        mad[k] = part[lm] * (1.0 - fm) + part[hm] * fm
     return lq, med, uq, mad
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
+def label_counts(masks, n):
+    """Pixels of each label ``1..n`` in a C-contiguous label image; other values
+    (background, negatives) are skipped. One pass, no full-image ``bincount``."""
+    counts = np.zeros(n, np.int64)
+    for v in masks.ravel():
+        if v > 0 and v <= n:
+            counts[v - 1] += 1
+    return counts
+
+
+@njit(cache=True, nogil=True)
 def flatten_pairs_grouped(masks, pix1, pix2, offsets):
     """Flatten two co-registered ``(Z, Y, X)`` channels to per-object blocks.
 
@@ -265,3 +283,109 @@ def flatten_pairs_grouped(masks, pix1, pix2, offsets):
                     g2[p] = pix2[z, y, x]
                     fill[k] = p + 1
     return g1, g2
+
+
+# NumPy reduces a contiguous float64 array with a pairwise sum (``pairwise_sum`` in
+# numpy/_core/src/umath/loops_utils.h.src). Before NumPy 2.3 the reduction ran over
+# chunks of its buffer size (``np.getbufsize()``, 8192 by default), added left to
+# right. Note: numba's on-disk cache checks a cached function only against its own
+# file, so a kernel in another file that calls these keeps a stale copy after an edit
+# here; clear the numba caches (``__pycache__/*.nb[ic]``) after editing this file.
+_NUMPY_CHUNKS = tuple(int(p) for p in np.__version__.split(".")[:2]) < (2, 3)
+
+
+def numpy_sum_chunk() -> int:
+    """The ``chunk`` argument of :func:`numpy_sum`: NumPy's current buffer size
+    before 2.3, else 0. Read at call time, as ``np.setbufsize`` changes it."""
+    return np.getbufsize() if _NUMPY_CHUNKS else 0
+
+
+@njit(cache=True, nogil=True)
+def _block_sum(a, lo, n):
+    """``pairwise_sum``'s leaf: a serial sum below 8 values, else eight interleaved
+    partial sums combined as a balanced tree, then the remainder."""
+    if n < 8:
+        res = 0.0
+        for i in range(lo, lo + n):
+            res += a[i]
+        return res
+    r0, r1, r2, r3 = a[lo], a[lo + 1], a[lo + 2], a[lo + 3]
+    r4, r5, r6, r7 = a[lo + 4], a[lo + 5], a[lo + 6], a[lo + 7]
+    i = 8
+    while i < n - (n % 8):
+        j = lo + i
+        r0, r1, r2, r3 = r0 + a[j], r1 + a[j + 1], r2 + a[j + 2], r3 + a[j + 3]
+        r4, r5, r6, r7 = r4 + a[j + 4], r5 + a[j + 5], r6 + a[j + 6], r7 + a[j + 7]
+        i += 8
+    res = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))
+    while i < n:
+        res += a[lo + i]
+        i += 1
+    return res
+
+
+@njit(cache=True, nogil=True)
+def _pairwise_sum(a, lo, n):
+    """NumPy's ``pairwise_sum`` over ``a[lo : lo + n]``: blocks of at most 128 values,
+    halves split at a multiple of 8 and added as ``left + right``.
+
+    Evaluated with an explicit stack because numba's on-disk cache does not handle
+    recursive functions (a cached recursive version crashed on reload).
+    """
+    if n <= 128:
+        return _block_sum(a, lo, n)
+    # frames: (start, length, stage); stage 0 = expand left, 1 = expand right, 2 = add
+    starts = np.empty(64, np.int64)
+    lengths = np.empty(64, np.int64)
+    stages = np.empty(64, np.int64)
+    values = np.empty(64)
+    top = 0
+    nvals = 0
+    starts[0], lengths[0], stages[0] = lo, n, 0
+    while top >= 0:
+        start, length, stage = starts[top], lengths[top], stages[top]
+        if length <= 128:
+            values[nvals] = _block_sum(a, start, length)
+            nvals += 1
+            top -= 1
+            continue
+        half = length // 2
+        half -= half % 8
+        if stage == 0:
+            stages[top] = 1
+            top += 1
+            starts[top], lengths[top], stages[top] = start, half, 0
+        elif stage == 1:
+            stages[top] = 2
+            top += 1
+            starts[top], lengths[top], stages[top] = start + half, length - half, 0
+        else:
+            nvals -= 1
+            values[nvals - 1] = values[nvals - 1] + values[nvals]
+            top -= 1
+    return values[0]
+
+
+@njit(cache=True, nogil=True)
+def numpy_sum(a, chunk):
+    """``np.sum(a)`` of a contiguous 1D float64 array, bit for bit (``chunk`` is
+    :func:`numpy_sum_chunk`). NumPy starts the reduction from ``0.0``, which turns
+    a ``-0.0`` result into ``0.0``."""
+    n = a.size
+    step = chunk if chunk > 0 else max(n, 1)  # NumPy >= 2.3: one chunk
+    res = 0.0
+    for lo in range(0, n, step):
+        res += _pairwise_sum(a, lo, min(step, n - lo))
+    return res
+
+
+@njit(cache=True, nogil=True)
+def numpy_var(a, chunk):
+    """``np.var(a, ddof=1)`` of a contiguous 1D float64 array, bit for bit."""
+    n = a.size
+    mean = numpy_sum(a, chunk) / n
+    sq = np.empty(n)
+    for i in range(n):
+        d = a[i] - mean
+        sq[i] = d * d
+    return numpy_sum(sq, chunk) / (n - 1)
