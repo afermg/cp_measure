@@ -24,6 +24,8 @@ Notable user-facing changes are documented here.
   image. The numba backend measures these batches on threads and shares per-mask
   work (Zernike coordinates and basis, radial crops and distance transforms)
   between images that use the same mask.
+- Numba Feret computes the convex hull and diameters in Numba instead of
+  centrosome, so batch images run fully in parallel. Results are bit-identical.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
   and processes them sequentially.
