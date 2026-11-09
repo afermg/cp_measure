@@ -16,8 +16,8 @@ order within each label. Centrosome still computes the hull and diameters; only
 the input preparation changes. Larger solid objects usually benefit most because
 a smaller fraction of their pixels lie on the boundary.
 
-The kernel is serial. A batch is a list/tuple of images or a 4D ``(B, Z, Y, X)``
-array. Like raw NumPy Feret, 3D volumes return ``{}``.
+The kernel is serial and releases the GIL; a batch (a list/tuple of images or a
+4D ``(B, Z, Y, X)`` array) runs its images on threads. Like raw NumPy Feret, 3D volumes return ``{}``.
 """
 
 import centrosome.cpmorphology
@@ -29,10 +29,11 @@ from cp_measure.core.measureobjectsizeshape import (
     F_MAX_FERET_DIAMETER,
     F_MIN_FERET_DIAMETER,
 )
-from cp_measure.primitives.shapes import _stack, as_2d
+from cp_measure.primitives.parallel import map_images
+from cp_measure.primitives.shapes import as_2d, is_batch, per_image
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _boundary_ijv(masks, max_label):
     """Boundary-pixel ``(i, j, label)`` rows, ``(n, 3)`` int64.
 
@@ -117,7 +118,10 @@ def _feret_image(
 
 
 def get_feret(
-    masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None = None
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None = None,
+    *,
+    max_workers: int | None = None,
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Feret diameters (2D only); a single image, or a batch -> list of dicts.
 
@@ -125,11 +129,15 @@ def get_feret(
     volumes use the 2D measurements; other volumes yield ``{}``, as in NumPy.
     ``pixels`` is ignored — Feret is shape-only — and kept only to match the
     ``(masks, pixels)`` measurement signature. The same Z-depth rule applies to
-    individual inputs and every batch entry.
+    individual inputs and every batch entry. ``max_workers`` caps the batch thread
+    pool (default: the CPUs this process may use).
     """
-    masks_batched = isinstance(masks, (list, tuple)) or numpy.ndim(masks) == 4
-    if not masks_batched:
+    if not is_batch(masks):
         return _feret_image(masks)
-    if isinstance(masks, (list, tuple)):
-        masks = _stack(masks, "masks")
-    return [_feret_image(m) for m in masks]
+    if len(masks) == 0:  # an empty batch measures nothing (each_volume rejects it)
+        return []
+    return map_images(
+        lambda item: _feret_image(item[0]),
+        per_image(masks, None),
+        max_workers=max_workers,
+    )

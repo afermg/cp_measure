@@ -93,3 +93,26 @@ def test_radial_object_rejects_nonfinite_bins_before_indexing(maximum_radius):
     distance = np.ones(mask.shape)
     with pytest.raises(ValueError, match="non-finite radial bin"):
         radial_object(mask, pixels, distance, False, 4, maximum_radius)
+
+
+@requires_numba
+@pytest.mark.parametrize("seed", range(4))
+def test_distance_transform_edt_matches_scipy_exactly(seed):
+    """Masks touching every edge (no implicit background outside the array), single
+    background pixels, thin shapes, and the all-foreground scipy fallback."""
+    from cp_measure.primitives._edt_numba import distance_transform_edt
+
+    rng = np.random.default_rng(seed)
+    for _ in range(200):
+        h, w = rng.integers(1, 40, 2)
+        mask = rng.random((h, w)) < rng.uniform(0.3, 0.995)
+        if rng.random() < 0.2:
+            mask[:] = True
+            mask.flat[rng.integers(mask.size)] = False
+        np.testing.assert_array_equal(
+            distance_transform_edt(mask), scipy.ndimage.distance_transform_edt(mask)
+        )
+    full = np.ones((4, 5), bool)
+    np.testing.assert_array_equal(
+        distance_transform_edt(full), scipy.ndimage.distance_transform_edt(full)
+    )

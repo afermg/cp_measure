@@ -13,7 +13,7 @@ from cp_measure.primitives._moments import (
     moment_feature_dict,
     spatial_moments_2d,
 )
-from cp_measure.primitives.shapes import as_2d
+from cp_measure.primitives.shapes import apply_per_image, as_2d, is_batch
 from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
@@ -597,14 +597,24 @@ def get_sizeshape(
     calculate_advanced: bool = True,
     new_features: bool = True,
     spacing: Optional[tuple[float, ...]] = None,
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Compute the size/shape measurements for multiple object masks.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     Singleton-Z inputs use 2D measurements, including the empty-mask schema.
     As for explicit 2D inputs, measurements are in pixels; ``spacing`` applies
-    only to the 3D surface-area calculation.
+    only to the 3D surface-area calculation. A batch (list/tuple or 4D array)
+    returns one dict per image.
     """
+    if is_batch(masks):
+        return apply_per_image(
+            get_sizeshape,
+            masks,
+            pixels,
+            calculate_advanced=calculate_advanced,
+            new_features=new_features,
+            spacing=spacing,
+        )
     masks, pixels = _single_slice_inputs(masks, pixels)
     # Properties available for both 2d and 3d
     desired_properties = [
@@ -983,11 +993,16 @@ def get_zernike(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
     zernike_numbers: int = 9,
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Zernike shape features (including singleton-Z volumes); pixels are unused.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    A batch (list/tuple or 4D array) returns one dict per image.
     """
+    if is_batch(masks):
+        return apply_per_image(
+            get_zernike, masks, pixels, zernike_numbers=zernike_numbers
+        )
     measured_masks = as_2d(masks)
     if measured_masks is None:
         return {}
@@ -1014,11 +1029,14 @@ def _zernike_features(
 
 def get_feret(
     masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Feret diameters (2D calculations, including singleton-Z volumes).
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    A batch (list/tuple or 4D array) returns one dict per image.
     """
+    if is_batch(masks):
+        return apply_per_image(get_feret, masks, pixels)
     measured_masks = as_2d(masks)
     if measured_masks is None:
         return {}

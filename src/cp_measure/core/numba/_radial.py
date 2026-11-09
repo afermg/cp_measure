@@ -13,11 +13,13 @@ Two kernels backing :func:`cp_measure.core.numba.measureobjectintensitydistribut
 
 The exact-Euclidean distance to edge (scipy EDT) and the final ``RadialCV``
 (``numpy.ma``, to keep the reference's masked-division results) stay on the host.
-Serial; no ``prange``/``nogil``.
+Serial per call; the kernels release the GIL so batches can run on threads.
 """
 
 import numpy as np
 from numba import njit
+
+from cp_measure.primitives._edt_numba import squared_edt_2d
 
 _SQ2 = np.sqrt(2.0)
 # 8-neighbour offsets (orthogonal weight 1, diagonal weight sqrt(2)).
@@ -29,7 +31,7 @@ _DW = np.array([1.0, 1.0, 1.0, 1.0, _SQ2, _SQ2, _SQ2, _SQ2], np.float64)
 UNREACHED = 1e18
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def geodesic_chamfer_fifo(mask, si, sj):
     """1/sqrt(2) chamfer geodesic distance from ``(si, sj)`` within ``mask``.
 
@@ -72,7 +74,7 @@ def geodesic_chamfer_fifo(mask, si, sj):
     return d
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
     """All per-object radial work for one cropped object, in one numba pass.
 
@@ -150,3 +152,68 @@ def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
         frac_at_d[b] = hist[b] / tot_h
         mean_frac[b] = frac_at_d[b] / (num[b] / tot_n + eps)
     return frac_at_d, mean_frac, wsum, wcnt
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def radial_all(labels, pixels, n, scaled, bin_count, maximum_radius):
+    """:func:`radial_object` for every label ``1..n`` of a 2D image in one call, for
+    each channel of ``pixels`` ``(C, H, W)`` measured with these labels.
+
+    Each object is cropped to its bounding box grown by 1 pixel and clipped to the
+    image, as the host loop did (the margin gives the distance transform its
+    background edge, the clip keeps the image border from counting as one). The
+    distance to edge is the exact EDT (:func:`squared_edt_2d`, then ``sqrt``, as
+    scipy forms it). A crop without background, which scipy measures differently,
+    is flagged in ``fallback`` for the host to measure. Absent labels stay zero.
+    The crops and distance transforms depend only on the labels, so they are built
+    once per object for all channels. Returns ``(frac_at_d, mean_frac, wedge_sums,
+    wedge_counts, fallback)``, the first four with a leading channel axis.
+    """
+    H, W = labels.shape
+    r0 = np.full(n, H, np.int64)
+    r1 = np.full(n, -1, np.int64)
+    c0 = np.full(n, W, np.int64)
+    c1 = np.full(n, -1, np.int64)
+    for r in range(H):
+        for c in range(W):
+            k = np.int64(labels[r, c]) - 1  # unsigned labels must not wrap
+            if k >= 0:
+                r0[k] = min(r0[k], r)
+                r1[k] = max(r1[k], r)
+                c0[k] = min(c0[k], c)
+                c1[k] = max(c1[k], c)
+    nb = bin_count + 1
+    C = pixels.shape[0]
+    frac_at_d = np.zeros((C, n, nb))
+    mean_frac = np.zeros((C, n, nb))
+    wedge_sums = np.zeros((C, n, nb, 8))
+    wedge_counts = np.zeros((C, n, nb, 8))
+    fallback = np.zeros(n, np.bool_)
+    for k in range(n):
+        if r1[k] < 0:
+            continue
+        a, b = max(r0[k] - 1, 0), min(r1[k] + 2, H)
+        c, d = max(c0[k] - 1, 0), min(c1[k] + 2, W)
+        m = np.empty((b - a, d - c), np.bool_)
+        background = False
+        for r in range(a, b):
+            for q in range(c, d):
+                inside = np.int64(labels[r, q]) == k + 1
+                m[r - a, q - c] = inside
+                background |= not inside
+        if not background:
+            fallback[k] = True
+            continue
+        d_to_edge = np.sqrt(squared_edt_2d(m).astype(np.float64))
+        pix = np.empty((b - a, d - c))
+        for ch in range(C):
+            for r in range(a, b):
+                for q in range(c, d):
+                    pix[r - a, q - c] = pixels[ch, r, q]
+            (
+                frac_at_d[ch, k],
+                mean_frac[ch, k],
+                wedge_sums[ch, k],
+                wedge_counts[ch, k],
+            ) = radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius)
+    return frac_at_d, mean_frac, wedge_sums, wedge_counts, fallback

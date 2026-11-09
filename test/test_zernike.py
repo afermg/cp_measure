@@ -9,6 +9,7 @@ shape / 3D-empty; here we lock the numerical result and the edge cases.
 import numpy
 import pytest
 from centrosome import zernike
+from conftest import onto_unit_disk
 
 from cp_measure.core.measureobjectsizeshape import get_zernike
 from cp_measure.utils import _zernike_scores
@@ -17,12 +18,26 @@ ATOL = 1e-10  # >> the ~2e-16 round-off observed, << any real signal
 
 
 def _reference(masks, zernike_numbers=9):
-    """Old centrosome path, called with the real label values as indices."""
+    """centrosome's ``zernike.zernike`` with the real label values as indices, step by
+    step, keeping pixels that lie on the enclosing circle (see ``onto_unit_disk``)."""
     uniq = numpy.unique(masks)
     uniq = uniq[uniq > 0]
     zidx = zernike.get_zernike_indexes(zernike_numbers + 1)
-    zf = zernike.zernike(zidx, masks, uniq)
-    return {f"Zernike_{n}_{m}": zf[:, i] for i, (n, m) in enumerate(zidx)}
+    centers, radii = zernike.minimum_enclosing_circle(masks, uniq)
+    reverse = numpy.full(masks.max() + 1, -1)
+    reverse[uniq] = numpy.arange(len(uniq))
+    mask = reverse[masks] != -1
+    y, x = numpy.mgrid[0 : masks.shape[0], 0 : masks.shape[1]].astype(float)
+    rows = reverse[masks[mask]]
+    xm, ym = onto_unit_disk(
+        (x[mask] - centers[rows, 1]) / radii[rows],
+        (y[mask] - centers[rows, 0]) / radii[rows],
+    )
+    x, y = numpy.zeros_like(x), numpy.zeros_like(y)
+    x[mask], y[mask] = xm, ym
+    zf = zernike.construct_zernike_polynomials(x, y, zidx, mask)
+    score = zernike.score_zernike(zf, radii, masks, uniq)
+    return {f"Zernike_{n}_{m}": score[:, i] for i, (n, m) in enumerate(zidx)}
 
 
 def _assert_matches(masks, zernike_numbers=9):
