@@ -336,3 +336,21 @@ class TestMultiMask:
 
         assert data.shape[0] == 1
         assert rows == [(0, "nuclei", 1)]
+
+
+@pytest.mark.parametrize("accelerator", [None, "numba"])
+def test_no_channels_measures_shape_features(monkeypatch, accelerator):
+    """A shape-only run (an image with zero channels) still returns the shape
+    features; channel features are skipped rather than called with an empty batch."""
+    import cp_measure
+
+    if accelerator == "numba":
+        pytest.importorskip("numba")
+    monkeypatch.setattr(cp_measure, "_ACCELERATOR", accelerator)
+    masks = np.zeros((1, 1, 32, 32), np.int32)
+    masks[0, 0, 4:12, 4:12] = 1
+    masks[0, 0, 18:28, 16:30] = 2
+    image = np.zeros((1, 0, 32, 32), np.float32)
+    data, columns, rows = featurize(image, masks, make_featurizer_config([]))
+    assert data.shape == (2, len(columns)) and len(rows) == 2
+    assert any(c.startswith("Area") for c in columns)
