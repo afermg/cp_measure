@@ -53,7 +53,7 @@ DELTAS_3D = np.array(
 )
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def _entropy(a):
     """``-sum(a * log2(a))`` over positive entries (0*log2(1)=0), as mahotas."""
     s = 0.0
@@ -64,7 +64,7 @@ def _entropy(a):
     return s
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def haralick_object(crop, offsets):
     """The 13 Haralick features per direction for one ``(Z, Y, X)`` object crop.
 
@@ -121,7 +121,7 @@ def haralick_object(crop, offsets):
     return out
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def _haralick_13(cmat, fm1, T, out, d):
     """Fill ``out[d, :]`` with the 13 Haralick features of GLCM ``cmat`` (size fm1)."""
     px = np.zeros(fm1)  # marginal (== row & col marginal; GLCM is symmetric)
@@ -210,3 +210,53 @@ def _haralick_13(cmat, fm1, T, out, d):
     diff = hxy2 - entropy
     arg = 1.0 - np.exp(-2.0 * diff)
     out[d, 12] = np.sqrt(arg if arg > 0.0 else 0.0)
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def haralick_all(labels, levels, offsets):
+    """:func:`haralick_object` for every label present in a ``(Z, Y, X)`` image.
+
+    Each crop is the label's bounding box with the grey levels of its own pixels
+    and 0 elsewhere, as ``skimage.measure.regionprops(...).image_intensity`` gives
+    it. Labels are visited in increasing order, as regionprops lists them. Returns
+    ``(n_dir, 13, n_present)``.
+    """
+    Z, Y, X = labels.shape
+    n = 0
+    for v in labels.ravel():
+        if np.int64(v) > n:
+            n = np.int64(v)
+    lo = np.full((n, 3), np.iinfo(np.int64).max, np.int64)
+    hi = np.full((n, 3), -1, np.int64)
+    for z in range(Z):
+        for y in range(Y):
+            for x in range(X):
+                k = np.int64(labels[z, y, x]) - 1  # unsigned labels must not wrap
+                if k >= 0:
+                    lo[k, 0] = min(lo[k, 0], z)
+                    lo[k, 1] = min(lo[k, 1], y)
+                    lo[k, 2] = min(lo[k, 2], x)
+                    hi[k, 0] = max(hi[k, 0], z)
+                    hi[k, 1] = max(hi[k, 1], y)
+                    hi[k, 2] = max(hi[k, 2], x)
+    present = 0
+    for k in range(n):
+        if hi[k, 0] >= 0:
+            present += 1
+    out = np.empty((offsets.shape[0], 13, present))
+    j = 0
+    for k in range(n):
+        if hi[k, 0] < 0:
+            continue
+        crop = np.zeros(
+            (hi[k, 0] - lo[k, 0] + 1, hi[k, 1] - lo[k, 1] + 1, hi[k, 2] - lo[k, 2] + 1),
+            np.uint8,
+        )
+        for z in range(lo[k, 0], hi[k, 0] + 1):
+            for y in range(lo[k, 1], hi[k, 1] + 1):
+                for x in range(lo[k, 2], hi[k, 2] + 1):
+                    if np.int64(labels[z, y, x]) == k + 1:
+                        crop[z - lo[k, 0], y - lo[k, 1], x - lo[k, 2]] = levels[z, y, x]
+        out[:, :, j] = haralick_object(crop, offsets)
+        j += 1
+    return out
