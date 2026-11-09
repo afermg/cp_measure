@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 from cp_measure.core import measureobjectsizeshape as _ss
 from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import is_batch, per_image
+from cp_measure.primitives._segment_numba import numpy_sum, numpy_sum_chunk
 from cp_measure.primitives._moments import (
     axes_eccentricity_orientation,
     inertia_2d,
@@ -32,16 +33,43 @@ class _Prep(NamedTuple):
     offsets: NDArray[numpy.int64]
 
 
+def _as_int64(labels: NDArray[numpy.integer]) -> NDArray[numpy.int64]:
+    """Native-endian, C-contiguous int64 labels: the one signature the kernels compile for.
+    No copy when ``labels`` already is."""
+    return numpy.ascontiguousarray(labels, dtype=numpy.int64)
+
+
 def _foreground_prep(labels: NDArray[numpy.integer]) -> _Prep:
-    """One bincount pass; geometry primitives also accept sparse positive labels."""
-    counts = numpy.bincount(labels.ravel().astype(numpy.intp, copy=False))
-    present = numpy.nonzero(counts[1:])[0] + 1
-    n = int(present.size)
-    lut = numpy.full(len(counts), -1, dtype=numpy.int64)
-    lut[present] = numpy.arange(n, dtype=numpy.int64)
-    offsets = numpy.zeros(n + 1, dtype=numpy.int64)
-    offsets[1:] = numpy.cumsum(counts[present])
+    """One counting pass; geometry primitives also accept sparse positive labels."""
+    lut, n, offsets = _prep_kernel(_as_int64(labels).ravel())
     return _Prep(lut, n, offsets)
+
+
+@numba.njit(cache=True, nogil=True)
+def _prep_kernel(flat):
+    """Count the foreground labels, then build a label -> object lookup (-1 if absent) and
+    the CSR offsets of each present label's pixel count, in ascending label order. Rejects
+    negative labels with ``numpy.bincount``'s error, as before."""
+    top = -1
+    for v in flat:
+        if v < 0:
+            raise ValueError("'list' argument must have no negative elements")
+        top = max(top, v)
+    counts = numpy.zeros(top + 1, numpy.int64)
+    for v in flat:
+        if v > 0:  # background is unused; counting it serializes on one counter
+            counts[v] += 1
+    lut = numpy.full(top + 1, -1, numpy.int64)
+    n = 0
+    for lab in range(1, top + 1):
+        if counts[lab] > 0:
+            lut[lab] = n
+            n += 1
+    offsets = numpy.zeros(n + 1, numpy.int64)
+    for lab in range(1, top + 1):
+        if counts[lab] > 0:
+            offsets[lut[lab] + 1] = offsets[lut[lab]] + counts[lab]
+    return lut, n, offsets
 
 
 # --- Convex hull (area_convex / solidity) --------------------------------------------------
@@ -54,25 +82,79 @@ def _foreground_prep(labels: NDArray[numpy.integer]) -> _Prep:
 # so offsets are integers and the hull is exact.
 
 
-def _boundary_mask(masks: NDArray[numpy.integer]) -> NDArray[numpy.bool_]:
-    """Foreground pixels with an 8-neighbour of a different label (or the image edge).
+@numba.njit(cache=True, nogil=True)
+def _label_at(labels, r, c):
+    """``labels[r, c]``, or background (0) outside the image."""
+    height, width = labels.shape
+    if 0 <= r < height and 0 <= c < width:
+        return labels[r, c]
+    return 0
 
-    The convex hull of these equals the hull of the whole object (interior pixels are never hull
-    vertices), so feeding only boundary pixels shrinks the hull input dramatically.
+
+@numba.njit(cache=True, nogil=True)
+def _is_boundary(labels, r, c):
+    """Whether foreground pixel ``(r, c)`` has an 8-neighbour of a different label (or the
+    image edge)."""
+    lab = labels[r, c]
+    for d_row in range(-1, 2):
+        for d_col in range(-1, 2):
+            if _label_at(labels, r + d_row, c + d_col) != lab:
+                return True
+    return False
+
+
+@numba.njit(cache=True, nogil=True)
+def _boundary_points(labels, lut, n):
+    """Diamond hull points of every object's boundary pixels, grouped by object, plus each
+    object's bbox.
+
+    The convex hull of the boundary pixels equals the hull of the whole object (interior pixels
+    are never hull vertices), so this shrinks the hull input dramatically. Each boundary pixel
+    contributes its 4 edge-midpoints, x2-scaled to integers. Within an object, points are ordered
+    by offset (up, down, left, right) and then in raster order.
     """
-    height, width = masks.shape
-    padded = numpy.pad(masks, 1)
-    foreground = masks > 0
-    all_same = numpy.ones_like(foreground)
-    for d_row in (-1, 0, 1):
-        for d_col in (-1, 0, 1):
-            if d_row == 0 and d_col == 0:
-                continue
-            shifted = padded[
-                1 + d_row : height + 1 + d_row, 1 + d_col : width + 1 + d_col
-            ]
-            all_same &= shifted == masks
-    return foreground & ~all_same
+    height, width = labels.shape
+    m = 0
+    for r in range(height):
+        for c in range(width):
+            if labels[r, c] > 0 and _is_boundary(labels, r, c):
+                m += 1
+    rows = numpy.empty(m, numpy.int64)
+    cols = numpy.empty(m, numpy.int64)
+    obj = numpy.empty(m, numpy.int64)
+    k = 0
+    for r in range(height):
+        for c in range(width):
+            if labels[r, c] > 0 and _is_boundary(labels, r, c):
+                rows[k] = r
+                cols[k] = c
+                obj[k] = lut[labels[r, c]]
+                k += 1
+    # per-object bbox (extremes are boundary pixels, so this equals the full-object bbox)
+    rmin = numpy.full(n, 1 << 30, numpy.int64)
+    cmin = numpy.full(n, 1 << 30, numpy.int64)
+    rmax = numpy.full(n, -1, numpy.int64)
+    cmax = numpy.full(n, -1, numpy.int64)
+    for i in range(m):
+        o = obj[i]
+        rmin[o] = min(rmin[o], rows[i])
+        cmin[o] = min(cmin[o], cols[i])
+        rmax[o] = max(rmax[o], rows[i])
+        cmax[o] = max(cmax[o], cols[i])
+    px = numpy.empty(4 * m, numpy.int64)
+    py = numpy.empty(4 * m, numpy.int64)
+    obj4 = numpy.empty(4 * m, numpy.int64)
+    for i in range(m):
+        r2 = rows[i] * 2
+        c2 = cols[i] * 2
+        px[i], py[i] = r2 - 1, c2
+        px[m + i], py[m + i] = r2 + 1, c2
+        px[2 * m + i], py[2 * m + i] = r2, c2 - 1
+        px[3 * m + i], py[3 * m + i] = r2, c2 + 1
+        for t in range(4):
+            obj4[t * m + i] = obj[i]
+    order, grp = _group_by_object(obj4, n)
+    return px[order], py[order], grp, rmin, cmin, rmax, cmax
 
 
 @numba.njit(cache=True, nogil=True)
@@ -159,35 +241,23 @@ def convex_area_2d(
 ) -> NDArray[numpy.floating]:
     """Per-object ``area_convex`` (pixel count inside the convex hull), ordered by ascending
     label. Matches ``skimage.measure.regionprops`` pixel counts. Reuses ``prep``'s ``lut``/``n``/
-    ``offsets`` when supplied; the boundary scan below is its own (smaller) pass."""
+    ``offsets`` when supplied."""
     if prep is None:
         prep = _foreground_prep(labels)
-    lut, n, offsets = prep.lut, prep.n, prep.offsets
-    if n == 0:
+    if prep.n == 0:
         return numpy.zeros(0)
-    bnd = _boundary_mask(labels)
-    rows, cols = numpy.nonzero(bnd)
-    obj = lut[labels[rows, cols]]
-    # per-object bbox (extremes are boundary pixels, so this equals the full-object bbox)
-    rmin = numpy.full(n, 1 << 30)
-    cmin = numpy.full(n, 1 << 30)
-    rmax = numpy.full(n, -1)
-    cmax = numpy.full(n, -1)
-    numpy.minimum.at(rmin, obj, rows)
-    numpy.minimum.at(cmin, obj, cols)
-    numpy.maximum.at(rmax, obj, rows)
-    numpy.maximum.at(cmax, obj, cols)
-    # 4 diamond offsets per boundary pixel, x2-scaled to integers, grouped by object
-    r2 = rows.astype(numpy.int64) * 2
-    c2 = cols.astype(numpy.int64) * 2
-    px = numpy.concatenate([r2 - 1, r2 + 1, r2, r2])
-    py = numpy.concatenate([c2, c2, c2 - 1, c2 + 1])
-    obj4 = numpy.concatenate([obj, obj, obj, obj])
-    order, grp = _group_by_object(obj4, n)
-    px, py = px[order], py[order]
-    stride = 4 * max(labels.shape) + 10
+    return _convex_area_kernel(_as_int64(labels), prep.lut, prep.n, prep.offsets)
+
+
+@numba.njit(cache=True, nogil=True)
+def _convex_area_kernel(labels, lut, n, offsets):
+    """Boundary points, hulls and their pixel counts for every object, in one GIL-free call."""
+    px, py, grp, rmin, cmin, rmax, cmax = _boundary_points(labels, lut, n)
+    stride = 4 * max(labels.shape[0], labels.shape[1]) + 10
     hx, hy, hoff = _hull_kernel(px, py, grp, n, stride)
-    counts = numpy.diff(offsets)  # full per-object pixel counts (for degenerate hulls)
+    counts = (
+        offsets[1:] - offsets[:-1]
+    )  # full per-object pixel counts (degenerate hulls)
     return _hull_areas(hx, hy, hoff, rmin, cmin, rmax, cmax, counts)
 
 
@@ -369,14 +439,18 @@ def _perimeter_kernel(
 
 @numba.njit(cache=True, nogil=True)
 def _xf_hist_kernel(
-    padded: NDArray[numpy.integer], lut: NDArray[numpy.int64], n: int
+    labels: NDArray[numpy.integer], lut: NDArray[numpy.int64], n: int
 ) -> NDArray[numpy.int64]:
-    """Per-object 2x2 binary-config histogram (16 bins), label-aware over the padded image.
+    """Per-object 2x2 binary-config histogram (16 bins), label-aware over the image padded by
+    one background pixel on each side.
 
     For each 2x2 window and each distinct positive label in it, the config bit pattern (matching
     skimage's ``XF`` convolution) is incremented for that label — equal to running skimage's
     convolution on each isolated, 1-pixel-padded object.
     """
+    height, width = labels.shape
+    padded = numpy.zeros((height + 2, width + 2), labels.dtype)
+    padded[1:-1, 1:-1] = labels
     h_pad, w_pad = padded.shape
     hist = numpy.zeros((n, 16), numpy.int64)
     for i in range(h_pad):
@@ -432,9 +506,7 @@ def perimeter_2d(
         return numpy.zeros(0)
     # Numba requires native byte order; signed labels also avoid uint64/int64
     # promotion to float in the neighbor kernel's background sentinel branches.
-    return _perimeter_kernel(
-        numpy.ascontiguousarray(labels, dtype=numpy.int64), lut, n, _PERIMETER_WEIGHTS
-    )
+    return _perimeter_kernel(_as_int64(labels), lut, n, _PERIMETER_WEIGHTS)
 
 
 def crofton_euler_2d(
@@ -446,8 +518,7 @@ def crofton_euler_2d(
     lut, n = prep.lut, prep.n
     if n == 0:
         return numpy.zeros(0), numpy.zeros(0, dtype=numpy.int64)
-    padded = numpy.pad(numpy.ascontiguousarray(labels, dtype=numpy.int64), 1)
-    hist = _xf_hist_kernel(padded, lut, n)
+    hist = _xf_hist_kernel(_as_int64(labels), lut, n)
     return hist @ _CROFTON_COEFS_4, hist @ _EULER_COEFS_8
 
 
@@ -456,7 +527,7 @@ def crofton_euler_2d(
 # EDT radius loop with one pass over each object's bounding box. Every output is bit-identical:
 # EDT distances are sqrt of exact integer squared distances (as scipy's), the centroid is the
 # serial coordinate sum numpy uses for an axis-0 mean, and holes are filled with skimage's full
-# 3x3 structure. Only the mean radius stays a numpy mean (pairwise summation).
+# 3x3 structure, and the mean radius is NumPy's pairwise sum (``numpy_sum``) over the count.
 
 
 @numba.njit(cache=True, nogil=True)
@@ -492,9 +563,9 @@ def _squared_edt_row(g, mask_row, width, v, t, out_row):
 
 
 @numba.njit(cache=True, nogil=True)
-def _object_geometry(labels, lut, n):
-    """Per object (ascending label): bbox, pixel count, centroid, filled area, max and median
-    EDT radius, plus the inside EDT distances in raster order as CSR ``(offsets, dist)``.
+def _object_geometry(labels, lut, n, chunk):
+    """Per object (ascending label): bbox, pixel count, centroid, filled area, and the max,
+    mean and median EDT radius.
 
     The EDT runs on the object's bbox padded by one background pixel, as the numpy backend's
     ``distance_transform_edt(numpy.pad(image, 1))``; filled area floods the unpadded bbox
@@ -525,6 +596,7 @@ def _object_geometry(labels, lut, n):
     filled = numpy.zeros(n, numpy.int64)
     max_radius = numpy.zeros(n)
     median_radius = numpy.zeros(n)
+    mean_radius = numpy.zeros(n)
     center_y = numpy.zeros(n)
     center_x = numpy.zeros(n)
     mask_buf = numpy.zeros((max_h, max_w), numpy.bool_)
@@ -567,6 +639,8 @@ def _object_geometry(labels, lut, n):
         center_x[o] = sum_x / count[o]
         inside = dist[offsets[o] : offsets[o + 1]]
         max_radius[o] = inside.max()
+        # the numpy backend's ``inside.mean()``: NumPy's pairwise sum over the count
+        mean_radius[o] = numpy_sum(inside, chunk) / count[o]
         ordered = numpy.sort(inside)
         mid = count[o] // 2
         median_radius[o] = (
@@ -604,9 +678,8 @@ def _object_geometry(labels, lut, n):
         center_x,
         filled,
         max_radius,
+        mean_radius,
         median_radius,
-        offsets,
-        dist,
     )
 
 
@@ -696,9 +769,7 @@ def spatial_moments_2d(
     if prep.n == 0:
         empty = numpy.zeros((0, 4, 4))
         return empty, empty, empty, numpy.zeros((0, 7))
-    raw, central = _raw_central_moments(
-        numpy.ascontiguousarray(labels, dtype=numpy.int64), prep.lut, prep.n
-    )
+    raw, central = _raw_central_moments(_as_int64(labels), prep.lut, prep.n)
     return raw, central, *normalized_and_hu(central)
 
 
@@ -714,6 +785,8 @@ def _sizeshape_2d(
     calculate_advanced: bool,
     new_features: bool,
 ) -> dict[str, NDArray]:
+    # Convert once: every helper below then gets the labels without a copy.
+    labels = _as_int64(labels)
     prep = _foreground_prep(labels)
     # The pixels are unused, but the NumPy backend's regionprops validates them (only when
     # an object exists); keep that contract and message.
@@ -735,23 +808,13 @@ def _sizeshape_2d(
         center_x,
         filled,
         max_radius,
+        mean_radius,
         median_radius,
-        dist_offsets,
-        dist,
-    ) = _object_geometry(
-        # native-endian, contiguous: one compiled signature, safe for e.g. ">i4" input
-        numpy.ascontiguousarray(labels, dtype=numpy.int64),
-        prep.lut,
-        prep.n,
-    )
+    ) = _object_geometry(labels, prep.lut, prep.n, numpy_sum_chunk())
     # Same scalar expressions as skimage's regionprops (pixel area 1.0).
     area = count * 1.0
     area_bbox = ((max_y - min_y) * (max_x - min_x)) * 1.0
     equivalent_diameter = numpy.array([(2 * 2 * a / numpy.pi) ** (1 / 2) for a in area])
-    # numpy's pairwise-summed mean, as the numpy backend's ``inside.mean()``
-    mean_radius = numpy.array(
-        [dist[a:b].mean() for a, b in zip(dist_offsets[:-1], dist_offsets[1:])]
-    )
 
     raw, central, normalized, hu = spatial_moments_2d(labels, prep)
     area_convex = convex_area_2d(labels, prep)
