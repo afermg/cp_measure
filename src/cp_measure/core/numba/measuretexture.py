@@ -57,7 +57,9 @@ def get_texture(
     # Images are independent and the Haralick kernel releases the GIL, so
     # map_images runs a batch on threads.
     return map_images(
-        lambda item: _texture_image(*item, scale, gray_levels), list(zip(masks, pixels))
+        lambda item: _texture_image(*item, scale, gray_levels),
+        list(zip(masks, pixels)),
+        pixels=numpy.size(masks),
     )
 
 
