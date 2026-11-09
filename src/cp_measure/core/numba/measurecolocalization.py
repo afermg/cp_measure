@@ -261,9 +261,17 @@ def _featurize(
                     channels.setdefault((memory_key(m), memory_key(p)), (m, p))
         keys = list(channels)
         shared = dict(
-            zip(keys, map_images(lambda k: _channel_ranks(*channels[k]), keys))
+            zip(
+                keys,
+                map_images(
+                    lambda k: _channel_ranks(*channels[k]),
+                    keys,
+                    pixels=sum(channels[k][0].size for k in keys),
+                ),
+            )
         )
-    return unwrap([finish(staged) for staged in map_images(compute, items)])
+    staged = map_images(compute, items, pixels=sum(m.size for m, _, _ in items))
+    return unwrap([finish(s) for s in staged])
 
 
 def get_correlation_pearson(
@@ -529,4 +537,5 @@ def get_correlation_costes(
         )
         for (m, p1, ndim), (_, p2, _) in zip(first, second)
     ]
-    return [finish(staged) for staged in map_images(compute, items)]
+    staged = map_images(compute, items, pixels=sum(m.size for _, _, m in items))
+    return [finish(s) for s in staged]
