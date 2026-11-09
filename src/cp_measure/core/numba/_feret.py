@@ -17,7 +17,8 @@ the input preparation changes. Larger solid objects usually benefit most because
 a smaller fraction of their pixels lie on the boundary.
 
 The kernel is serial and releases the GIL; a batch (a list/tuple of images or a
-4D ``(B, Z, Y, X)`` array) runs its images on threads. Like raw NumPy Feret, 3D volumes return ``{}``.
+4D ``(B, Z, Y, X)`` array) runs its boundary kernels on threads and centrosome on
+the calling thread. Like raw NumPy Feret, 3D volumes return ``{}``.
 """
 
 import centrosome.cpmorphology
@@ -85,7 +86,12 @@ def _boundary_ijv(masks, max_label):
     return out
 
 
-def _feret_2d(masks_2d: NDArray[numpy.integer]) -> dict[str, NDArray[numpy.floating]]:
+def _boundary(masks: NDArray[numpy.integer]):
+    """``(ijv, max_label)`` of 2D or singleton-Z masks; ``None`` for other volumes,
+    which NumPy skips."""
+    masks_2d = as_2d(masks)
+    if masks_2d is None:
+        return None
     masks_2d = numpy.asarray(masks_2d)
     if (
         masks_2d.dtype == numpy.bool_
@@ -95,7 +101,14 @@ def _feret_2d(masks_2d: NDArray[numpy.integer]) -> dict[str, NDArray[numpy.float
     # accept the same byte orders as NumPy, and give the kernel contiguous storage.
     masks_2d = numpy.ascontiguousarray(masks_2d, dtype=masks_2d.dtype.newbyteorder("="))
     max_label = int(masks_2d.max()) if masks_2d.size else 0
-    ijv = _boundary_ijv(masks_2d, max_label)
+    return _boundary_ijv(masks_2d, max_label), max_label
+
+
+def _diameters(boundary) -> dict[str, NDArray[numpy.floating]]:
+    """Feret diameters from :func:`_boundary`'s output (``{}`` for ``None``)."""
+    if boundary is None:
+        return {}
+    ijv, max_label = boundary
     # The featurizer and bulk wrapper relabel objects to 1..N before this call.
     # Raw callers must supply contiguous labels too.
     indices = numpy.arange(1, max_label + 1)
@@ -107,14 +120,6 @@ def _feret_2d(masks_2d: NDArray[numpy.integer]) -> dict[str, NDArray[numpy.float
         F_MIN_FERET_DIAMETER: min_feret_diameter,
         F_MAX_FERET_DIAMETER: max_feret_diameter,
     }
-
-
-def _feret_image(
-    masks: NDArray[numpy.integer],
-) -> dict[str, NDArray[numpy.floating]]:
-    """Measure 2D or singleton-Z masks; skip other volumes, matching NumPy."""
-    measured_masks = as_2d(masks)
-    return {} if measured_masks is None else _feret_2d(measured_masks)
 
 
 def get_feret(
@@ -133,11 +138,15 @@ def get_feret(
     pool (default: the CPUs this process may use).
     """
     if not is_batch(masks):
-        return _feret_image(masks)
+        return _diameters(_boundary(masks))
     if len(masks) == 0:  # an empty batch measures nothing (each_volume rejects it)
         return []
-    return map_images(
-        lambda item: _feret_image(item[0]),
+    # Only the boundary kernel releases the GIL. Centrosome's hull and diameters
+    # are Python and NumPy that hold it, so they run on the calling thread:
+    # threads waiting on each other for the GIL were slower than a serial loop.
+    boundaries = map_images(
+        lambda item: _boundary(item[0]),
         per_image(masks, None),
         max_workers=max_workers,
     )
+    return [_diameters(b) for b in boundaries]
