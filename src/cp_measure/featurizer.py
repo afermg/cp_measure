@@ -284,8 +284,21 @@ def _featurize_batch(
                     f"the first object — this is a bug in cp_measure"
                 )
             blocks, rows = out[b]
-            blocks.append(np.column_stack([result[c] for c in columns]))
-            rows.extend((image_ids[b], object_name, label) for label in ids)
+            # One feature per row of a preallocated array, then transposed:
+            # column_stack over ~1000 columns was a large share of the time the
+            # calling thread spends with the GIL on a many-core batch.
+            block = np.empty((len(columns), len(ids)))
+            for j, key in enumerate(columns):
+                if np.ndim(result[key]) != 1 or len(result[key]) != len(ids):
+                    raise RuntimeError(
+                        f"feature {key!r} has the wrong length for object "
+                        f"{object_name!r} — this is a bug in cp_measure"
+                    )
+                block[j] = result[key]
+            blocks.append(block.T)
+            rows.extend(
+                zip(itertools.repeat(image_ids[b]), itertools.repeat(object_name), ids)
+            )
     # featurize only calls this with at least one labelled image.
     return out, cast(list[str], columns)
 
@@ -412,7 +425,13 @@ def featurize(
             stacklevel=2,
         )
 
-    return np.vstack(all_blocks), columns, all_rows
+    # One C-ordered matrix; the blocks are transposed views, copied into it once.
+    data = np.empty((sum(len(block) for block in all_blocks), len(columns)))
+    start = 0
+    for block in all_blocks:
+        data[start : start + len(block)] = block
+        start += len(block)
+    return data, columns, all_rows
 
 
 def _validate_batch_inputs(image: np.ndarray, masks: np.ndarray, is_3d: bool) -> None:
