@@ -40,6 +40,16 @@ Granularity retains its `to_bzyx` normalization, which stacks batch items into a
 
 Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim variation can disappear, and pairs containing zero are excluded. See the [#100 explanation](https://github.com/afermg/cp_measure/issues/100#issuecomment-5939719548) and [`get_texture` Notes](../src/cp_measure/core/measuretexture.py) for CellProfiler compatibility and zero/NaN behavior.
 
+## RWC ranking scope
+
+`get_correlation_rwc` defaults to `rank_scope="object"`: each object's channel intensities are ranked independently. This preserves existing results and keeps an object's RWC independent of other objects in the image.
+
+Use `rank_scope="object_set"` for CellProfiler 4.2.8's ranking definition: compute zero-based dense ranks over all foreground pixels of the supplied object set, excluding background, then reduce the weighted intensities per object. The maximum rank count is shared across the object set, so changing other objects can change an object's coefficient. This is **not** image-wide ranking that includes background, nor a change to the default.
+
+The option is available through the bulk function and `make_featurizer_config(..., correlation_rwc_params={"rank_scope": "object_set"})`. Each supplied mask type/image is its own object set. The binary single-mask API has only one object and needs no scope selection. Raw multi-label calls expect contiguous IDs; the bulk/featurizer sanitization handles noncontiguous labels.
+
+Object-set mode requires finite foreground intensities (nonfinite background is ignored). Existing CPM conventions remain: absent objects or objects with no jointly above-threshold pixels return zero; a zero total signal with qualifying pixels yields NaN. This mode reproduces CP's ranking definition for ordinary finite inputs, not all of its image-mask or degenerate-export policies. The existing object-local threshold path is unchanged by this option; #122 separately addresses float32 threshold precision.
+
 ## Legacy percentile convention
 
 `legacy=True` restores the original intensity quantile conventions; the default uses NumPy's linear quartiles and the usual median absolute deviation. See the [`get_intensity` docstring](../src/cp_measure/core/measureobjectintensity.py#L139-L163) for formulas, including the different legacy MAD convention in 3D.
@@ -50,7 +60,38 @@ For integer images, Costes divides by `scale_max`; normalized floats require the
 
 Both public Costes functions recognize **exact** reciprocal-multiply encodings of integer acquisition-grid levels, as produced by `img_as_float`, and map them to the existing division encoding before fitting thresholds and computing coefficients. This is performed per object, without modifying caller inputs. Other float values are left unchanged: there is no blanket quantization or epsilon-based snapping of nearby values. Explicit lower-bit-depth scales, such as `4095` for 12-bit images in `uint16`, use the same rule.
 
-This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes. Existing threshold comparisons and undefined-result/NaN rules are unchanged.
+This normalization correction resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes. It does not itself change threshold comparisons or NaN rules. The separate boundary-policy rollback is described below.
+
+## Costes boundary results and downstream quality control
+
+NumPy and Numba retain CellProfiler-style numerical boundary results instead of
+vetoing them based on the final background subset. This selectively reverses the
+background-search safeguards added in #110, not its acquisition-scale correction:
+
+- Neither search rechecks final background size, variation or correlation before
+  returning its thresholds. A final background with 0–2 pixels or a constant
+  channel can therefore produce finite coefficients, including zero or one.
+- Faster/bisection retains the `valid=1` fallback: if no nonnegative candidate is
+  found, the thresholds are `(0, fitted_intercept)`. During the search, subsets
+  with at most two pixels still move the lower bound; a constant subset leaves
+  the bounds unchanged, matching CP's numerical comparisons.
+- Fast/Accurate linear searches accept two-pixel correlations. Fewer than two
+  pixels end the search at the current thresholds; constant subsets follow the
+  ordinary one-step descent rather than causing an explicit NaN veto.
+
+Finite results are **not** a confidence or quality flag; filtering belongs to the
+caller. This does not promise the absence of NaNs: empty/missing labels,
+nonfinite/constant/insufficient input signals (including fewer than three usable
+input pairs), undefined or ill-conditioned regressions, nonconvergence, and zero
+coefficient denominators retain their existing diagnostics. Constant background
+subsets are handled without calling SciPy, so CP's incidental constant-input
+warnings are not reproduced. No NaNs are imputed or replaced after calculation.
+
+Per-object threshold fitting, scale validation, normalization, coefficient
+formulas and input immutability are unchanged. CP's object workflow still fits
+thresholds image-wide, so this rollback does not establish full CP/CPM pipeline
+equivalence. Historical NaN rates and timings must not be reused as measurements
+of this new policy.
 
 ## Singleton-Z measurement eligibility
 
@@ -123,15 +164,26 @@ NumPy. Overlap/K remains available through the direct module API only. RWC ranks
 pixels independently within each object; changing another object's signal does
 not change these ranks.
 
-The accelerated float64 path groups paired pixels once per measurement and uses
-a fused kernel. Pearson retains NumPy's mean reductions, including their behavior
+The accelerated path groups paired pixels once per measurement and uses a fused
+float64 kernel. Pearson retains NumPy's mean reductions, including their behavior
 for constant signals. With `precision="float64"`, percentage-threshold metrics
-promote float16/float32 inputs per image and use the same float64 kernel. With
-`precision="input"`, they keep their existing dtype-based reference fallbacks.
-Pearson's non-float64 inputs and integer or wider-float inputs retain the reference path. Undefined outputs also use
-the reference to preserve warnings and errors (including the existing true
-zero-denominator Overlap/K error). Reference fallbacks are not advertised as
-accelerated.
+promote float16/float32 inputs per image and use the same float64 kernel.
+
+Float32 inputs, including one float32 channel paired with a float64 one, are also
+accelerated with `precision="input"`. A float32 channel's percentage threshold is
+computed with the reference's own expression on float32 maxima, so
+the same pixels pass each threshold as in NumPy. The sums are float64, whereas the
+NumPy reference sums float32 pixels in float32, so values differ by float32 rounding
+(about `1e-7` relative). The float64 sums are the more accurate of the two. On the
+#129 boundary fixture they reproduce CellProfiler's stored Manders value exactly,
+where NumPy's input mode returns it rounded to float32. NumPy's own float32 sums also
+change with the NumPy version for objects above 8192 pixels (NumPy 2.3 dropped the
+8192-element chunking), so input-mode float32 values are not bit-stable across NumPy
+versions in either backend.
+
+Float16, integer and wider-float inputs retain the reference path. Undefined outputs also use the reference to preserve warnings and errors
+(including the existing true zero-denominator Overlap/K error). Reference fallbacks
+are not advertised as accelerated.
 
 All three inputs must have matching spatial ranks and extents. A 2D mask is not
 broadcast over Z, nor is the first intensity plane selected implicitly. Matching
@@ -161,17 +213,32 @@ maximum; same-dtype unsigned integers infer their storage maximum. Integer
 normalization uses the shared NumPy preparation, not the old dtype-derived
 `scale=1` float shortcut. All three search modes are supported.
 
-NumPy regression and coefficient reductions surround the compiled threshold
-search. This preserves threshold inclusion: even last-bit changes in the fitted
-line can change the result substantially. Constant/nonfinite or insufficient
-signals retain NaN results and standard `RuntimeWarning` diagnostics. Missing
-raw Costes labels likewise yield NaN and warnings, unlike the zero-valued slots
-of the other colocalization metrics. Undefined searches are replayed per object
-by the reference to preserve precise diagnostics. Near-constant subsets and
-correlations within a reduction-error bound of a search decision also use this
-compatibility path; no correlation is rounded or search cutoff moved.
+One compiled pass measures every object: canonicalization, validation, the
+regression line, the threshold search and the coefficients. The regression and
+coefficient sums reproduce NumPy's pairwise summation exactly (including the
+buffer-sized chunks NumPy used before 2.3), because even last-bit changes in the
+fitted line can change which pixels count and so the result. Constant/nonfinite
+or insufficient signals retain NaN results and standard `RuntimeWarning`
+diagnostics, emitted by the wrapper with the reference's messages. Missing raw
+Costes labels likewise yield NaN and warnings, unlike the zero-valued slots of
+the other colocalization metrics. Small/constant search backgrounds use the
+permissive boundary policy above, not an output veto. Near-constant subsets, correlations within a
+reduction-error bound of a search decision, and ill-conditioned regressions are
+replayed per object by the reference to preserve its diagnostics; no
+correlation is rounded or search cutoff moved.
 
-Both backends call the same per-object normalization canonicalization before
+Some search steps are ties: the background correlation is within rounding of
+a decision point (r = 0, or Fast mode's 0.25/0.35/0.45), which on small
+integer-grid objects is often exactly 0, or the subset is nearly constant. The
+NumPy backend's answer there follows SciPy's last bits (its sums and dot
+product), not the data. By default the numba backend decides these steps with
+its own arithmetic, so the backends can differ on such objects (8 of 6000
+randomized test images), and it does not emit SciPy's
+`NearConstantInputWarning`. With `scipy_ties=True` the numba backend asks SciPy
+for exactly those steps and resumes its own search, so results and warnings
+are bit-identical to the NumPy backend.
+
+Both backends apply the same per-object normalization canonicalization before
 validation, regression and threshold search. Exact reciprocal-multiply
 acquisition-grid encodings therefore follow the same division encoding in the
 NumPy and Numba paths; arbitrary off-grid floats are unchanged. This is the

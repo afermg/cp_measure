@@ -10,8 +10,38 @@ Notable user-facing changes are documented here.
   wrap around (uint8/uint16 results were wrong), and float32 results gain
   precision (relative changes up to ~2e-4).
 
+### Added
+
+- Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
+  object-set ranks. The default remains independent per-object ranking (#121).
+
 ### Changed
 
+- Numba Pearson, Manders, overlap/K and RWC accelerate float32 inputs in the
+  default `precision="input"` mode instead of falling back to the NumPy
+  reference (1.3 to 5 times faster). Percentage thresholds keep NumPy's float32
+  rounding, so the same pixels count; sums are float64, so values differ from
+  the NumPy backend's float32 sums by about 1e-7 relative. See the measurement
+  notes.
+- NumPy colocalization functions accept a batch and return one result per
+  image; the numba backend measures batches on threads, with Costes in one
+  compiled pass per image.
+- The numba backend's Costes decides every threshold-search step itself. When a
+  step's background correlation is within rounding of a decision point (often
+  exactly 0 on small integer-grid objects) or the subset is nearly constant, the
+  NumPy backend's result depends on SciPy's last bits, so the two backends can
+  differ on those objects, and the numba backend does not emit SciPy's
+  `NearConstantInputWarning`. In randomized tests 8 of 6000 images had a
+  differing value. `scipy_ties=True` (accepted by both backends; no effect in
+  the NumPy backend) restores SciPy decisions and bit-identical results. See
+  [measurement notes](docs/measurement-notes.md#costes).
+- Costes (NumPy and Numba) restores permissive CellProfiler-style threshold
+  boundaries: remove the final-background validity veto and the no-candidate
+  bisection rejection; restore linear handling of tiny/constant backgrounds.
+  This selectively reverses #110's background-search policy, not its scale fix.
+  Previously rejected searches may now yield finite coefficients (including 0/1),
+  leaving quality filtering downstream. Invalid input/regression and zero
+  denominator checks remain. See [boundary policy](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
   and processes them sequentially.
