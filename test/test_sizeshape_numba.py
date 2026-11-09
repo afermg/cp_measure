@@ -159,6 +159,18 @@ def _assert_features_equal(got, ref):
     # Moment budgets are dimensionless and object-local, not scaled by another
     # object's largest value. Geometry, schemas and undefined values stay strict.
     perimeter_features = {"Perimeter", "PerimeterCrofton", "FormFactor", "Compactness"}
+    # From moments whose summation order BLAS chooses: bit parity depends on the BLAS build.
+    inertia_features = {
+        "InertiaTensor_0_0",
+        "InertiaTensor_0_1",
+        "InertiaTensor_1_0",
+        "InertiaTensor_1_1",
+        "InertiaTensorEigenvalues_0",
+        "InertiaTensorEigenvalues_1",
+        "MajorAxisLength",
+        "MinorAxisLength",
+        "Eccentricity",
+    }
     for key in ref:
         assert got[key].shape == ref[key].shape, key
         assert got[key].dtype == ref[key].dtype, key
@@ -183,7 +195,7 @@ def _assert_features_equal(got, ref):
                 equal_nan=True,
                 err_msg=key,
             )
-        elif key in perimeter_features:
+        elif key in perimeter_features | inertia_features:
             numpy.testing.assert_allclose(
                 got[key],
                 ref[key],

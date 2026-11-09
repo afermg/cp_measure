@@ -3,8 +3,8 @@
 Accelerates convex hull construction and rasterization, label-aware perimeter/topology
 reductions, and a per-object bbox pass (bbox, centroid, filled area, Euclidean distance
 radii) that replaces regionprops and scipy's distance transform with bit-identical results.
-Moments and their derived features retain the NumPy backend's batched products:
-changing their reduction order can flip orientation at the +/-90 degree boundary.
+Spatial moments are summed in the NumPy backend's separable order (per row, then over
+rows) without the GIL; they match it to round-off, as BLAS may reorder the NumPy sums.
 """
 
 from typing import NamedTuple, cast
@@ -20,7 +20,7 @@ from cp_measure.primitives._moments import (
     axes_eccentricity_orientation,
     inertia_2d,
     moment_feature_dict,
-    spatial_moments_2d,
+    normalized_and_hu,
 )
 
 
@@ -610,6 +610,98 @@ def _object_geometry(labels, lut, n):
     )
 
 
+# --- Spatial moments ---------------------------------------------------------------------------
+# The NumPy backend's `spatial_moments_2d` stacks every object's bbox mask in Python and sums
+# with BLAS; these kernels take the same per-object sums straight from the label image without
+# the GIL. Each sum runs as the NumPy matmuls do: x powers summed along a row, then weighted by
+# that row's y powers and summed over rows.
+
+
+@numba.njit(cache=True, nogil=True)
+def _moment_sums(labels, lut, n, r0, c0, shift_r, shift_c):
+    """Per object, ``sum y**p * x**q`` for ``p, q < 4`` with ``y = (r - r0) - shift_r`` and
+    ``x = (c - c0) - shift_c``: one raster pass, flushing an object's row sums when it moves to a
+    new row."""
+    height, width = labels.shape
+    sums = numpy.zeros((n, 4, 4))
+    row_sums = numpy.zeros((n, 4))
+    last_row = numpy.full(n, -1, numpy.int64)
+    for r in range(height):
+        for c in range(width):
+            lab = labels[r, c]
+            if lab <= 0:
+                continue
+            o = lut[lab]
+            if last_row[o] != r:
+                if last_row[o] >= 0:
+                    _flush_row(sums, row_sums, o, (last_row[o] - r0[o]) - shift_r[o])
+                last_row[o] = r
+            x = (c - c0[o]) - shift_c[o]
+            x2 = x * x
+            row_sums[o, 0] += 1.0
+            row_sums[o, 1] += x
+            row_sums[o, 2] += x2
+            row_sums[o, 3] += x2 * x
+    for o in range(n):  # the last row of every object
+        if last_row[o] >= 0:
+            _flush_row(sums, row_sums, o, (last_row[o] - r0[o]) - shift_r[o])
+    return sums
+
+
+@numba.njit(cache=True, nogil=True)
+def _flush_row(sums, row_sums, o, y):
+    """Add one row's x-power sums, weighted by ``y**p``, to object ``o`` and reset them."""
+    y2 = y * y
+    y_pow = (1.0, y, y2, y2 * y)
+    for p in range(4):
+        for q in range(4):
+            sums[o, p, q] += y_pow[p] * row_sums[o, q]
+    row_sums[o, :] = 0.0
+
+
+@numba.njit(cache=True, nogil=True)
+def _raw_central_moments(labels, lut, n):
+    """Per-object ``(raw, central)`` moments ``(n, 4, 4)`` in each object's bbox frame."""
+    height, width = labels.shape
+    r0 = numpy.full(n, height, numpy.int64)
+    c0 = numpy.full(n, width, numpy.int64)
+    for r in range(height):
+        for c in range(width):
+            if labels[r, c] > 0:
+                o = lut[labels[r, c]]
+                r0[o] = min(r0[o], r)
+                c0[o] = min(c0[o], c)
+    zeros = numpy.zeros(n)
+    raw = _moment_sums(labels, lut, n, r0, c0, zeros, zeros)
+    centre_r = raw[:, 1, 0] / raw[:, 0, 0]
+    centre_c = raw[:, 0, 1] / raw[:, 0, 0]
+    # Central moments sum the centred coordinates directly: deriving them from the raw
+    # moments loses precision to cancellation.
+    central = _moment_sums(labels, lut, n, r0, c0, centre_r, centre_c)
+    return raw, central
+
+
+def spatial_moments_2d(
+    labels: NDArray[numpy.integer], prep: _Prep | None = None
+) -> tuple[
+    NDArray[numpy.floating],
+    NDArray[numpy.floating],
+    NDArray[numpy.floating],
+    NDArray[numpy.floating],
+]:
+    """Per-object ``(raw, central, normalized, hu)`` spatial moments, as the NumPy backend's
+    :func:`cp_measure.primitives._moments.spatial_moments_2d`, ordered by ascending label."""
+    if prep is None:
+        prep = _foreground_prep(labels)
+    if prep.n == 0:
+        empty = numpy.zeros((0, 4, 4))
+        return empty, empty, empty, numpy.zeros((0, 7))
+    raw, central = _raw_central_moments(
+        numpy.ascontiguousarray(labels, dtype=numpy.int64), prep.lut, prep.n
+    )
+    return raw, central, *normalized_and_hu(central)
+
+
 # --- Full get_sizeshape wrapper -------------------------------------------------------------
 # Assembles the complete sizeshape feature dict from the numba kernels above. With option B
 # (axes/eccentricity/orientation derived from the central moments), no moments go through
@@ -661,7 +753,7 @@ def _sizeshape_2d(
         [dist[a:b].mean() for a, b in zip(dist_offsets[:-1], dist_offsets[1:])]
     )
 
-    raw, central, normalized, hu = spatial_moments_2d(labels)
+    raw, central, normalized, hu = spatial_moments_2d(labels, prep)
     area_convex = convex_area_2d(labels, prep)
     perimeter = perimeter_2d(labels, prep)
     crofton, euler = crofton_euler_2d(labels, prep)
