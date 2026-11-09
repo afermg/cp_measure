@@ -20,6 +20,7 @@ from cp_measure.core.numba._granularity import (
     readback_sums,
     readback_tables,
     reconstruction_by_dilation_2d,
+    spectrum_sums_2d,
 )
 
 
@@ -154,6 +155,25 @@ def test_reconstruction_cascaded_mask_chain():
         expected = M.reconstruction(ero, recon_mask, footprint=M.disk(1))
         numpy.testing.assert_array_equal(rec, expected)
         recon_mask = rec
+
+
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+def test_spectrum_sums_2d_matches_step_loop(dtype):
+    """The fused spectrum kernel returns, bit for bit, the readback sums of the
+    erosion + cascaded reconstruction loop run step by step."""
+    rng = numpy.random.default_rng(5)
+    shape = (31, 27)
+    pixels = rng.random(shape).astype(dtype)
+    labels = rng.integers(0, 5, size=(62, 54))
+    n = int(labels.max())
+    _, *tables = readback_tables(labels, n, 30 / 61, 26 / 53, *shape)
+    expected = []
+    ero, recon_mask = pixels, pixels
+    for _ in range(6):
+        ero = erosion_4conn_2d(ero)
+        recon_mask = reconstruction_by_dilation_2d(ero, recon_mask)
+        expected.append(readback_sums(recon_mask, *tables))
+    numpy.testing.assert_array_equal(spectrum_sums_2d(pixels, 6, *tables), expected)
 
 
 @pytest.mark.parametrize("offset", [(0, 0), (32768, 0), (65536, 0), (0, 65536)])

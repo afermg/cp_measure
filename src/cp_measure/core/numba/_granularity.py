@@ -461,6 +461,40 @@ def reconstruction_by_dilation_2d(seed, mask):
     return out
 
 
+@njit(cache=True, nogil=True)
+def _pad1_edge(a):
+    """``np.pad(a, 1, mode="edge")`` as float64."""
+    H, W = a.shape
+    P = np.empty((H + 2, W + 2), np.float64)
+    for i in range(H + 2):
+        si = min(max(i - 1, 0), H - 1)
+        for j in range(W + 2):
+            P[i, j] = a[si, min(max(j - 1, 0), W - 1)]
+    return P
+
+
+@njit(cache=True, nogil=True)
+def spectrum_sums_2d(pixels, ng, starts, cells, values):
+    """Readback sums of all ``ng`` spectrum steps, ``(ng, n + 1)``, in one GIL-free
+    call: each step is :func:`erosion_4conn_2d` of the previous erosion, then
+    :func:`reconstruction_by_dilation_2d` under the previous reconstruction (the
+    first under ``pixels``), then :func:`readback_sums`. Small images spend most
+    of a per-step Python loop holding the GIL, which serializes batch threads."""
+    H, W = pixels.shape
+    out = np.empty((ng, starts.size - 1))
+    if ng == 0:
+        return out
+    # the first step's mask is ``pixels`` in its own dtype, the later ones float64
+    ero = _plus_reduce(_pad1_edge(pixels), H, W, False)
+    rec = reconstruction_by_dilation_2d(ero, pixels)
+    out[0] = readback_sums(rec, starts, cells, values)
+    for g in range(1, ng):
+        ero = _plus_reduce(_pad1_edge(ero), H, W, False)
+        rec = reconstruction_by_dilation_2d(ero, rec)
+        out[g] = readback_sums(rec, starts, cells, values)
+    return out
+
+
 # --- 3D ------------------------------------------------------------------------
 # The same morphology one dimension up: ``ball`` footprints instead of ``disk``,
 # 6-connectivity instead of 4. The per-object means follow the baseline's 3D

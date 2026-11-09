@@ -31,13 +31,11 @@ from cp_measure.core.numba._granularity import (
     ball_erosion_3d,
     disk_dilation_2d,
     disk_erosion_2d,
-    erosion_4conn_2d,
     erosion_6conn_3d,
     label_sums,
-    readback_sums,
     readback_tables,
-    reconstruction_by_dilation_2d,
     reconstruction_by_dilation_3d,
+    spectrum_sums_2d,
     upsample_label_sums_3d,
 )
 from cp_measure.primitives.parallel import map_images
@@ -237,17 +235,11 @@ def _granularity_2d(
     current_mean = _label_mean(sums)
     start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
 
-    # 4. Granular spectrum loop (numba disk(1) erosion + reconstruction, cascaded mask)
-    ero = pixels
-    recon_mask = pixels
+    # 4. Granular spectrum: disk(1) erosion + cascaded reconstruction, all steps in
+    # one kernel call
+    step_sums = spectrum_sums_2d(pixels, ng, *tables)
     for granularity_id in range(1, ng + 1):
-        ero = erosion_4conn_2d(ero)
-        # reconstruction of an all-zero seed returns zeros cheaply (no FIFO seeds),
-        # so no all-zero early-out is needed (it would only add a full ero.max() scan)
-        rec = reconstruction_by_dilation_2d(ero, recon_mask)
-        recon_mask = rec  # cascade: rec_g <= rec_{g-1} <= pixels (exact)
-
-        new_mean = _label_mean(readback_sums(rec, *tables))
+        new_mean = _label_mean(step_sums[granularity_id - 1])
         results[f"Granularity_{granularity_id}"] = (
             (current_mean - new_mean) * 100 / start_mean
         )
