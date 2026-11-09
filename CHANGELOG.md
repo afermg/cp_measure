@@ -39,6 +39,14 @@ Notable user-facing changes are documented here.
   and shares per-mask work. On 4 FOVs x 5 channels (1024 x 1024, 32 cores) the
   numba featurizer takes 1.9 s (cells) and 1.4 s (mitosis) instead of 80 s and
   167 s. Shape-only runs (no channels) skip the channel features.
+- **Return type change:** the colocalization label APIs (`get_correlation_pearson`,
+  `get_correlation_manders_fold`, `get_correlation_rwc`, `get_correlation_costes`
+  and `get_correlation_overlap`, NumPy and Numba, single image and batch) return
+  each feature as a 1D float64 NumPy array, one value per label, instead of a
+  Python list. The values are unchanged. Every other family already returns
+  arrays. Code that compares results with `==` or checks for `list` needs
+  `numpy.array_equal` or `numpy.ndarray`. The single-object `_ind` functions
+  still return scalars.
 - Numba Pearson, Manders, overlap/K and RWC accelerate float32 inputs in the
   default `precision="input"` mode instead of falling back to the NumPy
   reference (1.3 to 5 times faster). Percentage thresholds keep NumPy's float32

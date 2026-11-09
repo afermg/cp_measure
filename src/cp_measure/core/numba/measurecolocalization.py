@@ -219,7 +219,7 @@ def _featurize(
         arrays = build(res)
         if not all(numpy.isfinite(values).all() for values in arrays.values()):
             return ref(p1, p2, m, **kwargs)
-        return {key: values.tolist() for key, values in arrays.items()}
+        return arrays
 
     items = [(m, p1, p2) for (m, p1, _), (_, p2, _) in zip(first, second)]
     # RWC's rank sort dominates it. In a batch of channel pairs each channel recurs
@@ -252,7 +252,7 @@ def get_correlation_pearson(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     def build(res):
         return {F_CORRELATION_FORMAT: res[0], F_SLOPE_FORMAT: res[1]}
 
@@ -268,7 +268,7 @@ def get_correlation_manders_fold(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     def build(res):
         return {f"{F_MANDERS_FORMAT}_1": res[2], f"{F_MANDERS_FORMAT}_2": res[3]}
 
@@ -293,7 +293,7 @@ def get_correlation_rwc(
     *,
     precision: Precision = "input",
     rank_scope: str = "object",
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     """Object-local ranks are accelerated; object-set ranks use the reference."""
     if rank_scope not in ("object", "object_set"):
         raise ValueError("rank_scope must be 'object' or 'object_set'")
@@ -323,7 +323,7 @@ def get_correlation_overlap(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     def build(res):
         return {
             F_OVERLAP_FORMAT: res[4],
@@ -403,7 +403,7 @@ def get_correlation_costes(
     *,
     scale_max: int | None = None,
     scipy_ties: bool = False,
-) -> dict[str, list[float]] | list[dict[str, list[float]]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Costes coefficients using the current NumPy scale and warning contracts.
 
     Floats require an explicit acquisition ``scale_max``; same-dtype unsigned
@@ -492,10 +492,7 @@ def get_correlation_costes(
         for _, reason, n in sorted(undefined, key=lambda entry: entry[0]):
             counts[reason] = counts.get(reason, 0) + n
         reference._warn_undefined_costes(counts)
-        return {
-            f"{F_COSTES_FORMAT}_1": c1.tolist(),
-            f"{F_COSTES_FORMAT}_2": c2.tolist(),
-        }
+        return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
 
     # Single arrays keep their original rank, including singleton Z.
     if not is_batch(masks):

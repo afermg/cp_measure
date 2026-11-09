@@ -16,6 +16,13 @@ REFERENCE = json.loads(
 )
 
 
+def same(result, expected):
+    """Same features with equal values; results hold one array per feature."""
+    return result.keys() == expected.keys() and all(
+        np.array_equal(result[key], expected[key]) for key in result
+    )
+
+
 def scene(case_index=1):
     case = REFERENCE["cases"][case_index]
     return (
@@ -50,9 +57,9 @@ def test_default_is_unchanged_object_local_ranking():
     pairs = [_rwc_pair(first[labels == k], second[labels == k], 15) for k in (1, 2)]
     np.testing.assert_array_equal(default["Correlation_RWC_1"], [p[0] for p in pairs])
     np.testing.assert_array_equal(default["Correlation_RWC_2"], [p[1] for p in pairs])
-    assert default == explicit
-    assert default != get_correlation_rwc(
-        first, second, labels, rank_scope="object_set"
+    assert same(default, explicit)
+    assert not same(
+        default, get_correlation_rwc(first, second, labels, rank_scope="object_set")
     )
 
 
@@ -62,8 +69,9 @@ def test_object_set_ignores_background_but_depends_on_other_objects():
     global_before = get_correlation_rwc(first, second, labels, rank_scope="object_set")
     first[labels == 0] = np.nan
     second[labels == 0] = np.inf
-    assert global_before == get_correlation_rwc(
-        first, second, labels, rank_scope="object_set"
+    assert same(
+        global_before,
+        get_correlation_rwc(first, second, labels, rank_scope="object_set"),
     )
     first[labels == 2] = 0.85
     second[labels == 2] = 0.85
@@ -76,9 +84,10 @@ def test_object_set_ignores_background_but_depends_on_other_objects():
 
 def test_scope_preserves_empty_absent_and_zero_signal_conventions():
     first, second, labels = scene()
-    assert get_correlation_rwc(
+    empty = get_correlation_rwc(
         first, second, np.zeros_like(labels), rank_scope="object_set"
-    ) == {"Correlation_RWC_1": [], "Correlation_RWC_2": []}
+    )
+    assert same(empty, {"Correlation_RWC_1": [], "Correlation_RWC_2": []})
     labels[labels == 2] = 3
     result = get_correlation_rwc(first, second, labels, rank_scope="object_set")
     for values in result.values():
@@ -98,7 +107,7 @@ def test_no_joint_threshold_pixels_returns_zero():
     result = get_correlation_rwc(
         first, second, np.ones_like(first, dtype=int), rank_scope="object_set"
     )
-    assert result == {"Correlation_RWC_1": [0.0], "Correlation_RWC_2": [0.0]}
+    assert same(result, {"Correlation_RWC_1": [0.0], "Correlation_RWC_2": [0.0]})
 
 
 def test_sanitized_noncontiguous_ids_preserve_scope():
@@ -106,9 +115,9 @@ def test_sanitized_noncontiguous_ids_preserve_scope():
     dense = get_correlation_rwc(first, second, labels, rank_scope="object_set")
     labels[labels == 1] = 42
     labels[labels == 2] = 99
-    assert (
-        sanitize(get_correlation_rwc)(first, second, labels, rank_scope="object_set")
-        == dense
+    assert same(
+        sanitize(get_correlation_rwc)(first, second, labels, rank_scope="object_set"),
+        dense,
     )
 
 
@@ -119,7 +128,9 @@ def test_bulk_forwards_explicit_scope():
     result = get_correlation_measurements()["rwc"](
         first, second, labels, rank_scope="object_set"
     )
-    assert result == get_correlation_rwc(first, second, labels, rank_scope="object_set")
+    assert same(
+        result, get_correlation_rwc(first, second, labels, rank_scope="object_set")
+    )
 
 
 def test_featurizer_forwards_explicit_scope():
