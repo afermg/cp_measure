@@ -34,6 +34,11 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- `featurize` measures each feature once over the whole batch (every FOV,
+  channel and channel pair of a mask), so the numba backend runs them on threads
+  and shares per-mask work. On 4 FOVs x 5 channels (1024 x 1024, 32 cores) the
+  numba featurizer takes 1.9 s (cells) and 1.4 s (mitosis) instead of 80 s and
+  167 s. Shape-only runs (no channels) skip the channel features.
 - Numba Pearson, Manders, overlap/K and RWC accelerate float32 inputs in the
   default `precision="input"` mode instead of falling back to the NumPy
   reference (1.3 to 5 times faster). Percentage thresholds keep NumPy's float32

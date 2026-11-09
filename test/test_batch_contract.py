@@ -22,6 +22,7 @@ CORE = [
     "radial_distribution",
     "radial_zernikes",
     "zernike",
+    "sizeshape",
     "feret",
     "texture",
     "granularity",
@@ -153,6 +154,15 @@ def test_batch_matches_independent_items(measurement, depth, container, labels):
             np.testing.assert_array_equal(a, b)
 
 
+@pytest.mark.parametrize("depth", [0, 3], ids=["2d", "3d"])
+def test_non_native_byte_order_matches_native(measurement, depth):
+    """Big-endian labels and pixels (FITS, N5, some zarr) give the native result."""
+    _, call, _ = measurement
+    masks, first, second = (group[0] for group in scenes(depth))
+    swapped = (a.astype(a.dtype.newbyteorder(">")) for a in (masks, first, second))
+    assert_same(call(*swapped), call(masks, first, second))
+
+
 @pytest.mark.parametrize("case", ["count", "mixed", "ragged"])
 def test_invalid_paired_batch_structure(measurement, case):
     name, call, _ = measurement
@@ -177,8 +187,8 @@ def test_measured_image_shape_mismatch_rejected(
     measurement, shape, container, monkeypatch
 ):
     name, call, _ = measurement
-    if name in ("zernike", "feret", "granularity"):
-        pytest.skip("shape-only pixels ignored; granularity has no shared shape guard")
+    if name in ("zernike", "feret"):
+        pytest.skip("shape-only pixels ignored")
     if name == "intensity":
         from cp_measure.core.numba import measureobjectintensity
 
