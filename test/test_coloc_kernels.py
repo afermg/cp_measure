@@ -54,6 +54,40 @@ def test_flatten_pairs_grouped_keeps_nonfinite():
 
 
 @requires_numba
+@pytest.mark.parametrize("label_dtype", [np.int32, np.uint16, np.uint64])
+@pytest.mark.parametrize("pixel_dtype", [np.float32, np.float64])
+def test_group_pairs_matches_host_grouping(label_dtype, pixel_dtype):
+    """One kernel call finds the labels, the block bounds and both channels' blocks,
+    reading float32 pixels directly (widened exactly), as the host steps did."""
+    from cp_measure.primitives._segment_numba import (
+        flatten_pairs_grouped,
+        group_pairs,
+    )
+
+    masks = np.array([[[0, 1, 1], [4, 4, 0], [4, 0, 1]]], label_dtype)  # 2, 3 missing
+    p1 = np.arange(9, dtype=pixel_dtype).reshape(1, 3, 3) / 7
+    p2 = p1[:, ::-1].copy()
+    p1[0, 2, 2] = np.nan
+    g1, g2, offsets = group_pairs(masks, p1, p2)
+    expected_offsets = _offsets(masks.astype(np.int64))
+    np.testing.assert_array_equal(offsets, expected_offsets)
+    expected = flatten_pairs_grouped(
+        masks, p1.astype(np.float64), p2.astype(np.float64), expected_offsets
+    )
+    for got, want in zip((g1, g2), expected):
+        assert got.dtype == np.float64
+        np.testing.assert_array_equal(got, want)
+
+
+@requires_numba
+def test_group_pairs_without_objects():
+    from cp_measure.primitives._segment_numba import group_pairs
+
+    g1, g2, offsets = group_pairs(np.zeros((1, 2, 2), np.int32), *np.ones((2, 1, 2, 2)))
+    assert list(offsets) == [0] and g1.size == g2.size == 0
+
+
+@requires_numba
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_dense_rank_matches_scipy(seed):
     """0-based dense rank == scipy.stats.rankdata(method='dense') - 1, with ties."""

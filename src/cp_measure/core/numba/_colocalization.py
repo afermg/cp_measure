@@ -68,7 +68,8 @@ def coloc_per_object(
     compute_rwc,
     numpy_means=False,
     chunk=0,
-    thresholds=None,
+    frac32=0.0,
+    round32=(False, False),
     ranks1=None,
     ranks2=None,
 ):
@@ -86,10 +87,10 @@ def coloc_per_object(
     ``numpy.mean`` exactly; a serial sum can turn an undefined correlation of a
     constant or high-offset signal finite.
 
-    ``thresholds`` (shape ``(2, n)``), when given, replaces ``thr_frac * max`` with
-    host-computed per-object thresholds. The wrapper uses it for float32 channels in
-    ``precision="input"`` mode, where NumPy rounds the threshold to float32, so the
-    ``>=`` membership is identical to the reference while sums stay float64.
+    ``round32`` marks the channels whose threshold NumPy rounds to float32 (float32
+    channels in ``precision="input"`` mode): theirs is ``frac32 * max`` in float32,
+    with ``frac32`` the float32 fraction. The ``>=`` membership then equals the
+    reference's while sums stay float64.
 
     ``ranks1``/``ranks2``, when given, are :func:`dense_ranks_grouped` of ``g1``/``g2``
     (the wrapper ranks a channel once when several channel pairs share it).
@@ -137,12 +138,15 @@ def coloc_per_object(
             mean1 = s1 / cnt
             mean2 = s2 / cnt
 
-        if thresholds is None:
-            tff = thr_frac * mx1
-            tss = thr_frac * mx2
+        # The maxima of float32 values are exact in float32.
+        if round32[0]:
+            tff = np.float64(np.float32(frac32) * np.float32(mx1))
         else:
-            tff = thresholds[0, k]
-            tss = thresholds[1, k]
+            tff = thr_frac * mx1
+        if round32[1]:
+            tss = np.float64(np.float32(frac32) * np.float32(mx2))
+        else:
+            tss = thr_frac * mx2
 
         # Per-pixel RWC weights need the object's dense ranks up front.
         if compute_rwc:
