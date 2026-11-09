@@ -93,9 +93,11 @@ def _intensity_2d(mask, pixels, edge, legacy):
 
 
 def _assemble_intensity(out, b, nobj, edge):
-    """One per-image dict from the kernel output, with independent arrays."""
+    """One per-image dict from the kernel output. Each feature is a view of its own
+    row of the image's buffer (rows do not overlap), so no copy is made; copying
+    every row held the GIL for about 20 ms of a 160-image batch."""
     keys = _BASE_KEYS + _EDGE_KEYS if edge else _BASE_KEYS
-    return {k: out[b, f, :nobj].copy() for f, k in enumerate(keys)}
+    return {k: out[b, f, :nobj] for f, k in enumerate(keys)}
 
 
 def get_intensity(
