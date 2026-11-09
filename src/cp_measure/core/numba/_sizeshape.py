@@ -82,25 +82,79 @@ def _prep_kernel(flat):
 # so offsets are integers and the hull is exact.
 
 
-def _boundary_mask(masks: NDArray[numpy.integer]) -> NDArray[numpy.bool_]:
-    """Foreground pixels with an 8-neighbour of a different label (or the image edge).
+@numba.njit(cache=True, nogil=True)
+def _label_at(labels, r, c):
+    """``labels[r, c]``, or background (0) outside the image."""
+    height, width = labels.shape
+    if 0 <= r < height and 0 <= c < width:
+        return labels[r, c]
+    return 0
 
-    The convex hull of these equals the hull of the whole object (interior pixels are never hull
-    vertices), so feeding only boundary pixels shrinks the hull input dramatically.
+
+@numba.njit(cache=True, nogil=True)
+def _is_boundary(labels, r, c):
+    """Whether foreground pixel ``(r, c)`` has an 8-neighbour of a different label (or the
+    image edge)."""
+    lab = labels[r, c]
+    for d_row in range(-1, 2):
+        for d_col in range(-1, 2):
+            if _label_at(labels, r + d_row, c + d_col) != lab:
+                return True
+    return False
+
+
+@numba.njit(cache=True, nogil=True)
+def _boundary_points(labels, lut, n):
+    """Diamond hull points of every object's boundary pixels, grouped by object, plus each
+    object's bbox.
+
+    The convex hull of the boundary pixels equals the hull of the whole object (interior pixels
+    are never hull vertices), so this shrinks the hull input dramatically. Each boundary pixel
+    contributes its 4 edge-midpoints, x2-scaled to integers. Within an object, points are ordered
+    by offset (up, down, left, right) and then in raster order.
     """
-    height, width = masks.shape
-    padded = numpy.pad(masks, 1)
-    foreground = masks > 0
-    all_same = numpy.ones_like(foreground)
-    for d_row in (-1, 0, 1):
-        for d_col in (-1, 0, 1):
-            if d_row == 0 and d_col == 0:
-                continue
-            shifted = padded[
-                1 + d_row : height + 1 + d_row, 1 + d_col : width + 1 + d_col
-            ]
-            all_same &= shifted == masks
-    return foreground & ~all_same
+    height, width = labels.shape
+    m = 0
+    for r in range(height):
+        for c in range(width):
+            if labels[r, c] > 0 and _is_boundary(labels, r, c):
+                m += 1
+    rows = numpy.empty(m, numpy.int64)
+    cols = numpy.empty(m, numpy.int64)
+    obj = numpy.empty(m, numpy.int64)
+    k = 0
+    for r in range(height):
+        for c in range(width):
+            if labels[r, c] > 0 and _is_boundary(labels, r, c):
+                rows[k] = r
+                cols[k] = c
+                obj[k] = lut[labels[r, c]]
+                k += 1
+    # per-object bbox (extremes are boundary pixels, so this equals the full-object bbox)
+    rmin = numpy.full(n, 1 << 30, numpy.int64)
+    cmin = numpy.full(n, 1 << 30, numpy.int64)
+    rmax = numpy.full(n, -1, numpy.int64)
+    cmax = numpy.full(n, -1, numpy.int64)
+    for i in range(m):
+        o = obj[i]
+        rmin[o] = min(rmin[o], rows[i])
+        cmin[o] = min(cmin[o], cols[i])
+        rmax[o] = max(rmax[o], rows[i])
+        cmax[o] = max(cmax[o], cols[i])
+    px = numpy.empty(4 * m, numpy.int64)
+    py = numpy.empty(4 * m, numpy.int64)
+    obj4 = numpy.empty(4 * m, numpy.int64)
+    for i in range(m):
+        r2 = rows[i] * 2
+        c2 = cols[i] * 2
+        px[i], py[i] = r2 - 1, c2
+        px[m + i], py[m + i] = r2 + 1, c2
+        px[2 * m + i], py[2 * m + i] = r2, c2 - 1
+        px[3 * m + i], py[3 * m + i] = r2, c2 + 1
+        for t in range(4):
+            obj4[t * m + i] = obj[i]
+    order, grp = _group_by_object(obj4, n)
+    return px[order], py[order], grp, rmin, cmin, rmax, cmax
 
 
 @numba.njit(cache=True, nogil=True)
@@ -187,35 +241,23 @@ def convex_area_2d(
 ) -> NDArray[numpy.floating]:
     """Per-object ``area_convex`` (pixel count inside the convex hull), ordered by ascending
     label. Matches ``skimage.measure.regionprops`` pixel counts. Reuses ``prep``'s ``lut``/``n``/
-    ``offsets`` when supplied; the boundary scan below is its own (smaller) pass."""
+    ``offsets`` when supplied."""
     if prep is None:
         prep = _foreground_prep(labels)
-    lut, n, offsets = prep.lut, prep.n, prep.offsets
-    if n == 0:
+    if prep.n == 0:
         return numpy.zeros(0)
-    bnd = _boundary_mask(labels)
-    rows, cols = numpy.nonzero(bnd)
-    obj = lut[labels[rows, cols]]
-    # per-object bbox (extremes are boundary pixels, so this equals the full-object bbox)
-    rmin = numpy.full(n, 1 << 30)
-    cmin = numpy.full(n, 1 << 30)
-    rmax = numpy.full(n, -1)
-    cmax = numpy.full(n, -1)
-    numpy.minimum.at(rmin, obj, rows)
-    numpy.minimum.at(cmin, obj, cols)
-    numpy.maximum.at(rmax, obj, rows)
-    numpy.maximum.at(cmax, obj, cols)
-    # 4 diamond offsets per boundary pixel, x2-scaled to integers, grouped by object
-    r2 = rows.astype(numpy.int64) * 2
-    c2 = cols.astype(numpy.int64) * 2
-    px = numpy.concatenate([r2 - 1, r2 + 1, r2, r2])
-    py = numpy.concatenate([c2, c2, c2 - 1, c2 + 1])
-    obj4 = numpy.concatenate([obj, obj, obj, obj])
-    order, grp = _group_by_object(obj4, n)
-    px, py = px[order], py[order]
-    stride = 4 * max(labels.shape) + 10
+    return _convex_area_kernel(_as_int64(labels), prep.lut, prep.n, prep.offsets)
+
+
+@numba.njit(cache=True, nogil=True)
+def _convex_area_kernel(labels, lut, n, offsets):
+    """Boundary points, hulls and their pixel counts for every object, in one GIL-free call."""
+    px, py, grp, rmin, cmin, rmax, cmax = _boundary_points(labels, lut, n)
+    stride = 4 * max(labels.shape[0], labels.shape[1]) + 10
     hx, hy, hoff = _hull_kernel(px, py, grp, n, stride)
-    counts = numpy.diff(offsets)  # full per-object pixel counts (for degenerate hulls)
+    counts = (
+        offsets[1:] - offsets[:-1]
+    )  # full per-object pixel counts (degenerate hulls)
     return _hull_areas(hx, hy, hoff, rmin, cmin, rmax, cmax, counts)
 
 
@@ -397,14 +439,18 @@ def _perimeter_kernel(
 
 @numba.njit(cache=True, nogil=True)
 def _xf_hist_kernel(
-    padded: NDArray[numpy.integer], lut: NDArray[numpy.int64], n: int
+    labels: NDArray[numpy.integer], lut: NDArray[numpy.int64], n: int
 ) -> NDArray[numpy.int64]:
-    """Per-object 2x2 binary-config histogram (16 bins), label-aware over the padded image.
+    """Per-object 2x2 binary-config histogram (16 bins), label-aware over the image padded by
+    one background pixel on each side.
 
     For each 2x2 window and each distinct positive label in it, the config bit pattern (matching
     skimage's ``XF`` convolution) is incremented for that label — equal to running skimage's
     convolution on each isolated, 1-pixel-padded object.
     """
+    height, width = labels.shape
+    padded = numpy.zeros((height + 2, width + 2), labels.dtype)
+    padded[1:-1, 1:-1] = labels
     h_pad, w_pad = padded.shape
     hist = numpy.zeros((n, 16), numpy.int64)
     for i in range(h_pad):
@@ -472,8 +518,7 @@ def crofton_euler_2d(
     lut, n = prep.lut, prep.n
     if n == 0:
         return numpy.zeros(0), numpy.zeros(0, dtype=numpy.int64)
-    padded = numpy.pad(_as_int64(labels), 1)
-    hist = _xf_hist_kernel(padded, lut, n)
+    hist = _xf_hist_kernel(_as_int64(labels), lut, n)
     return hist @ _CROFTON_COEFS_4, hist @ _EULER_COEFS_8
 
 
