@@ -382,12 +382,13 @@ def get_correlation_costes(
             c1, c2, status = costes_linear(
                 g1, g2, offsets, float(scale), accurate, numpy_sum_chunk()
             )
-        # Keep the grouped pixels only for objects the reference must replay.
-        replay = (g1, g2) if (status == REPLAY).any() else (None, None)
-        return *replay, offsets, c1, c2, status
+        # Keep the grouped pixels only for objects the reference must decide.
+        needed = ((status == REPLAY) | (status == RESUME)).any()
+        replay = (g1, g2) if needed else (None, None)
+        return *replay, offsets, c1, c2, status, states
 
     def finish(staged):
-        g1, g2, offsets, c1, c2, status = staged
+        g1, g2, offsets, c1, c2, status, states = staged
         # Warnings, errors and replays on the calling thread, in image and object
         # order, as the reference emits them.
         for k in numpy.flatnonzero(status):
