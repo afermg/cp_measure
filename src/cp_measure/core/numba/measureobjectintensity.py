@@ -145,6 +145,7 @@ def get_intensity(
         return map_images(
             lambda item: _intensity_2d(*item, edge_measurements, legacy),
             list(zip(masks, pixels)),
+            pixels=sum(numpy.size(m) for m in masks),
         )
 
     def one(pair):
@@ -164,7 +165,8 @@ def get_intensity(
 
     # Volumes are independent and the segment kernels release the GIL, so
     # map_images runs a batch on threads.
-    results = map_images(one, list(pairs))
+    items = list(pairs)
+    results = map_images(one, items, pixels=sum(numpy.size(m) for m, _ in items))
     return results if is_batch else results[0]
 
 
