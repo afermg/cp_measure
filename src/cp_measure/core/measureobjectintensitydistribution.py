@@ -4,7 +4,7 @@ import numpy
 import numpy.ma
 import scipy.sparse
 from centrosome import zernike
-from cp_measure.primitives.shapes import as_2d_pair
+from cp_measure.primitives.shapes import apply_per_image, as_2d_pair, is_batch
 from cp_measure.utils import _zernike_scores
 from numpy.typing import NDArray
 
@@ -124,7 +124,7 @@ def get_radial_distribution(
     scaled: bool = True,
     bin_count: int = 4,
     maximum_radius: int = 100,
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """
     Radial features (2D calculations, including singleton-Z volumes).
 
@@ -167,6 +167,15 @@ def get_radial_distribution(
         boundaries up to the maximum radius. Parts of the object that are beyond this
         radius will be counted in an overflow bin. The radius is measured in pixels.
     """
+    if is_batch(labels):  # list/tuple or 4D: one result per image
+        return apply_per_image(
+            get_radial_distribution,
+            labels,
+            pixels,
+            scaled=scaled,
+            bin_count=bin_count,
+            maximum_radius=maximum_radius,
+        )
 
     measured = as_2d_pair(labels, pixels)
     if measured is None:
@@ -340,11 +349,15 @@ def get_radial_zernikes(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     zernike_degree: int = 9,
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object radial Zernikes (2D calculations, including singleton-Z volumes).
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
+    if is_batch(labels):  # list/tuple or 4D: one result per image
+        return apply_per_image(
+            get_radial_zernikes, labels, pixels, zernike_degree=zernike_degree
+        )
     measured = as_2d_pair(labels, pixels)
     if measured is None:
         return {}
