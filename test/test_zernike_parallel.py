@@ -38,3 +38,15 @@ def test_zernike_batch_matches_serial(fn):
         assert set(batch[b]) == set(single)
         for k in single:
             np.testing.assert_array_equal(batch[b][k], single[k], err_msg=k)
+
+
+def test_radial_zernikes_accept_non_native_byte_order():
+    """Big-endian pixels and labels give the same values as native ones."""
+    masks, pix = _batch(2, 4)
+    swapped_masks = [m.astype(m.dtype.newbyteorder()) for m in masks]
+    swapped_pix = [p.astype(p.dtype.newbyteorder()) for p in pix]
+    native = get_radial_zernikes(masks, pix)
+    swapped = get_radial_zernikes(swapped_masks, swapped_pix)
+    for a, b in zip(native, swapped):
+        for k in a:
+            np.testing.assert_array_equal(a[k], b[k], err_msg=k)
