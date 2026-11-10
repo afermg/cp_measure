@@ -1,0 +1,102 @@
+{
+  "versions": {
+    "CellProfiler": "4.2.8",
+    "numpy": "1.23.3",
+    "scipy": "1.9.1",
+    "scikit-image": "0.19.3"
+  },
+  "pixels_sha256": "bd6cea16422a52034a64f9fbca08229b97e4ab305e6d23e6f8c98d0708cd12b5",
+  "labels_sha256": "02fcee77f3d9e7fbf26cfea6afb7d52666f8e9947d3f4e7f5b26f2220651f3ad",
+  "cases": [
+    {
+      "subsample_size": 0.25,
+      "image_sample_size": 0.25,
+      "expected": {
+        "Granularity_1": [
+          98.24099358980757,
+          76.93809531769111
+        ],
+        "Granularity_2": [
+          0.0,
+          0.17293722317529658
+        ],
+        "Granularity_3": [
+          0.0,
+          0.0
+        ],
+        "Granularity_4": [
+          0.0,
+          0.18105061023552424
+        ],
+        "Granularity_5": [
+          0.0,
+          0.06435106245698613
+        ],
+        "Granularity_6": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "subsample_size": 1.0,
+      "image_sample_size": 0.5,
+      "expected": {
+        "Granularity_1": [
+          97.20623315241528,
+          98.48048653836833
+        ],
+        "Granularity_2": [
+          0.017678101084227946,
+          0.04691895343561175
+        ],
+        "Granularity_3": [
+          0.0,
+          0.0
+        ],
+        "Granularity_4": [
+          0.0,
+          0.0
+        ],
+        "Granularity_5": [
+          0.0,
+          0.0
+        ],
+        "Granularity_6": [
+          2.7760887465004807,
+          1.4725945081960583
+        ]
+      }
+    },
+    {
+      "subsample_size": 0.5,
+      "image_sample_size": 1.0,
+      "expected": {
+        "Granularity_1": [
+          96.42250709377693,
+          98.00063955397161
+        ],
+        "Granularity_2": [
+          3.577492906223059,
+          1.9993604460283936
+        ],
+        "Granularity_3": [
+          0.0,
+          0.0
+        ],
+        "Granularity_4": [
+          0.0,
+          0.0
+        ],
+        "Granularity_5": [
+          0.0,
+          0.0
+        ],
+        "Granularity_6": [
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ]
+}
