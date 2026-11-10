@@ -334,28 +334,6 @@ def _disk_reduce(P, radius, hx, H, W, is_max):
     return out
 
 
-def disk_erosion_2d(img: NDArray, radius: int) -> NDArray[np.float64]:
-    """Greyscale disk erosion, bit-exact with ``skimage…erosion(img, disk(radius))``."""
-    a = np.ascontiguousarray(img, dtype=np.float64)
-    if radius <= 0:
-        return a.copy()
-    P = np.pad(a, radius, mode="edge")
-    return _disk_reduce(
-        P, radius, _disk_halfwidths(radius), a.shape[0], a.shape[1], False
-    )
-
-
-def disk_dilation_2d(img: NDArray, radius: int) -> NDArray[np.float64]:
-    """Greyscale disk dilation, bit-exact with ``skimage…dilation(img, disk(radius))``."""
-    a = np.ascontiguousarray(img, dtype=np.float64)
-    if radius <= 0:
-        return a.copy()
-    P = np.pad(a, radius, mode="edge")
-    return _disk_reduce(
-        P, radius, _disk_halfwidths(radius), a.shape[0], a.shape[1], True
-    )
-
-
 @njit(cache=True, nogil=True)
 def _plus_reduce(P, H, W, is_max):
     """5-tap (disk(1)/cross) min/max over a 1-pixel ``edge``-padded image ``P``."""
@@ -387,20 +365,6 @@ def _plus_reduce(P, H, W, is_max):
                     v = ri
             out[i, j] = v
     return out
-
-
-def erosion_4conn_2d(img: NDArray) -> NDArray[np.float64]:
-    """disk(1) erosion, bit-exact with ``skimage…erosion(img, disk(1))``."""
-    a = np.ascontiguousarray(img, dtype=np.float64)
-    P = np.pad(a, 1, mode="edge")
-    return _plus_reduce(P, a.shape[0], a.shape[1], False)
-
-
-def dilation_4conn_2d(img: NDArray) -> NDArray[np.float64]:
-    """disk(1) dilation, bit-exact with ``skimage…dilation(img, disk(1))``."""
-    a = np.ascontiguousarray(img, dtype=np.float64)
-    P = np.pad(a, 1, mode="edge")
-    return _plus_reduce(P, a.shape[0], a.shape[1], True)
 
 
 @njit(cache=True, nogil=True)
@@ -914,24 +878,6 @@ def _ball_reduce(P, radius, hw, is_max):
     return out
 
 
-def ball_erosion_3d(img: NDArray, radius: int) -> NDArray[np.float64]:
-    """Greyscale ball erosion, bit-exact with ``skimage…erosion(img, ball(radius))``."""
-    a = np.ascontiguousarray(img, dtype=np.float64)
-    if radius <= 0:
-        return a.copy()
-    P = np.pad(a, radius, mode="edge")
-    return _ball_reduce(P, radius, _ball_halfwidths(radius), False)
-
-
-def ball_dilation_3d(img: NDArray, radius: int) -> NDArray[np.float64]:
-    """Greyscale ball dilation, bit-exact with ``skimage…dilation(img, ball(radius))``."""
-    a = np.ascontiguousarray(img, dtype=np.float64)
-    if radius <= 0:
-        return a.copy()
-    P = np.pad(a, radius, mode="edge")
-    return _ball_reduce(P, radius, _ball_halfwidths(radius), True)
-
-
 @njit(cache=True, nogil=True)
 def _cross_min_3d(P):
     """7-tap (ball(1)) min over a 1-voxel ``edge``-padded volume ``P``."""
@@ -953,12 +899,6 @@ def _cross_min_3d(P):
                         v = u
                 out[z, i, j] = v
     return out
-
-
-def erosion_6conn_3d(img: NDArray) -> NDArray[np.float64]:
-    """ball(1) erosion, bit-exact with ``skimage…erosion(img, ball(1))``."""
-    a = np.ascontiguousarray(img, dtype=np.float64)
-    return _cross_min_3d(np.pad(a, 1, mode="edge"))
 
 
 @njit(cache=True, nogil=True)
