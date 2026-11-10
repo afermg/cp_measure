@@ -57,9 +57,7 @@ python test/make_costes_reference.py --source /path/to/measurecolocalization.py 
 
 CI reads the small JSON fixture; no download or CellProfiler install is needed.
 Both thresholds and coefficients are compared with rtol=1e-10, atol=1e-12.
-Separate tests cover scale conversion and undefined inputs. Guards intentionally
-differ from upstream for constant, insufficient or nonfinite subsets: warnings
-and NaNs replace accidental endpoints or stale-bound convergence.
+Separate tests cover scale conversion and undefined inputs.
 
 **Scope:** parity of these threshold routines on these fixtures, not validation
 of all datasets, biology, significance or the full CellProfiler pipeline.

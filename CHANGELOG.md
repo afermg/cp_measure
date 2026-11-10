@@ -18,6 +18,8 @@ Notable user-facing changes are documented here.
 - **Breaking:** NumPy intensity now requires matching label/image shapes instead
   of broadcasting a 2D mask over a 3D image. To retain that measurement, pass
   `numpy.broadcast_to(mask_2d, pixels_3d.shape)` explicitly.
+- Costes permits threshold-boundary results in NumPy and Numba; scale validation
+  and invalid-input, regression and zero-denominator checks remain.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
@@ -70,9 +72,8 @@ Notable user-facing changes are documented here.
   reject float inputs without an explicit scale instead of silently searching a
   one-step grid. Matching unsigned integer dtypes infer their storage maximum;
   lower-bit-depth data in larger containers need an explicit override.
-- Undefined Costes regressions/background subsets and zero signal denominators
-  now warn with `RuntimeWarning` and return NaN. Constant bisection
-  candidates no longer cause silent convergence on stale bounds.
+- Undefined Costes regressions and zero signal denominators
+  warn with `RuntimeWarning` and return NaN.
 - Added integer/float, 2D/3D, bulk/featurizer and degenerate-input regressions,
   plus 18 fixtures from pinned CellProfiler threshold methods. This does not
   establish full CellProfiler pipeline equivalence.

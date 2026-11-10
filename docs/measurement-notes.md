@@ -50,7 +50,7 @@ For integer images, Costes divides by `scale_max`; normalized floats require the
 
 Both public Costes functions recognize **exact** reciprocal-multiply encodings of integer acquisition-grid levels, as produced by `img_as_float`, and map them to the existing division encoding before fitting thresholds and computing coefficients. This is performed per object, without modifying caller inputs. Other float values are left unchanged: there is no blanket quantization or epsilon-based snapping of nearby values. Explicit lower-bit-depth scales, such as `4095` for 12-bit images in `uint16`, use the same rule.
 
-This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes. Existing threshold comparisons and undefined-result/NaN rules are unchanged.
+This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes.
 
 ## Singleton-Z measurement eligibility
 
@@ -166,7 +166,7 @@ search. This preserves threshold inclusion: even last-bit changes in the fitted
 line can change the result substantially. Constant/nonfinite or insufficient
 signals retain NaN results and standard `RuntimeWarning` diagnostics. Missing
 raw Costes labels likewise yield NaN and warnings, unlike the zero-valued slots
-of the other colocalization metrics. Undefined searches are replayed per object
+of the other colocalization metrics. Exceptional searches are replayed per object
 by the reference to preserve precise diagnostics. Near-constant subsets and
 correlations within a reduction-error bound of a search decision also use this
 compatibility path; no correlation is rounded or search cutoff moved.
