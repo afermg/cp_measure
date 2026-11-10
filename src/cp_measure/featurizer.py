@@ -30,6 +30,7 @@ from typing import cast
 import numpy as np
 
 from cp_measure._sanitize import sanitize_masks
+from cp_measure.primitives.parallel import map_images
 
 # Feature groups that only support 2D spatial data.
 _2D_ONLY = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
@@ -223,11 +224,16 @@ def _featurize_batch(
 
     for mask_idx, object_name in enumerate(objects):
         # Relabel arbitrary IDs to 1..N once up front; keep originals for rows.
-        items = []
-        for b in batch_idx:
-            clean, ids = sanitize_masks(masks[b, mask_idx])
-            if ids.size:
-                items.append((b, clean, ids))
+        # Relabelled on the thread pool: one image after another on the calling
+        # thread left the workers idle (sort and relabel release the GIL).
+        sanitized = map_images(
+            lambda b: sanitize_masks(masks[b, mask_idx]),
+            batch_idx,
+            pixels=len(batch_idx) * masks[0, mask_idx].size,
+        )
+        items = [
+            (b, clean, ids) for b, (clean, ids) in zip(batch_idx, sanitized) if ids.size
+        ]
         if not items:
             continue
         results: list[dict[str, np.ndarray]] = [{} for _ in items]
