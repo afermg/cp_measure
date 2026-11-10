@@ -13,7 +13,9 @@ grown by one pixel and clipped to the image. It replaces centrosome's
 reductions, fused into one per-crop kernel
 (:func:`cp_measure.core.numba._radial.radial_object`). The exact Euclidean
 distance transform is the bit-identical numba port in
-:mod:`cp_measure.primitives._edt_numba`; the masked ``RadialCV`` stays host-side.
+:mod:`cp_measure.primitives._edt_numba`, and ``RadialCV`` is
+:func:`cp_measure.core.numba._radial.radial_cv`, a port of the reference's ``numpy.ma``
+expression with identical results, run per image on the batch threads.
 Results match the NumPy reference, which is label-independent since #96 (Issue #22).
 """
 
@@ -35,12 +37,14 @@ from cp_measure.core.measureobjectintensitydistribution import (
 )
 from cp_measure.core.numba._radial import (
     radial_all,
+    radial_cv,
     radial_object,
 )
 from cp_measure.core.numba._zernike import (
     zernike_per_image,
 )
 from cp_measure.primitives._edt_numba import distance_transform_edt
+from cp_measure.primitives._segment_numba import numpy_sum_chunk
 from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import each_volume, memory_key, native
 
@@ -115,34 +119,7 @@ def get_radial_distribution(
     ):
         for i, out in zip(items, outs):
             measured[i] = out
-    return unwrap(_with_radial_cv(measured, scaled, bin_count))
-
-
-def _with_radial_cv(measured, scaled, bin_count):
-    """Name each image's arrays, adding RadialCV.
-
-    RadialCV's ``numpy.ma`` expression holds the GIL: run per image on the pool, the
-    threads only queue for it (on a 20-image batch, 8 threads were 3x slower than
-    one). It runs once over all images' objects here instead, on the calling
-    thread. Each row is reduced on its own, so the values are bit-identical.
-    """
-    parts = [m for m in measured if isinstance(m, tuple)]
-    if parts:
-        cv = _radial_cv(
-            numpy.concatenate([p[2] for p in parts]),
-            numpy.concatenate([p[3] for p in parts]),
-        )
-        cvs = iter(numpy.split(cv, numpy.cumsum([len(p[2]) for p in parts])[:-1]))
-    results = []
-    for m in measured:
-        if isinstance(m, tuple):
-            arrays = (m[0], m[1], next(cvs))
-            m = {
-                name: arrays[col][:, b]
-                for col, name, b in _radial_features(scaled, bin_count)
-            }
-        results.append(m)
-    return results
+    return unwrap(measured)
 
 
 # (per-bin name template, overflow-bin name) per feature, in result order. The
@@ -169,9 +146,7 @@ def _radial_measure(
     bin_count: int,
     maximum_radius: int,
 ) -> list:
-    """Per channel image measured with ``labels_zyx``: its ``(frac_at_d, mean_frac,
-    wedge_sums, wedge_counts)``, or its finished result dict when no kernel ran (no
-    objects, or the NumPy fallback)."""
+    """The result dict of each channel image measured with ``labels_zyx``."""
     # Validate before the empty-image path and allocation. Unlike int(), index()
     # rejects fractional bin counts instead of silently changing the requested bins.
     bin_count = operator.index(bin_count)
@@ -234,25 +209,11 @@ def _radial_measure(
                     wedge_counts[c, k],
                 ) = radial_object(m, pix, d_to_edge, scaled, bin_count, radius)
 
+    cv = radial_cv(wedge_sums, wedge_counts, numpy_sum_chunk())
     return [
-        (frac_at_d[c], mean_frac[c], wedge_sums[c], wedge_counts[c])
+        {
+            name: (frac_at_d, mean_frac, cv)[col][c, :, b]
+            for col, name, b in _radial_features(scaled, bin_count)
+        }
         for c in range(len(channels))
     ]
-
-
-def _radial_cv(wedge_sums, wedge_counts):
-    """RadialCV per (object, bin) with the reference's own ``numpy.ma`` expression.
-
-    ``numpy.ma`` division masks zero or non-finite denominators and keeps the
-    numerator, so all-dark rings give 0 rather than NaN; evaluating the same
-    expression (vectorised over objects) keeps those cases identical.
-    """
-    radial_cv = numpy.zeros(wedge_sums.shape[:2])
-    with numpy.errstate(invalid="ignore", divide="ignore"):
-        for b in range(wedge_sums.shape[1]):
-            mask = wedge_counts[:, b] == 0
-            means = numpy.ma.MaskedArray(wedge_sums[:, b] / wedge_counts[:, b], mask)
-            cv = numpy.std(means, 1) / numpy.mean(means, 1)
-            cv[numpy.sum(~mask, 1) == 0] = 0
-            radial_cv[:, b] = numpy.array(cv)
-    return radial_cv

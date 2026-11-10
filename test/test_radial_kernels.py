@@ -116,3 +116,33 @@ def test_distance_transform_edt_matches_scipy_exactly(seed):
     np.testing.assert_array_equal(
         distance_transform_edt(full), scipy.ndimage.distance_transform_edt(full)
     )
+
+
+@requires_numba
+def test_radial_cv_matches_numpy_ma_bitwise():
+    """RadialCV against the reference's numpy.ma expression, bit for bit: a ring with
+    no pixels, a single pixel (one wedge), a zero-mean ring, overflowing and
+    non-finite sums, and random rows with empty wedges."""
+    from cp_measure.core.numba._radial import radial_cv
+    from cp_measure.primitives._segment_numba import numpy_sum_chunk
+
+    rng = np.random.default_rng(0)
+    counts = rng.integers(0, 3, (500, 2, 8)).astype(float)
+    sums = rng.normal(size=counts.shape) * counts
+    counts[0, 0] = 0  # no pixels in the ring
+    counts[1, 0] = 0
+    counts[1, 0, 3], sums[1, 0, 3] = 1, 2.5  # a single pixel
+    counts[2, 0], sums[2, 0] = 2, np.arange(8.0) - 3.5  # zero mean
+    counts[3, 0], sums[3, 0] = 1, [1e308] * 8  # the mean sum overflows
+    sums[4, 0, 0], sums[5, 0, 0] = np.nan, np.inf
+
+    expected = np.zeros(counts.shape[:2])
+    with np.errstate(all="ignore"):
+        for b in range(counts.shape[1]):
+            mask = counts[:, b] == 0
+            means = np.ma.MaskedArray(sums[:, b] / counts[:, b], mask)
+            cv = np.std(means, 1) / np.mean(means, 1)
+            cv[np.sum(~mask, 1) == 0] = 0
+            expected[:, b] = np.array(cv)
+    got = radial_cv(sums, counts, numpy_sum_chunk())
+    np.testing.assert_array_equal(got.view(np.uint64), expected.view(np.uint64))

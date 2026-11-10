@@ -11,8 +11,9 @@ Two kernels backing :func:`cp_measure.core.numba.measureobjectintensitydistribut
   geodesic, the per-bin histograms and the per-(bin, wedge) sums that replace the
   reference's repeated ``scipy.sparse.coo_matrix(...).toarray()`` builds.
 
-The exact-Euclidean distance to edge (scipy EDT) and the final ``RadialCV``
-(``numpy.ma``, to keep the reference's masked-division results) stay on the host.
+- :func:`radial_cv`: ``RadialCV`` from the per-(bin, wedge) sums, reproducing the
+  reference's ``numpy.ma`` expression value for value.
+
 Serial per call; the kernels release the GIL so batches can run on threads.
 """
 
@@ -20,6 +21,7 @@ import numpy as np
 from numba import njit
 
 from cp_measure.primitives._edt_numba import squared_edt_2d
+from cp_measure.primitives._segment_numba import numpy_sum
 
 _SQ2 = np.sqrt(2.0)
 # 8-neighbour offsets (orthogonal weight 1, diagonal weight sqrt(2)).
@@ -217,3 +219,66 @@ def radial_all(labels, pixels, n, scaled, bin_count, maximum_radius):
                 wedge_counts[ch, k],
             ) = radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius)
     return frac_at_d, mean_frac, wedge_sums, wedge_counts, fallback
+
+
+# numpy.ma's _DomainSafeDivide tolerance: a / b is masked when |a| * tiny >= |b|.
+_TINY = np.finfo(np.float64).tiny
+
+
+@njit(cache=True, nogil=True)
+def _ma_divide(a, b, a_masked, b_masked):
+    """``numpy.ma.true_divide`` on one element: ``(data, mask)``. A masked result keeps
+    ``0 + a``, an unmasked one is ``a / b + 0 * a``, exactly as numpy.ma computes them."""
+    q = a / b
+    m = not np.isfinite(q) or a_masked or b_masked or abs(a) * _TINY >= abs(b)
+    flag = 1.0 if m else 0.0
+    return (0.0 if m else q) + flag * a, m
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def radial_cv(wedge_sums, wedge_counts, chunk):
+    """``RadialCV`` per ``(..., object, bin)`` from ``(..., object, bin, 8)`` wedge sums and
+    pixel counts, bit-identical to the reference ``numpy.ma`` expression::
+
+        means = numpy.ma.MaskedArray(sums / counts, counts == 0)
+        cv = numpy.std(means, 1) / numpy.mean(means, 1)
+        cv[no unmasked wedge] = 0
+
+    Each step follows numpy.ma: masked wedges are summed as 0 with NumPy's pairwise sum
+    (``numpy_sum``; ``chunk`` is ``numpy_sum_chunk()``), divisions go through
+    :func:`_ma_divide`, ``sqrt`` keeps its input where the result is masked, and the
+    output is the data of the final masked array (masked entries included).
+    """
+    shape = wedge_sums.shape[:-1]
+    sums = wedge_sums.reshape(-1, 8)
+    counts = wedge_counts.reshape(-1, 8)
+    out = np.zeros(sums.shape[0])
+    means = np.empty(8)
+    terms = np.empty(8)
+    for row in range(sums.shape[0]):
+        k = 0
+        for j in range(8):
+            means[j] = sums[row, j] / counts[row, j]
+            if counts[row, j] != 0:
+                k += 1
+        if k == 0:
+            continue  # the reference sets rows without any pixel to 0
+        for j in range(8):
+            terms[j] = means[j] if counts[row, j] != 0 else 0.0
+        total = numpy_sum(terms, chunk)
+        mean, mean_masked = _ma_divide(total * 1.0, float(k), False, False)
+        # variance: masked wedges (and every wedge when the mean is masked) sum as 0
+        for j in range(8):
+            if counts[row, j] == 0 or mean_masked:
+                terms[j] = 0.0
+            else:
+                d = means[j] - mean
+                terms[j] = d * d
+        # the sum is masked only when every wedge is; var then drops that mask
+        var = _ma_divide(numpy_sum(terms, chunk), float(k), mean_masked, False)[0]
+        std = np.sqrt(var)
+        std_masked = not np.isfinite(std) or var < 0
+        if std_masked:
+            std = var
+        out[row] = _ma_divide(std, mean, std_masked, mean_masked)[0]
+    return out.reshape(shape)
