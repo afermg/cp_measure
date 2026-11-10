@@ -83,6 +83,27 @@ def test_matches_numpy_2d(name, regime):
 
 @requires_numba
 @pytest.mark.parametrize("name", FUNCS)
+def test_degenerate_object_matches_reference_per_object_fallback(name):
+    """With one constant (degenerate) object among valid ones, the kernel result is
+    non-finite for that object; the backend recomputes only it with the single-object
+    reference, so every object still matches the reference (was a whole-image pass)."""
+    masks = np.zeros((SIZE_2D, SIZE_2D), np.int32)
+    _stamp_objects_2d(masks, n_objects=3)
+    rng = get_rng()
+    p1, p2 = rng.random((SIZE_2D, SIZE_2D)), rng.random((SIZE_2D, SIZE_2D))
+    p1[masks == 2] = 0.3  # constant in both channels -> undefined correlation
+    p2[masks == 2] = 0.7
+    expected = getattr(ref, f"get_correlation_{name}")(p1, p2, masks)
+    got = _numba_fn(name)(p1, p2, masks)
+    assert set(got) == set(expected)
+    for key in expected:
+        np.testing.assert_allclose(
+            got[key], expected[key], rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
+        )
+
+
+@requires_numba
+@pytest.mark.parametrize("name", FUNCS)
 def test_matches_numpy_3d(name):
     masks, p1, p2 = _data_3d(float)
     expected = getattr(ref, f"get_correlation_{name}")(p1, p2, masks)
