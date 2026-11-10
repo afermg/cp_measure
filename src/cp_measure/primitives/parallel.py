@@ -12,7 +12,6 @@ release it). A ``ThreadPoolExecutor`` shares memory with the caller, so no image
 data is copied to workers, unlike a process pool.
 """
 
-import functools
 import os
 import threading
 from collections.abc import Callable, Sequence
@@ -48,13 +47,25 @@ def _usable_cpus() -> int:
 _THREAD_PREFIX = "cp_measure"
 
 
-@functools.cache
+_POOLS: dict[int, ThreadPoolExecutor] = {}
+# ponytail: a fork while another thread holds this lock (a dict lookup, or the
+# first pool creation) would leave it held in the child; add an at-fork reset if
+# that ever shows up.
+_POOLS_LOCK = threading.Lock()
+
+
 def _pool(pid: int) -> ThreadPoolExecutor:
     """The process's thread pool, created on first use and kept for later calls
     (starting threads per call held the GIL for about 5% of a 32-core batch).
     Keyed by process id: a forked child gets its own pool, as the parent's threads
-    do not exist there. Sized to the CPUs usable when it is first created."""
-    return ThreadPoolExecutor(_usable_cpus(), thread_name_prefix=_THREAD_PREFIX)
+    do not exist there. Sized to the CPUs usable when it is first created. The lock
+    makes concurrent first uses (e.g. the featurizer's measurements) share one."""
+    with _POOLS_LOCK:
+        if pid not in _POOLS:
+            _POOLS[pid] = ThreadPoolExecutor(
+                _usable_cpus(), thread_name_prefix=_THREAD_PREFIX
+            )
+        return _POOLS[pid]
 
 
 def map_images(

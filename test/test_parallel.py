@@ -83,3 +83,26 @@ def test_usable_cpus_without_numba(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "numba", None)  # makes `import numba` fail
     assert _usable_cpus() >= 1
+
+
+def test_pool_is_created_once_under_concurrent_first_use():
+    """Threads that ask for a process's pool at the same moment all get one pool."""
+    import threading
+
+    from cp_measure.primitives.parallel import _pool
+
+    for trial in range(20):
+        key = -1 - trial  # a fresh "process id" per trial, so each one is a first use
+        start = threading.Barrier(16)
+        got = []
+
+        def first_use():
+            start.wait()
+            got.append(_pool(key))
+
+        threads = [threading.Thread(target=first_use) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len({id(p) for p in got}) == 1
