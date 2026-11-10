@@ -13,7 +13,7 @@ from cp_measure.primitives._moments import (
     moment_feature_dict,
     spatial_moments_2d,
 )
-from cp_measure.primitives.shapes import apply_per_image, as_2d, is_batch
+from cp_measure.primitives.shapes import as_2d, per_image_batch
 from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
@@ -591,6 +591,7 @@ def _single_slice_inputs(
     return masks, pixels
 
 
+@per_image_batch
 def get_sizeshape(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
@@ -606,15 +607,6 @@ def get_sizeshape(
     only to the 3D surface-area calculation. A batch (list/tuple or 4D array)
     returns one dict per image.
     """
-    if is_batch(masks):
-        return apply_per_image(
-            get_sizeshape,
-            masks,
-            pixels,
-            calculate_advanced=calculate_advanced,
-            new_features=new_features,
-            spacing=spacing,
-        )
     return _get_sizeshape(masks, pixels, calculate_advanced, new_features, spacing)
 
 
@@ -1009,6 +1001,7 @@ def _get_sizeshape(
     return results
 
 
+@per_image_batch
 def get_zernike(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
@@ -1019,10 +1012,6 @@ def get_zernike(
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     A batch (list/tuple or 4D array) returns one dict per image.
     """
-    if is_batch(masks):
-        return apply_per_image(
-            get_zernike, masks, pixels, zernike_numbers=zernike_numbers
-        )
     measured_masks = as_2d(masks)
     if measured_masks is None:
         return {}
@@ -1047,6 +1036,7 @@ def _zernike_features(
     return {f"Zernike_{n}_{m}": score[:, i] for i, (n, m) in enumerate(zernike_indexes)}
 
 
+@per_image_batch
 def get_feret(
     masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
@@ -1055,8 +1045,6 @@ def get_feret(
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     A batch (list/tuple or 4D array) returns one dict per image.
     """
-    if is_batch(masks):
-        return apply_per_image(get_feret, masks, pixels)
     measured_masks = as_2d(masks)
     if measured_masks is None:
         return {}

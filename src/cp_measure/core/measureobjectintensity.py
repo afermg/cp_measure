@@ -2,7 +2,7 @@ import numpy
 import scipy.ndimage
 import skimage.segmentation
 from numpy.typing import NDArray
-from cp_measure.primitives.shapes import apply_per_image, is_batch
+from cp_measure.primitives.shapes import per_image_batch
 
 __doc__ = """
 MeasureObjectIntensity
@@ -137,6 +137,7 @@ def _interp(sorted_arr: numpy.ndarray, n: int, frac: float, legacy: bool) -> flo
     return float(sorted_arr[lo] * (1.0 - f) + sorted_arr[hi] * f)
 
 
+@per_image_batch
 def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -163,14 +164,6 @@ def get_intensity(
         quartiles at ``n*q`` and MAD as the ``(1/ndim)``-quantile of
         ``|x - median(x)|``. All other features are unaffected.
     """
-    if is_batch(masks):  # list/tuple or 4D: one result per image
-        return apply_per_image(
-            get_intensity,
-            masks,
-            pixels,
-            edge_measurements=edge_measurements,
-            legacy=legacy,
-        )
     # Labels and pixels must match in shape and rank; no implicit mask
     # broadcasting over a 3D stack (mirrors the numba backend and the to_bzyx
     # contract, which also refuses to broadcast a lower-rank mask).

@@ -30,6 +30,9 @@ volume (e.g. a 2D mask applied to a 3D stack) — per-element ndim handling is t
 caller's job (each backend dispatches its own 2D vs 3D path).
 """
 
+import functools
+import inspect
+
 import numpy
 from numpy.typing import NDArray
 
@@ -209,18 +212,72 @@ def per_image(masks, pixels) -> list[tuple]:
     ]
 
 
-def apply_per_image(func, masks, pixels, **kwargs) -> list:
-    """Run a single-image ``func(mask, pixels, **kwargs)`` over each image of a batch
-    (see :func:`per_image`). Returns one result per image."""
-    return [func(m, p, **kwargs) for m, p in per_image(masks, pixels)]
+def apply_per_image(func, masks, pixels, *args, **kwargs) -> list:
+    """Run a single-image ``func(mask, pixels, *args, **kwargs)`` over each image of a
+    batch (see :func:`per_image`). Returns one result per image."""
+    return [func(m, p, *args, **kwargs) for m, p in per_image(masks, pixels)]
 
 
-def apply_per_pair(func, pixels_1, pixels_2, masks, **kwargs) -> list:
+def apply_per_pair(func, pixels_1, pixels_2, masks, *args, **kwargs) -> list:
     """:func:`apply_per_image` for the two-channel colocalization functions,
-    ``func(pixels_1, pixels_2, masks, **kwargs)``. Returns one result per image."""
+    ``func(pixels_1, pixels_2, masks, *args, **kwargs)``. Returns one result per image."""
     first, _ = each_volume(masks, pixels_1)
     second, _ = each_volume(masks, pixels_2)
     return [
-        func(*(x if ndim == 3 else x[0] for x in (p1, p2, m)), **kwargs)
+        func(*(x if ndim == 3 else x[0] for x in (p1, p2, m)), *args, **kwargs)
         for (m, p1, ndim), (_, p2, _) in zip(first, second)
     ]
+
+
+def per_image_batch(func):
+    """Decorator: make a single-image measurement accept a batch.
+
+    A batch (list/tuple or 4D array in the first parameter) returns one result per
+    image via :func:`apply_per_image`; a single image calls ``func`` unchanged. The
+    first parameter is the labels and the second the pixels, whatever they are named
+    (``masks``/``mask``/``labels``, ``pixels``), so ``func``'s own signature and
+    keyword names are preserved for callers and for the :mod:`cp_measure._sanitize`
+    wrapper. Replaces the ``if is_batch(...): return apply_per_image(...)`` guard
+    repeated at each public measurement, so the dispatch rule lives in one place.
+    """
+    sig = inspect.signature(func)
+    mask_name, pixel_name = list(sig.parameters)[:2]
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        bound = sig.bind(*args, **kwargs)
+        masks = bound.arguments[mask_name]
+        if not is_batch(masks):
+            return func(*args, **kwargs)
+        pixels = bound.arguments.get(pixel_name)
+        extra = {
+            k: v for k, v in bound.arguments.items() if k not in (mask_name, pixel_name)
+        }
+        return [func(m, p, **extra) for m, p in per_image(masks, pixels)]
+
+    return wrapper
+
+
+def per_image_pair_batch(func):
+    """Decorator: the two-channel analogue of :func:`per_image_batch` for a
+    colocalization measurement whose first three parameters are the two pixel channels
+    then the labels, dispatching a batch through :func:`apply_per_pair`."""
+    sig = inspect.signature(func)
+    p1_name, p2_name, mask_name = list(sig.parameters)[:3]
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        bound = sig.bind(*args, **kwargs)
+        masks = bound.arguments[mask_name]
+        if not is_batch(masks):
+            return func(*args, **kwargs)
+        extra = {
+            k: v
+            for k, v in bound.arguments.items()
+            if k not in (p1_name, p2_name, mask_name)
+        }
+        return apply_per_pair(
+            func, bound.arguments[p1_name], bound.arguments[p2_name], masks, **extra
+        )
+
+    return wrapper
