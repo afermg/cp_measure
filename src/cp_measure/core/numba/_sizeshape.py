@@ -5,13 +5,18 @@ reductions, and a per-object bbox pass (bbox, centroid, filled area, Euclidean d
 radii) that replaces regionprops and scipy's distance transform with bit-identical results.
 Spatial moments are summed in the NumPy backend's separable order (per row, then over
 rows) without the GIL; they match it to round-off, as BLAS may reorder the NumPy sums.
+Volumes use the NumPy backend, except for the convex volume (and so solidity), which
+:func:`convex_volume_3d` counts with skimage's rule in a numba kernel.
 """
 
+import warnings
 from typing import NamedTuple, cast
 
 import numba
 import numpy
 from numpy.typing import NDArray
+from scipy.spatial import ConvexHull, QhullError
+from skimage.util import unique_rows
 
 from cp_measure.core import measureobjectsizeshape as _ss
 from cp_measure.primitives.parallel import map_images
@@ -773,6 +778,168 @@ def spatial_moments_2d(
     return raw, central, *normalized_and_hu(central)
 
 
+# --- Convex volume (3D area_convex / solidity) ---------------------------------------------
+# skimage's 3D `convex_hull_image` (regionprops' `image_convex`, on each object's bbox image)
+# builds the hull in two steps: a ConvexHull of the voxel coordinates, then a ConvexHull of
+# its vertices moved half a voxel along each axis (`_offsets_diamond`, made unique with
+# `unique_rows`). A bbox voxel is in the hull when `dot(normal, voxel) + offset < 1e-10` for
+# every facet. That test of every bbox voxel against every facet in NumPy was nearly all of
+# the 3D size/shape time, holding the GIL; here it is a numba kernel. The first hull takes
+# only each (z, y) row's first and last voxel: the hull of those is the object's hull, so
+# its vertices, and everything after them, are the same.
+#
+# Hull vertices lie on the half-voxel grid, so a voxel off a facet plane is at least
+# ~1 / (8 |normal|**2) > 1e-6 away from it (the normal from integer cross products, |normal|
+# at most the squared bbox diagonal), while voxels on the plane evaluate to round-off. Both
+# are far from the 1e-10 tolerance, so the order of the dot product's sum does not change
+# any decision.
+_HULL_TOLERANCE = 1e-10  # skimage's convex_hull_image default
+_DIAMOND_3D = numpy.array(
+    [[-0.5, 0, 0], [0.5, 0, 0], [0, -0.5, 0], [0, 0.5, 0], [0, 0, -0.5], [0, 0, 0.5]]
+)  # skimage's _offsets_diamond(3)
+
+
+@numba.njit(cache=True, nogil=True)
+def _row_extremes_3d(labels, n):
+    """Each object's bbox ``(lo, hi)`` and, grouped by object as CSR, the first and last
+    voxel of each (z, y) row it occupies, in bbox-local coordinates."""
+    depth, height, width = labels.shape
+    lo = numpy.full((n, 3), 1 << 30, numpy.int64)
+    hi = numpy.full((n, 3), -1, numpy.int64)
+    counts = numpy.zeros(n + 1, numpy.int64)
+    last_row = numpy.full(n, -1, numpy.int64)
+    first = numpy.zeros(n, numpy.int64)
+    last = numpy.zeros(n, numpy.int64)
+    for pass_ in range(2):
+        if pass_ == 1:
+            for o in range(n):
+                counts[o + 1] += counts[o]
+            points = numpy.empty((counts[n], 3))
+            cursor = counts[:-1].copy()
+            last_row[:] = -1
+        for z in range(depth):
+            for y in range(height):
+                row = z * height + y
+                touched_lo = n
+                touched_hi = -1
+                for x in range(width):
+                    lab = labels[z, y, x]
+                    if lab <= 0:
+                        continue
+                    o = lab - 1
+                    if last_row[o] != row:
+                        last_row[o] = row
+                        first[o] = x
+                    last[o] = x
+                    touched_lo = min(touched_lo, o)
+                    touched_hi = max(touched_hi, o)
+                for o in range(touched_lo, touched_hi + 1):
+                    if last_row[o] != row:
+                        continue
+                    if pass_ == 0:
+                        lo[o, 0] = min(lo[o, 0], z)
+                        lo[o, 1] = min(lo[o, 1], y)
+                        lo[o, 2] = min(lo[o, 2], first[o])
+                        hi[o, 0] = max(hi[o, 0], z + 1)
+                        hi[o, 1] = max(hi[o, 1], y + 1)
+                        hi[o, 2] = max(hi[o, 2], last[o] + 1)
+                        counts[o + 1] += 1 if first[o] == last[o] else 2
+                    else:
+                        for x in (first[o], last[o]):
+                            k = cursor[o]
+                            points[k, 0] = z - lo[o, 0]
+                            points[k, 1] = y - lo[o, 1]
+                            points[k, 2] = x - lo[o, 2]
+                            cursor[o] += 1
+                            if first[o] == last[o]:
+                                break
+    return lo, hi, points, counts
+
+
+@numba.njit(cache=True, nogil=True)
+def _in_hull(e, z, y, x, tolerance):
+    """skimage's test of one voxel: ``dot(normal, voxel) + offset < tolerance`` for every
+    facet row ``[normal, offset]`` of ``e``."""
+    for f in range(e.shape[0]):
+        if (e[f, 0] * z + e[f, 1] * y + e[f, 2] * x) + e[f, 3] >= tolerance:
+            return False
+    return True
+
+
+@numba.njit(cache=True, nogil=True)
+def _count_in_hulls(lo, hi, equations, offsets, tolerance):
+    """Per object, the bbox voxels inside its hull (bbox-local coordinates), as skimage's
+    ``_check_coords_in_hull``; an object without facets counts 0. The hull is convex, so
+    each row's inside voxels are one run: only its ends are searched for."""
+    n = lo.shape[0]
+    out = numpy.zeros(n)
+    for o in range(n):
+        if offsets[o] == offsets[o + 1]:
+            continue
+        e = equations[offsets[o] : offsets[o + 1]]
+        width = hi[o, 2] - lo[o, 2]
+        total = 0
+        for z in range(hi[o, 0] - lo[o, 0]):
+            for y in range(hi[o, 1] - lo[o, 1]):
+                start = 0
+                while start < width and not _in_hull(e, z, y, start, tolerance):
+                    start += 1
+                stop = width
+                while stop > start and not _in_hull(e, z, y, stop - 1, tolerance):
+                    stop -= 1
+                total += stop - start
+        out[o] = total
+    return out
+
+
+def _hull_failed(err: Exception) -> None:
+    """skimage's warning when it cannot build a hull (it then counts 0 voxels)."""
+    warnings.warn(
+        "Failed to get convex hull image. Returning empty image, see error message "
+        f"below:\n{err}",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+def convex_volume_3d(labels: NDArray[numpy.integer]) -> NDArray[numpy.floating]:
+    """Per-object ``area_convex`` of a 3D label volume (labels ``1..n``), the voxel count
+    of skimage's ``convex_hull_image`` on each object's bbox image, as regionprops."""
+    labels = _as_int64(labels)
+    n = int(labels.max()) if labels.size else 0
+    lo, hi, points, counts = _row_extremes_3d(labels, n)
+    equations = []
+    offsets = numpy.zeros(n + 1, numpy.int64)
+    present = numpy.diff(counts) > 0  # regionprops has a row per present label only
+    for o in range(n):
+        offsets[o + 1] = offsets[o]
+        if not present[o]:
+            continue
+        # QHull runs without the GIL; only these few calls per object hold it.
+        try:
+            first = ConvexHull(points[counts[o] : counts[o + 1]])
+        except QhullError:
+            # Degenerate (flat, a line, a voxel): skimage's hull of all the voxels fails
+            # with the error and warning below.
+            box = tuple(slice(a, b) for a, b in zip(lo[o], hi[o]))
+            try:
+                ConvexHull(numpy.transpose(numpy.nonzero(labels[box] == o + 1)))
+            except QhullError as err:
+                _hull_failed(err)
+            continue
+        coords = first.points[first.vertices]
+        coords = unique_rows((coords[:, numpy.newaxis, :] + _DIAMOND_3D).reshape(-1, 3))
+        try:
+            hull = ConvexHull(coords)
+        except QhullError as err:
+            _hull_failed(err)
+            continue
+        equations.append(hull.equations)
+        offsets[o + 1] += len(hull.equations)
+    stacked = numpy.concatenate(equations) if equations else numpy.zeros((0, 4))
+    return _count_in_hulls(lo, hi, stacked, offsets, _HULL_TOLERANCE)[present]
+
+
 # --- Full get_sizeshape wrapper -------------------------------------------------------------
 # Assembles the complete sizeshape feature dict from the numba kernels above. With option B
 # (axes/eccentricity/orientation derived from the central moments), no moments go through
@@ -904,9 +1071,16 @@ def _sizeshape_one(
     spacing: tuple[float, ...] | None,
 ) -> dict[str, NDArray[numpy.floating]]:
     masks, pixels = _ss._single_slice_inputs(masks, pixels)
-    if masks.ndim != 2:  # a single volume, so NumPy returns one dict
+    if masks.ndim != 2:  # a single volume: NumPy, with the numba convex volume
         return cast(
             dict[str, NDArray[numpy.floating]],
-            _ss.get_sizeshape(masks, pixels, calculate_advanced, new_features, spacing),
+            _ss._get_sizeshape(
+                masks,
+                pixels,
+                calculate_advanced,
+                new_features,
+                spacing,
+                convex_volume=convex_volume_3d,
+            ),
         )
     return _sizeshape_2d(masks, pixels, calculate_advanced, new_features)

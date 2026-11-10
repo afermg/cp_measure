@@ -339,6 +339,32 @@ def test_get_sizeshape_orientation_and_central_moment_regressions():
 
 
 @requires_numba
+def test_get_sizeshape_3d_convex_volume_matches_skimage():
+    # Degenerate hulls (one voxel, a plate, a line: skimage warns and counts 0, so
+    # Solidity is inf), objects cut by the volume border, and an irregular one.
+    from cp_measure.core.numba._sizeshape import get_sizeshape
+
+    masks = numpy.zeros((12, 20, 24), numpy.int32)
+    masks[5, 5, 5] = 1
+    masks[1, 2:8, 10:20] = 2
+    masks[3:11, 12, 3] = 3
+    masks[0:4, 15:20, 0:6] = 4
+    masks[6:12, 14:20, 16:24] = 5
+    masks[6:11, 2:8, 10:17][numpy.random.default_rng(1).random((5, 6, 7)) < 0.6] = 6
+    with pytest.warns(UserWarning, match="Failed to get convex hull image") as record:
+        with numpy.errstate(divide="ignore"):
+            got = get_sizeshape(masks, None)
+    assert len([w for w in record if w.category is UserWarning]) == 3
+    with pytest.warns(UserWarning):
+        ref = skimage.measure.regionprops_table(
+            masks, properties=["area_convex", "solidity"]
+        )
+    numpy.testing.assert_array_equal(got["ConvexArea"], ref["area_convex"])
+    numpy.testing.assert_array_equal(got["Solidity"], ref["solidity"])
+    assert numpy.isinf(got["Solidity"][:3]).all()
+
+
+@requires_numba
 @pytest.mark.parametrize(
     "calculate_advanced,new_features", [(False, False), (True, True)]
 )
