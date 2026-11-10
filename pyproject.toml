@@ -1,6 +1,6 @@
 [project]
 name = "cp_measure"
-version = "0.3.0"
+dynamic = ["version"] # version is read from the git tag by hatch-vcs
 description = "cp_measure implements CellProfiler measurements in an accessible interface. "
 authors = [
     {name= "Alan Munoz"},
@@ -33,17 +33,18 @@ benchmark = [
 [project.urls]
 Homepage = "https://github.com/afermg/cp_measure"
 
-[tool.pdm.build]
-includes = [
-    "src/cp_measure",
-]
-excludes = [
-    "**/__pycache__/**",
-]
-
 [build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/cp_measure/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cp_measure"]
 
 [tool.mypy]
 python_version = "3.13"  # default; nox overrides per-version via --python-version
