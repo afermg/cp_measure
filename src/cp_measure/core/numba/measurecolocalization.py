@@ -10,8 +10,8 @@ Overlap errors.
 
 The public feature schema, label slots and per-object RWC scope are unchanged.
 Overlap remains a direct API, not an extra default bulk feature. Costes keeps
-NumPy's scale preparation and regression reductions around compiled searches;
-no combined featurizer dispatch is introduced here.
+NumPy's scale preparation and measures all objects in one compiled pass whose
+sums reproduce NumPy's; no combined featurizer dispatch is introduced here.
 """
 
 import numpy
@@ -31,112 +31,220 @@ from cp_measure.core.measurecolocalization import (
     M_FAST,
     M_FASTER,
 )
-from cp_measure.core.numba._colocalization import coloc_per_object
-from cp_measure.core.numba._costes import _bisection, _linear, _regression_ab
-from cp_measure.primitives._segment_numba import flatten_pairs_grouped
-from cp_measure.primitives.shapes import to_bzyx
+from cp_measure.core.numba._colocalization import channel_ranks, coloc_image
+from cp_measure.core.numba._costes import (
+    CONSTANT_CHANNEL,
+    EMPTY_OBJECT,
+    FEW_NONZERO,
+    FEW_OR_NONFINITE,
+    OUT_OF_RANGE,
+    REPLAY,
+    RESUME,
+    SEARCHED,
+    STEPS_DONE,
+    STEPS_NOT_CONVERGED,
+    ZERO_DENOMINATOR,
+    _bisection_end,
+    _bisection_steps,
+    _coefficients,
+    _moment_totals,
+    costes_faster_image,
+    costes_linear_image,
+)
+from cp_measure.primitives._segment_numba import numpy_sum_chunk
+from cp_measure.primitives.parallel import map_images
+from cp_measure.primitives.shapes import each_volume, is_batch, memory_key, native
+
+# The reference's warning text for each undefined Costes status.
+_UNDEFINED_REASONS = {
+    EMPTY_OBJECT: "missing or empty object label",
+    FEW_OR_NONFINITE: "fewer than three paired pixels or non-finite signal",
+    FEW_NONZERO: "fewer than three nonzero paired pixels",
+    CONSTANT_CHANNEL: "constant channel in the regression subset",
+    ZERO_DENOMINATOR: "zero above-threshold intensity denominator",
+}
+
+# Pixel dtypes the fused kernel reproduces: float64, and float32 (widened exactly; its
+# percentage thresholds keep NumPy's float32 rounding, see coloc_per_object).
+_KERNEL_DTYPES = (numpy.dtype(numpy.float64), numpy.dtype(numpy.float32))
+
+
+def _kernel_labels(masks):
+    """Contiguous native integer labels, without copying them if they are."""
+    # Numba requires native-endian labels; convert values, never reinterpret or
+    # byteswap the caller's array in place.
+    masks = numpy.ascontiguousarray(masks, dtype=masks.dtype.newbyteorder("="))
+    return masks if masks.dtype.kind in "iu" else masks.astype(numpy.intp)
+
+
+def _kernel_pixels(pixels):
+    """Contiguous native float32/float64 pixels, without copying them if they are."""
+    dtype = pixels.dtype if pixels.dtype in _KERNEL_DTYPES else numpy.float64
+    return numpy.ascontiguousarray(pixels, dtype=dtype)
 
 
 def _run(
-    masks_zyx, pixels_1_zyx, pixels_2_zyx, thr_frac, compute_rwc, compute_pearson=False
+    masks_zyx,
+    pixels_1_zyx,
+    pixels_2_zyx,
+    thr_frac,
+    compute_rwc,
+    compute_pearson=False,
+    frac32=None,
+    ranks=(None, None),
+    chunk=0,
 ):
-    """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
+    """Group one ``(Z, Y, X)`` image triple and run the fused kernel, in one call.
 
-    Returns the nine per-object arrays from ``coloc_per_object``, or ``None`` when
-    the image holds no objects (the callers then emit empty feature arrays).
+    Returns the nine per-object arrays from ``coloc_per_object`` (empty when the
+    image holds no objects).
+    ``frac32`` is the float32 threshold fraction (:func:`_float32_fraction`), or
+    ``None`` when NumPy keeps float32 thresholds in float64.
+    ``ranks`` are the channels' precomputed RWC ranks (:func:`_channel_ranks`).
+    ``chunk`` is ``numpy_sum_chunk()``, read by the caller on its own thread
+    (``np.setbufsize`` is thread-local, so worker threads would read the default).
     """
-    # Numba requires native-endian labels; convert values, never reinterpret or
-    # byteswap the caller's array in place. Native contiguous inputs stay zero-copy.
-    masks = numpy.ascontiguousarray(masks_zyx, dtype=masks_zyx.dtype.newbyteorder("="))
-    if not numpy.issubdtype(masks.dtype, numpy.integer):
-        masks = masks.astype(numpy.intp)
-    # Labels are contiguous 1..N by contract (see cp_measure._sanitize), so the
-    # segment index is label - 1 and the CSR block bounds are the cumulative
-    # per-label pixel counts — one bincount, no lookup table.
-    n = int(masks.max(initial=0))
-    if n == 0:
-        return None
-    offsets = numpy.zeros(n + 1, dtype=numpy.int64)
-    # bincount rejects uint64 even when these bounded label IDs fit intp.
-    if masks.dtype == numpy.uint64:
-        masks = masks.astype(numpy.intp)
-    offsets[1:] = numpy.cumsum(numpy.bincount(masks.ravel(), minlength=n + 1)[1:])
-    g1, g2 = flatten_pairs_grouped(
-        masks,
-        numpy.ascontiguousarray(pixels_1_zyx, dtype=numpy.float64),
-        numpy.ascontiguousarray(pixels_2_zyx, dtype=numpy.float64),
-        offsets,
+    # Pearson's means use NumPy's pairwise summation (see coloc_per_object). A
+    # Python float holds the float32 fraction exactly.
+    return coloc_image(
+        _kernel_labels(masks_zyx),
+        _kernel_pixels(pixels_1_zyx),
+        _kernel_pixels(pixels_2_zyx),
+        thr_frac,
+        compute_rwc,
+        compute_pearson,
+        chunk,
+        0.0 if frac32 is None else float(frac32),
+        frac32 is not None and pixels_1_zyx.dtype == numpy.float32,
+        frac32 is not None and pixels_2_zyx.dtype == numpy.float32,
+        *ranks,
     )
-    means = None
-    if compute_pearson:
-        # NumPy's pairwise mean reduction matters for constant and high-offset
-        # signals: a serial JIT sum can turn an undefined correlation finite.
-        # Reuse exactly that reduction, without changing the other fused metrics.
-        means = numpy.zeros((2, n))
-        for k in range(n):
-            lo, hi = offsets[k : k + 2]
-            if hi > lo:
-                means[0, k] = numpy.mean(g1[lo:hi])
-                means[1, k] = numpy.mean(g2[lo:hi])
-    return coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means)
 
 
-def _featurize(pixels_1, pixels_2, masks, threshold, compute_rwc, build, ref, **kwargs):
-    """Normalise the triple via ``to_bzyx`` and map each image through ``build``.
+def _channel_ranks(mask, pixels):
+    """One channel's RWC ranks over the object blocks of ``mask``, as ``_run``
+    groups them."""
+    return channel_ranks(_kernel_labels(mask), _kernel_pixels(pixels))
 
-    ``build(result)`` turns the kernel tuple (or ``None`` for an empty image) into
-    one image's feature dict. ``unwrap`` then collapses a single image to that
-    dict, or returns the list for a batch — matching the numba intensity backend.
+
+def _float32_fraction(threshold):
+    """The reference's float32 threshold fraction, or ``None``.
+
+    The reference thresholds a float32 channel at ``(thr / 100) * max``, which NumPy
+    rounds to float32 unless the scalar type forces float64 (a ``numpy.float64``
+    ``thr`` under NumPy 2). The same expression on a float32 one gives the fraction,
+    rounded as NumPy rounds it for any ``thr`` type and NumPy version.
     """
-    # to_bzyx promotes 2D and singleton-Z inputs to the same shape and does not
-    # validate spatial extents. Check the original triple before unchecked JIT
-    # indexing; never broadcast masks or silently discard intensity planes.
+    fraction = (threshold / 100) * numpy.ones(1, numpy.float32)
+    return fraction[0] if fraction.dtype == numpy.float32 else None
+
+
+def _featurize(
+    pixels_1,
+    pixels_2,
+    masks,
+    threshold,
+    compute_rwc,
+    build,
+    ref,
+    *,
+    force_reference=False,
+    **kwargs,
+):
+    """Split the triple into per-image ``(Z, Y, X)`` views and map each through ``build``.
+
+    ``build(result)`` picks one image's feature arrays from the kernel tuple. ``unwrap`` then collapses a single image to that
+    dict, or returns the list for a batch — matching the numba intensity backend.
+    ``force_reference`` sends every image to ``ref`` (an option the kernel lacks).
+    """
     precision = kwargs.get("precision", "input")
     validate_precision(precision)
-    shape = numpy.asarray(masks).shape
-    if numpy.asarray(pixels_1).shape != shape or numpy.asarray(pixels_2).shape != shape:
-        raise ValueError("colocalization images and masks must have the same shape")
     # Preserve historical scalar division in input mode, including NumPy 2's
     # float32 rounding. Only the opt-in mode widens before dividing.
     frac = (float(threshold) if precision == "float64" else threshold) / 100.0
-    masks_list, pixels_1_list, unwrap = to_bzyx(masks, pixels_1)
-    _, pixels_2_list, _ = to_bzyx(masks, pixels_2)
-    results = []
-    for m, p1, p2 in zip(masks_list, pixels_1_list, pixels_2_list):
+    frac32 = _float32_fraction(threshold)
+    chunk = numpy_sum_chunk()  # on the calling thread: np.setbufsize is per thread
+    # Views, no batch copy. each_volume checks that each image's labels and pixels
+    # match in shape and rank before unchecked JIT indexing (no mask broadcasting).
+    first, unwrap = each_volume(masks, pixels_1)
+    second, _ = each_volume(masks, pixels_2)
+
+    def compute(item):
+        # One kernel call (the GIL is released): map_images runs batches on threads.
+        (m, p1, p2), ranks = item
+        # big-endian channels would otherwise miss the kernel dtypes
+        p1, p2 = native(p1), native(p2)
         if ref is not reference.get_correlation_pearson:
             p1, p2 = (
                 promote_float_pixels(p1, precision),
                 promote_float_pixels(p2, precision),
             )
-        if p1.dtype != numpy.float64 or p2.dtype != numpy.float64:
-            result = ref(p1, p2, m, **kwargs)
-        else:
-            result = build(
-                _run(
-                    m,
-                    p1,
-                    p2,
-                    frac,
-                    compute_rwc,
-                    compute_pearson=ref is reference.get_correlation_pearson,
-                )
+        if (
+            force_reference
+            or p1.dtype not in _KERNEL_DTYPES
+            or p2.dtype not in _KERNEL_DTYPES
+        ):
+            return m, p1, p2, None
+        compute_pearson = ref is reference.get_correlation_pearson
+        res = _run(m, p1, p2, frac, compute_rwc, compute_pearson, frac32, ranks, chunk)
+        return m, p1, p2, res
+
+    def finish(staged):
+        # Reference fallbacks (and their warnings) on the calling thread, in order.
+        m, p1, p2, res = staged
+        if (
+            force_reference
+            or p1.dtype not in _KERNEL_DTYPES
+            or p2.dtype not in _KERNEL_DTYPES
+        ):
+            return ref(p1, p2, m, **kwargs)
+        arrays = build(res)
+        if not all(numpy.isfinite(values).all() for values in arrays.values()):
+            return ref(p1, p2, m, **kwargs)
+        return arrays
+
+    items = [(m, p1, p2) for (m, p1, _), (_, p2, _) in zip(first, second)]
+    ranks = [(None, None)] * len(items)
+    # RWC's rank sort dominates it. In a batch of channel pairs each channel recurs
+    # (once per pair it is in), so rank each (mask, channel) once, on threads, and
+    # let every pair read the ranks. Ranks of the exactly widened float64 values
+    # equal those of the input, so they are keyed on the caller's arrays, here on
+    # the calling thread.
+    if compute_rwc and not force_reference and len(items) > 1:
+        keys = [
+            [(memory_key(m), memory_key(p)) for p in (p1, p2)] for m, p1, p2 in items
+        ]
+        channels = {}
+        for (m, p1, p2), pair in zip(items, keys):
+            for p, key in zip((p1, p2), pair):
+                if p.dtype in _KERNEL_DTYPES or precision == "float64":
+                    channels.setdefault(key, (m, p))
+        unique = list(channels)
+        shared = dict(
+            zip(
+                unique,
+                map_images(
+                    lambda k: _channel_ranks(*channels[k]),
+                    unique,
+                    pixels=sum(channels[k][0].size for k in unique),
+                ),
             )
-            if any(not numpy.isfinite(values).all() for values in result.values()):
-                result = ref(p1, p2, m, **kwargs)
-        results.append(result)
-    return unwrap(results)
+        )
+        found = [tuple(shared.get(key) for key in pair) for pair in keys]
+        ranks = [r if None not in r else (None, None) for r in found]
+    staged = map_images(
+        compute, list(zip(items, ranks)), pixels=sum(m.size for m, _, _ in items)
+    )
+    return unwrap([finish(s) for s in staged])
 
 
 def get_correlation_pearson(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     def build(res):
-        if res is None:
-            return {F_CORRELATION_FORMAT: [], F_SLOPE_FORMAT: []}
-        corr, slope = res[0].tolist(), res[1].tolist()
-        return {F_CORRELATION_FORMAT: corr, F_SLOPE_FORMAT: slope}
+        return {F_CORRELATION_FORMAT: res[0], F_SLOPE_FORMAT: res[1]}
 
     return _featurize(
         pixels_1, pixels_2, masks, 15, False, build, reference.get_correlation_pearson
@@ -150,12 +258,9 @@ def get_correlation_manders_fold(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     def build(res):
-        if res is None:
-            return {f"{F_MANDERS_FORMAT}_1": [], f"{F_MANDERS_FORMAT}_2": []}
-        m1, m2 = res[2].tolist(), res[3].tolist()
-        return {f"{F_MANDERS_FORMAT}_1": m1, f"{F_MANDERS_FORMAT}_2": m2}
+        return {f"{F_MANDERS_FORMAT}_1": res[2], f"{F_MANDERS_FORMAT}_2": res[3]}
 
     return _featurize(
         pixels_1,
@@ -177,12 +282,14 @@ def get_correlation_rwc(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]]:
+    rank_scope: str = "object",
+) -> dict[str, NDArray[numpy.float64]]:
+    """Object-local ranks are accelerated; object-set ranks use the reference."""
+    if rank_scope not in ("object", "object_set"):
+        raise ValueError("rank_scope must be 'object' or 'object_set'")
+
     def build(res):
-        if res is None:
-            return {f"{F_RWC_FORMAT}_1": [], f"{F_RWC_FORMAT}_2": []}
-        rwc1, rwc2 = res[7].tolist(), res[8].tolist()
-        return {f"{F_RWC_FORMAT}_1": rwc1, f"{F_RWC_FORMAT}_2": rwc2}
+        return {f"{F_RWC_FORMAT}_1": res[7], f"{F_RWC_FORMAT}_2": res[8]}
 
     return _featurize(
         pixels_1,
@@ -192,8 +299,10 @@ def get_correlation_rwc(
         True,
         build,
         reference.get_correlation_rwc,
+        force_reference=rank_scope == "object_set",
         thr=thr,
         precision=precision,
+        rank_scope=rank_scope,
     )
 
 
@@ -204,19 +313,12 @@ def get_correlation_overlap(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     def build(res):
-        if res is None:
-            return {
-                F_OVERLAP_FORMAT: [],
-                f"{F_K_FORMAT}_1": [],
-                f"{F_K_FORMAT}_2": [],
-            }
-        overlap, k1, k2 = res[4].tolist(), res[5].tolist(), res[6].tolist()
         return {
-            F_OVERLAP_FORMAT: overlap,
-            f"{F_K_FORMAT}_1": k1,
-            f"{F_K_FORMAT}_2": k2,
+            F_OVERLAP_FORMAT: res[4],
+            f"{F_K_FORMAT}_1": res[5],
+            f"{F_K_FORMAT}_2": res[6],
         }
 
     return _featurize(
@@ -232,31 +334,54 @@ def get_correlation_overlap(
     )
 
 
-def _costes_pair(fi, si, scale, mode):
-    """Share canonicalization, reductions and diagnostics with the reference."""
-    fi = reference._canonical_costes_pixels(fi, scale)
-    si = reference._canonical_costes_pixels(si, scale)
-    if not reference._valid_costes_pixels(fi, si):
-        return numpy.nan, numpy.nan
-    a, b = _regression_ab(fi, si, 0, fi.size)
-    if not (numpy.isfinite(a) and numpy.isfinite(b)):
-        return reference._costes_pair(fi, si, scale, mode)
-    if mode == M_FASTER:
-        first, second = _bisection(fi, si, 0, fi.size, a, b, scale)
-    else:
-        first, second = _linear(fi, si, 0, fi.size, a, b, scale, mode == M_ACCURATE)
-    if not (numpy.isfinite(first) and numpy.isfinite(second)):
-        # The kernel does not emit Python warnings. Replay only exceptional
-        # objects to preserve the reference's precise warning categories/messages.
-        return reference._costes_pair(fi, si, scale, mode)
-    combined = (fi > first) & (si > second)
-    total_first = fi[fi >= first].sum()
-    total_second = si[si >= second].sum()
-    if total_first <= 0 or total_second <= 0:
-        return reference._undefined_costes("zero above-threshold intensity denominator")
-    return float(fi[combined].sum() / total_first), float(
-        si[combined].sum() / total_second
+def _resume_bisection(g1, g2, lo, hi, scale, state, chunk):
+    """Finish a bisection the kernel paused at an ambiguous step.
+
+    The reference decides each ambiguous step (SciPy's last bits pick the side of
+    r = 0, and SciPy emits its own warnings); the kernel runs the steps in between.
+    Same result as replaying ``reference._costes_pair``, ``(c1, c2, reason)``, with
+    one SciPy call per ambiguous step instead of one per step.
+    """
+    fi, si = g1[lo:hi], g2[lo:hi]
+    a, b = float(state[6]), float(state[7])
+    totals = _moment_totals(g1, g2, lo, hi)
+    code = None
+    while code != STEPS_DONE:
+        # bisection_costes' update on Python floats, as the reference computes it.
+        left, right, mid = (float(v) for v in state[:3])
+        thr_fi = mid / scale
+        selected = (fi < thr_fi) | (si < (a * thr_fi) + b)
+        if numpy.count_nonzero(selected) <= 2:
+            left = mid - 1
+        else:
+            r = reference._costes_background_correlation(fi, si, selected)
+            if r < 0:
+                left = mid - 1
+            elif r >= 0:
+                right = mid + 1
+                state[4] = mid
+            # NaN (constant background) leaves the bounds unchanged, as in CP.
+        state[3] = mid
+        divisor = 6 / 5 if right - left > 6 else 2
+        state[0], state[1], state[2] = left, right, ((right - left) // divisor) + left
+        code = _bisection_steps(g1, g2, lo, hi, scale, state, totals, True)
+        if code == STEPS_NOT_CONVERGED:
+            return numpy.nan, numpy.nan, "bisection did not converge"
+    thr1, thr2 = _bisection_end(scale, state)
+    status, c1, c2 = _coefficients(
+        g1,
+        g2,
+        lo,
+        hi,
+        thr1,
+        thr2,
+        numpy.empty(hi - lo, bool),
+        numpy.empty(hi - lo),
+        chunk,
     )
+    if status != SEARCHED:
+        return numpy.nan, numpy.nan, _UNDEFINED_REASONS[status]
+    return c1, c2, None
 
 
 def get_correlation_costes(
@@ -267,48 +392,111 @@ def get_correlation_costes(
     thr: int = 15,
     *,
     scale_max: int | None = None,
-) -> dict[str, list[float]]:
+    scipy_ties: bool = False,
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Costes coefficients using the current NumPy scale and warning contracts.
 
     Floats require an explicit acquisition ``scale_max``; same-dtype unsigned
-    integers infer it. ``thr`` is retained but unused. The repeated threshold
-    search is compiled; regression and coefficient reductions remain NumPy to
-    preserve threshold inclusion. Undefined/near-constant searches use the
-    reference implementation for diagnostics. See the NumPy API for details.
+    integers infer it. ``thr`` is retained but unused. One compiled pass measures
+    all objects; its regression and coefficient sums reproduce NumPy's, so the
+    same pixels count. Undefined results warn as the reference does, once per reason
+    and image with the number of objects, and near-constant searches replay the
+    reference for its diagnostics. See the NumPy API for details.
+
+    The kernel decides every search step itself. When r is within rounding of a
+    decision point (often exactly 0 on small integer-grid objects) or the subset is
+    nearly constant, the NumPy backend's result depends on SciPy's last bits; there
+    the two backends can differ (see the measurement notes). ``scipy_ties=True``
+    asks SciPy for those steps, as the NumPy backend does, and also emits SciPy's
+    near-constant warnings: the result is then bit-identical to the NumPy backend.
     """
-    # Share acquisition-scale preparation; _costes_pair canonicalizes each object.
-    first, second, scale = reference._prepare_costes_inputs(
-        pixels_1, pixels_2, scale_max
-    )
-    labels = numpy.asarray(masks)
-    if labels.shape != first.shape or not numpy.issubdtype(labels.dtype, numpy.integer):
-        raise ValueError("Costes labels must be an integer array matching the images")
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
+    chunk = numpy_sum_chunk()  # on the calling thread: np.setbufsize is per thread
 
-    def measure(p1, p2, mask):
-        c1, c2 = [], []
-        for fi, si in reference._iter_label_pixels(p1, p2, mask):
-            if fi is None or si is None or fi.size == 0:
-                v1, v2 = reference._undefined_costes("missing or empty object label")
+    def compute(item):
+        # Per-image preparation and kernel work (the kernel releases the GIL):
+        # map_images runs batches on threads, with no whole-batch float64 copy.
+        p1, p2, mask = item
+        first, second = numpy.asarray(p1), numpy.asarray(p2)
+        scale = reference._costes_scale(first, second, scale_max)
+        # The kernel widens float32/float64 pixels itself; others convert here.
+        first, second = (
+            p if p.dtype in _KERNEL_DTYPES else reference._costes_float64(p, scale)
+            for p in (first, second)
+        )
+        labels = numpy.asarray(mask)
+        if labels.shape != first.shape or labels.dtype.kind not in "iu":
+            raise ValueError(
+                "Costes labels must be an integer array matching the images"
+            )
+        if labels.ndim not in (2, 3):
+            raise ValueError(f"Costes expects 2D or 3D images, got {labels.ndim}D")
+        if labels.ndim != 3:
+            labels, first, second = labels[None], first[None], second[None]
+        zyx = (_kernel_labels(labels), _kernel_pixels(first), _kernel_pixels(second))
+        # One kernel call; the grouped pixels come back only for replays.
+        states = None
+        if fast_costes == M_FASTER:
+            c1, c2, status, states, g1, g2, offsets = costes_faster_image(
+                *zyx, float(scale), scipy_ties, chunk
+            )
+        else:
+            accurate = fast_costes == M_ACCURATE
+            c1, c2, status, g1, g2, offsets = costes_linear_image(
+                *zyx, float(scale), accurate, scipy_ties, chunk
+            )
+        return g1, g2, offsets, c1, c2, status, states, scale
+
+    def finish(staged):
+        g1, g2, offsets, c1, c2, status, states, scale = staged
+        # Replays, errors and warnings on the calling thread, in image and object
+        # order, as the reference emits them. Only flagged objects need Python.
+        flagged = numpy.flatnonzero(status)
+        codes = status[flagged]
+        undefined = []  # (first object, reason, number of objects)
+        replays = (codes == RESUME) | (codes == REPLAY)
+        for k, code in zip(flagged[replays].tolist(), codes[replays].tolist()):
+            lo, hi = offsets[k], offsets[k + 1]
+            if code == RESUME:
+                c1[k], c2[k], reason = _resume_bisection(
+                    g1, g2, lo, hi, scale, states[k], chunk
+                )
             else:
-                v1, v2 = _costes_pair(fi, si, scale, fast_costes)
-            c1.append(v1)
-            c2.append(v2)
+                c1[k], c2[k], reason = reference._costes_pair(
+                    g1[lo:hi], g2[lo:hi], scale, fast_costes
+                )
+            if reason is not None:
+                undefined.append((k, reason, 1))
+        # The kernel stops at the first out-of-range object, so it is the last one.
+        if codes.size and codes[-1] == OUT_OF_RANGE:
+            raise ValueError(
+                "Costes expects normalized pixels in [0, 1]; check scale_max"
+            )
+        found, first, count = numpy.unique(
+            codes[~replays], return_index=True, return_counts=True
+        )
+        others = flagged[~replays]
+        for code, i, n in zip(found.tolist(), first.tolist(), count.tolist()):
+            undefined.append((others[i], _UNDEFINED_REASONS[code], n))
+        counts = {}  # in the order the reasons first occur, as the reference
+        for _, reason, n in sorted(undefined, key=lambda entry: entry[0]):
+            counts[reason] = counts.get(reason, 0) + n
+        reference._warn_undefined_costes(counts)
         return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
 
-    # Single arrays retain their original rank, including singleton Z. Explicit
-    # batches follow the existing backend helper; no mask repetition is allowed.
-    if not isinstance(masks, (list, tuple)) and labels.ndim < 4:
-        return measure(first, second, labels)
-    if isinstance(masks, (list, tuple)):
-        if not isinstance(pixels_1, (list, tuple)) or not isinstance(
-            pixels_2, (list, tuple)
-        ):
-            raise ValueError("masks and pixels must both be sequences, or both arrays")
-        labels, first, second = list(labels), list(first), list(second)
-    masks_list, first_list, unwrap = to_bzyx(labels, first)
-    _, second_list, _ = to_bzyx(labels, second)
-    return unwrap(
-        [measure(p1, p2, m) for m, p1, p2 in zip(masks_list, first_list, second_list)]
-    )
+    # Single arrays keep their original rank, including singleton Z.
+    if not is_batch(masks):
+        return finish(compute((pixels_1, pixels_2, masks)))
+    first, _ = each_volume(masks, pixels_1)
+    second, _ = each_volume(masks, pixels_2)
+    items = [
+        (
+            p1 if ndim == 3 else p1[0],
+            p2 if ndim == 3 else p2[0],
+            m if ndim == 3 else m[0],
+        )
+        for (m, p1, ndim), (_, p2, _) in zip(first, second)
+    ]
+    staged = map_images(compute, items, pixels=sum(m.size for _, _, m in items))
+    return [finish(s) for s in staged]

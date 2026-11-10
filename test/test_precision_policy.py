@@ -105,12 +105,14 @@ def test_numba_colocalization_precision_batches(precision, as_array):
         name = "get_correlation_" + metric
         actual = getattr(nb, name)(*args, precision=precision)
         assert len(actual) == 2
+        # input mode: numba sums float32 in float64 (same thresholds), NumPy in float32
+        rtol = 1e-6 if precision == "input" else 1e-12
         for i, result in enumerate(actual):
             expected = getattr(ref, name)(a[i], b[i], masks[i], precision=precision)
             assert list(result) == list(expected)
             for key in expected:
                 np.testing.assert_allclose(
-                    result[key], expected[key], rtol=1e-12, atol=1e-12
+                    result[key], expected[key], rtol=rtol, atol=1e-12
                 )
 
 

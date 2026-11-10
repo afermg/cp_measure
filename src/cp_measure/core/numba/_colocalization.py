@@ -19,8 +19,10 @@ never the kernel.
 import numpy as np
 from numba import njit
 
+from cp_measure.primitives._segment_numba import group_pairs, numpy_sum
 
-@njit(cache=True)
+
+@njit(cache=True, nogil=True)
 def _dense_rank(vals):
     """Per-element 0-based dense rank (ties share a rank), plus the max rank.
 
@@ -40,8 +42,37 @@ def _dense_rank(vals):
     return ranks, r
 
 
-@njit(cache=True, error_model="numpy")
-def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
+@njit(cache=True, nogil=True)
+def dense_ranks_grouped(g, offsets):
+    """:func:`_dense_rank` of every object block of one grouped channel:
+    ``(ranks, rmax)``, ranks aligned with ``g`` and the max rank per object."""
+    n = offsets.size - 1
+    ranks = np.zeros(g.size, np.int64)
+    rmax = np.zeros(n, np.int64)
+    for k in range(n):
+        lo, hi = offsets[k], offsets[k + 1]
+        if hi > lo:
+            r, m = _dense_rank(g[lo:hi])
+            ranks[lo:hi] = r
+            rmax[k] = m
+    return ranks, rmax
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def coloc_per_object(
+    g1,
+    g2,
+    offsets,
+    n,
+    thr_frac,
+    compute_rwc,
+    numpy_means=False,
+    chunk=0,
+    frac32=0.0,
+    round32=(False, False),
+    ranks1=None,
+    ranks2=None,
+):
     """Per-object colocalization features over grouped value blocks.
 
     ``g1``/``g2`` hold both channels' intensities with object ``k`` in
@@ -51,8 +82,18 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
     it. Returns nine length-``n`` arrays:
     ``(corr, slope, m1, m2, overlap, k1, k2, rwc1, rwc2)``.
 
-    The public Pearson wrapper supplies NumPy-reduced ``means`` (shape ``(2, n)``)
-    to preserve its pairwise summation semantics, especially for constant signals.
+    With ``numpy_means`` (the public Pearson wrapper) the object means use NumPy's
+    pairwise summation (``chunk`` is ``numpy_sum_chunk()``), so they equal
+    ``numpy.mean`` exactly; a serial sum can turn an undefined correlation of a
+    constant or high-offset signal finite.
+
+    ``round32`` marks the channels whose threshold NumPy rounds to float32 (float32
+    channels in ``precision="input"`` mode): theirs is ``frac32 * max`` in float32,
+    with ``frac32`` the float32 fraction. The ``>=`` membership then equals the
+    reference's while sums stay float64.
+
+    ``ranks1``/``ranks2``, when given, are :func:`dense_ranks_grouped` of ``g1``/``g2``
+    (the wrapper ranks a channel once when several channel pairs share it).
 
     Threshold-derived features default to ``0.0`` for an object with no pixel
     above the combined threshold (matching the reference's initialised values);
@@ -90,16 +131,31 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
                 mx1 = v1
             if np.isnan(v2) or v2 > mx2:
                 mx2 = v2
-        mean1 = s1 / cnt if means is None else means[0, k]
-        mean2 = s2 / cnt if means is None else means[1, k]
+        if numpy_means:
+            mean1 = numpy_sum(g1[lo:hi], chunk) / cnt
+            mean2 = numpy_sum(g2[lo:hi], chunk) / cnt
+        else:
+            mean1 = s1 / cnt
+            mean2 = s2 / cnt
 
-        tff = thr_frac * mx1
-        tss = thr_frac * mx2
+        # The maxima of float32 values are exact in float32.
+        if round32[0]:
+            tff = np.float64(np.float32(frac32) * np.float32(mx1))
+        else:
+            tff = thr_frac * mx1
+        if round32[1]:
+            tss = np.float64(np.float32(frac32) * np.float32(mx2))
+        else:
+            tss = thr_frac * mx2
 
         # Per-pixel RWC weights need the object's dense ranks up front.
         if compute_rwc:
-            r1, r1max = _dense_rank(g1[lo:hi])
-            r2, r2max = _dense_rank(g2[lo:hi])
+            if ranks1 is None:
+                r1, r1max = _dense_rank(g1[lo:hi])
+                r2, r2max = _dense_rank(g2[lo:hi])
+            else:
+                r1, r1max = ranks1[0][lo:hi], ranks1[1][k]
+                r2, r2max = ranks2[0][lo:hi], ranks2[1][k]
             rmax = r1max if r1max > r2max else r2max
             R = rmax + 1
 
@@ -165,3 +221,46 @@ def coloc_per_object(g1, g2, offsets, n, thr_frac, compute_rwc, means=None):
                 rwc2[k] = sum_siw_c / tot_si
 
     return corr, slope, m1, m2, overlap, k1, k2, rwc1, rwc2
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def coloc_image(
+    masks,
+    pix1,
+    pix2,
+    thr_frac,
+    compute_rwc,
+    numpy_means,
+    chunk,
+    frac32,
+    round1,
+    round2,
+    ranks1=None,
+    ranks2=None,
+):
+    """:func:`coloc_per_object` of one ``(Z, Y, X)`` image triple, grouped by
+    :func:`group_pairs`, in one GIL-free call: the grouped pixels are allocated
+    and freed here and never reach Python."""
+    g1, g2, offsets = group_pairs(masks, pix1, pix2)
+    return coloc_per_object(
+        g1,
+        g2,
+        offsets,
+        offsets.size - 1,
+        thr_frac,
+        compute_rwc,
+        numpy_means,
+        chunk,
+        frac32,
+        (round1, round2),
+        ranks1,
+        ranks2,
+    )
+
+
+@njit(cache=True, nogil=True)
+def channel_ranks(masks, pixels):
+    """:func:`dense_ranks_grouped` of one channel, grouped as :func:`coloc_image`
+    groups it, in one GIL-free call."""
+    g, _, offsets = group_pairs(masks, pixels, pixels)
+    return dense_ranks_grouped(g, offsets)
