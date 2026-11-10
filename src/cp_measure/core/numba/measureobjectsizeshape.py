@@ -7,7 +7,8 @@ case (binary shape, ``weights ≡ 1``); the normalisation denominator is the
 enclosing-circle area ``π·r²`` (vs the radial backend's pixel count), and only the
 magnitude is emitted.
 
-Centrosome still supplies the radial LUT (degree-only) and ``minimum_enclosing_circle``.
+Centrosome still supplies the radial LUT (degree-only); the enclosing circles and pixel
+coordinates are numba kernels too.
 Batch handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
 """
 
