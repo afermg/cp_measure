@@ -20,19 +20,20 @@ degree-only, cheap) via :func:`zernike_coeffs`; the per-pixel evaluation follows
 - unit-disk cutoff: zero where ``r² > 1 + 1e-9``, so pixels on the enclosing circle
   count regardless of rounding (see ``cp_measure.utils._UNIT_DISK_EDGE``).
 
-Label enumeration stays on the host (:func:`cp_measure.utils._zernike_coords`, shared
-with the NumPy backend); the minimum enclosing circle is the numba
-:func:`enclosing_circles`.
+Pixel coordinates come from :func:`_object_coords`, a numba port of the NumPy
+backend's :func:`cp_measure.utils._zernike_coords` with the same arithmetic; the
+minimum enclosing circle is the numba :func:`enclosing_circles`.
 """
 
 import centrosome.zernike
+import numba
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import each_volume, memory_key
-from cp_measure.utils import _UNIT_DISK_EDGE, _zernike_coords
+from cp_measure.utils import _UNIT_DISK_EDGE
 
 
 def zernike_coeffs(
@@ -176,47 +177,115 @@ def zernike_moments_channels(weights, xm, ym, seg0, lut, nterms, m_arr, n, power
     return vr, vi
 
 
+# error_model="numpy": a single-pixel object has radius 0, and 0/0 must give NaN
+# coordinates (and NaN features), as in the NumPy backend, not raise.
+@njit(cache=True, nogil=True, error_model="numpy")
+def _object_coords(labels):
+    """:func:`cp_measure.utils._zernike_coords` without the GIL: for each foreground pixel
+    in raster order, its 0-based object index ``seg``, its row and column, and its
+    row/column offsets ``ym``/``xm`` from the object's enclosing-circle centre divided by
+    the radius; plus the ``(n,)`` radii and pixel counts. Labels are ``1..n``."""
+    H, W = labels.shape
+    n = 0
+    size = 0
+    for r in range(H):
+        for c in range(W):
+            lab = labels[r, c]
+            if lab > 0:
+                size += 1
+                n = max(n, lab)
+    centers, radii = enclosing_circles(labels, n)
+    seg = np.empty(size, np.int64)
+    rows = np.empty(size, np.int64)
+    cols = np.empty(size, np.int64)
+    ym = np.empty(size)
+    xm = np.empty(size)
+    counts = np.zeros(n)
+    i = 0
+    for r in range(H):
+        for c in range(W):
+            lab = labels[r, c]
+            if lab > 0:
+                o = lab - 1
+                seg[i] = o
+                rows[i] = r
+                cols[i] = c
+                ym[i] = (r - centers[o, 0]) / radii[o]
+                xm[i] = (c - centers[o, 1]) / radii[o]
+                counts[o] += 1.0
+                i += 1
+    return seg, rows, cols, ym, xm, radii, counts
+
+
+@njit(cache=True, nogil=True)
+def _shape_sums(labels, lut, nterms, m_arr):
+    """Unweighted (shape) Zernike sums ``(vr, vi)`` of shape ``(n, K)``, the radii and
+    the pixel counts, in one call."""
+    seg, _rows, _cols, ym, xm, radii, counts = _object_coords(labels)
+    vr, vi = zernike_moments(
+        np.ones(seg.size), xm, ym, seg, lut, nterms, m_arr, radii.size
+    )
+    return vr, vi, radii, counts
+
+
+@njit(cache=True, nogil=True)
+def _weighted_coords(labels, pixels):
+    """:func:`_object_coords` plus each foreground pixel's value in every image of the
+    tuple ``pixels``, as float64 ``(C, M)`` weights."""
+    seg, rows, cols, ym, xm, radii, counts = _object_coords(labels)
+    weights = np.empty((len(pixels), seg.size))
+    for c in range(len(pixels)):
+        image = pixels[c]
+        for i in range(seg.size):
+            weights[c, i] = image[rows[i], cols[i]]
+    return seg, ym, xm, radii, counts, weights
+
+
+def _pixel_tuple(pixels):
+    """The images as a tuple numba can index with a loop variable: all of one array type,
+    so they are passed as views; otherwise as float64 copies (the weights are float64)."""
+    if len({numba.typeof(p) for p in pixels}) == 1:
+        return tuple(pixels)
+    return tuple(np.ascontiguousarray(p, dtype=np.float64) for p in pixels)
+
+
 def zernike_moments_per_object(labels, pixels, coeffs):
     """Per-object weighted-complex Zernike sums shared by both 2D backends.
 
-    Same contract as :func:`cp_measure.utils._zernike_scores`, whose coordinate
-    setup it shares, for every intensity image in ``pixels`` (a list; the weighted,
-    radial case) or for ``None`` (the unweighted shape case). The coordinates and
-    the basis are computed once for all images. ``coeffs`` is :func:`zernike_coeffs`.
-    Returns ``(vr, vi, radii, counts)`` with ``vr``/``vi`` of shape ``(C, n, K)``.
+    Same contract as :func:`cp_measure.utils._zernike_scores` for every intensity image
+    in ``pixels`` (a list; the weighted, radial case) or for ``None`` (the unweighted
+    shape case). The coordinates and the basis are computed once for all images.
+    ``coeffs`` is :func:`zernike_coeffs`. Returns ``(vr, vi, radii, counts)`` with
+    ``vr``/``vi`` of shape ``(C, n, K)``.
     """
     lut, nterms, m_arr = coeffs
-    seg, keep, ym, xm, radii = _zernike_coords(labels, _enclosing_circle)
-    n = len(radii)
-    C = 1 if pixels is None else len(pixels)
-    if n == 0:
-        empty = np.zeros((C, 0, len(lut)))
-        return empty, empty, radii, np.zeros(0)
+    # native-endian, contiguous intp: one compiled signature (as _enclosing_circle)
+    labels = np.ascontiguousarray(labels, dtype=np.intp)
     if pixels is None:
-        weights = np.ones((1, len(seg)))
-    else:
-        weights = np.stack([p[keep].astype(np.float64) for p in pixels])
-    powers = None
-    if pixels is not None:
-        # Mirror-symmetric objects have moments whose real (or imaginary) part is
-        # zero by symmetry, so atan2 returns +pi or -pi on the sign of round-off.
-        # Building z^m with NumPy's complex multiply, as _zernike_scores does,
-        # reduces these sign differences but cannot guarantee identical phases:
-        # even repeated NumPy calls can differ at the branch cut or near zero.
-        # Only the (max_m + 1, M) powers are materialised, not the (M, K) basis.
-        z = ym + 1j * xm
-        powers = np.empty((int(m_arr.max()) + 1, len(z)), dtype=np.complex128)
-        powers[0] = 1
-        for m in range(1, len(powers)):
-            powers[m] = z if m == 1 else powers[m - 1] * z
-    if C == 1:
+        vr, vi, radii, counts = _shape_sums(labels, lut, nterms, m_arr)
+        return vr[None], vi[None], radii, counts
+    seg, ym, xm, radii, counts, weights = _weighted_coords(labels, _pixel_tuple(pixels))
+    n = len(radii)
+    if n == 0:
+        empty = np.zeros((len(pixels), 0, len(lut)))
+        return empty, empty, radii, counts
+    # Mirror-symmetric objects have moments whose real (or imaginary) part is
+    # zero by symmetry, so atan2 returns +pi or -pi on the sign of round-off.
+    # Building z^m with NumPy's complex multiply, as _zernike_scores does,
+    # reduces these sign differences but cannot guarantee identical phases:
+    # even repeated NumPy calls can differ at the branch cut or near zero.
+    # Only the (max_m + 1, M) powers are materialised, not the (M, K) basis.
+    z = ym + 1j * xm
+    powers = np.empty((int(m_arr.max()) + 1, len(z)), dtype=np.complex128)
+    powers[0] = 1
+    for m in range(1, len(powers)):
+        powers[m] = z if m == 1 else powers[m - 1] * z
+    if len(pixels) == 1:
         vr, vi = zernike_moments(weights[0], xm, ym, seg, lut, nterms, m_arr, n, powers)
-        vr, vi = vr[None], vi[None]
-    else:
-        vr, vi = zernike_moments_channels(
-            weights, xm, ym, seg, lut, nterms, m_arr, n, powers
-        )
-    counts = np.bincount(seg, minlength=n).astype(np.float64)
+        return vr[None], vi[None], radii, counts
+    vr, vi = zernike_moments_channels(
+        weights, xm, ym, seg, lut, nterms, m_arr, n, powers
+    )
     return vr, vi, radii, counts
 
 

@@ -4,8 +4,8 @@
 but replaces its per-moment Horner array operations and ``bincount`` reductions
 with a single fused Numba kernel
 (:func:`cp_measure.core.numba._zernike.zernike_moments`). Centrosome still provides
-the radial LUT (degree-only) and ``minimum_enclosing_circle`` (host). Batch
-handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
+the radial LUT (degree-only); the enclosing circles and pixel coordinates are numba
+kernels too. Batch handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
 
 ``get_radial_distribution`` processes each object on its bounding-box crop,
 grown by one pixel and clipped to the image. It replaces centrosome's
