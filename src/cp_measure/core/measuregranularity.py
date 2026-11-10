@@ -61,6 +61,7 @@ import skimage.morphology
 from cp_measure._precision import Precision, promote_float_pixels
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
+from cp_measure.primitives.shapes import per_image_batch
 
 
 def _make_fused_upsample_mean(
@@ -139,6 +140,7 @@ def _fused_upsample_mean(operator, objects, counts, rec):
     return (operator @ rec.ravel())[objects] / counts
 
 
+@per_image_batch
 def get_granularity(
     mask: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -148,7 +150,7 @@ def get_granularity(
     granular_spectrum_length: int = 16,
     *,
     precision: Precision = "input",
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object granularity spectrum features.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
@@ -223,6 +225,13 @@ def get_granularity(
     # Promote before every resampling/morphology/subtraction stage, not just
     # the final reduction. Preserve the stored acquisition values exactly.
     pixels = promote_float_pixels(pixels, precision)
+    # Integer images are measured as their exact float64 values: subtracting the
+    # background in an integer dtype wraps (unsigned) or rounds where it exceeds a
+    # pixel, so cast up front, before any resampling/morphology/subtraction. This
+    # mirrors the numba backend (measuregranularity._granularity_image); float
+    # inputs are already float and unchanged.
+    if pixels.dtype.kind in "biu":
+        pixels = pixels.astype(numpy.float64)
     #
     # Downsample the image and mask
     #
@@ -302,10 +311,18 @@ def get_granularity(
         footprint = skimage.morphology.ball(radius, dtype=bool)
     back_pixels_mask = numpy.zeros_like(back_pixels)
     back_pixels_mask[back_mask == 1] = back_pixels[back_mask == 1]
-    back_pixels = skimage.morphology.erosion(back_pixels_mask, footprint=footprint)
+    # mode="nearest": the background grid can have only 2 samples along an axis
+    # (e.g. 8-11 Z slices at default sizes), where SciPy's "reflect" padding for a
+    # footprint this wide reads outside the array (nondeterministic results).
+    # Min/max over a symmetric ball is otherwise the same in either mode.
+    back_pixels = skimage.morphology.erosion(
+        back_pixels_mask, footprint=footprint, mode="nearest"
+    )
     back_pixels_mask = numpy.zeros_like(back_pixels)
     back_pixels_mask[back_mask == 1] = back_pixels[back_mask == 1]
-    back_pixels = skimage.morphology.dilation(back_pixels_mask, footprint=footprint)
+    back_pixels = skimage.morphology.dilation(
+        back_pixels_mask, footprint=footprint, mode="nearest"
+    )
     if image_sample_size < 1:
         if pixels.ndim == 2:
             i, j = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)

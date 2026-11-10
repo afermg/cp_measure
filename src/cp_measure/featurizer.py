@@ -30,11 +30,10 @@ from typing import cast
 import numpy as np
 
 from cp_measure._sanitize import sanitize_masks
+from cp_measure.primitives.parallel import map_images
 
 # Feature groups that only support 2D spatial data.
-_2D_ONLY = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
-
-_Measurement = Callable[..., dict[str, np.ndarray]]
+_Measurement = Callable[..., list[dict[str, np.ndarray]]]  # batch in, one dict per item
 _Feature = tuple[_Measurement, dict]  # measurement function, keyword arguments
 _CorrelationFeature = tuple[_Measurement, dict, bool]  # plus symmetric-pair flag
 
@@ -187,88 +186,139 @@ def make_featurizer_config(
     }
 
 
-def _featurize_one(
+def _featurize_batch(
     image: np.ndarray,
     masks: np.ndarray,
+    batch_idx: list[int],
+    image_ids: list,
     channels: list[str],
     objects: list[str],
     shape_feats: list[_Feature],
     channel_feats: list[_Feature],
     corr_feats: list[_CorrelationFeature],
-    *,
-    image_id: str | int | None = None,
-) -> tuple[np.ndarray, list[str], list[tuple]]:
-    """Measure one image ``(C, *spatial)`` with pre-resolved names and feature lists.
+) -> tuple[dict[int, tuple[list[np.ndarray], list[tuple]]], list[str]]:
+    """Measure the batch items ``batch_idx`` with pre-resolved names and features.
 
-    Internal per-item worker: all setup (config/name resolution, feature collection,
-    user-facing warnings) is done once by the public batcher :func:`featurize`, so this
-    runs only the per-object measurement loop. Returns ``(data, columns, rows)`` as
-    described on :func:`featurize`.
+    Internal worker: all setup (config/name resolution, feature collection,
+    user-facing warnings) is done once by the public batcher :func:`featurize`.
+    For each mask type, every channel feature runs ONE call over all images and
+    channels, and every correlation feature ONE call over all images and channel
+    pairs, so a backend can parallelize across the whole batch and reuse per-mask
+    work. Returns ``({b: (blocks, rows)}, columns)``: one block per non-empty mask
+    type of each item, with the same columns and order as measuring each image on
+    its own.
 
-    ``channels`` and ``objects`` name the image channels and mask types in axis
-    order. ``shape_feats`` and ``channel_feats`` contain ``(function, kwargs)``
-    pairs: shape measurements run once per mask type, channel measurements once
-    per mask type and channel. ``corr_feats`` contains ``(function, kwargs,
-    symmetric)`` triples. Symmetric correlations measure each channel pair once;
-    asymmetric correlations measure both channel orders.
+    ``shape_feats`` and ``channel_feats`` contain ``(function, kwargs)`` pairs:
+    shape measurements run once per mask type, channel measurements once per mask
+    type and channel. ``corr_feats`` contains ``(function, kwargs, symmetric)``
+    triples. Symmetric correlations measure each channel pair once; asymmetric
+    correlations measure both channel orders.
     """
-    # Shape features are purely geometric and ignore pixel values.
-    dummy_pixels = None
-
-    all_rows: list[tuple] = []
-    all_blocks: list[np.ndarray] = []
+    n_ch = len(channels)
+    out: dict[int, tuple[list[np.ndarray], list[tuple]]] = {
+        b: ([], []) for b in batch_idx
+    }
     columns: list[str] | None = None
 
     for mask_idx, object_name in enumerate(objects):
         # Relabel arbitrary IDs to 1..N once up front; keep originals for rows.
-        clean, ids = sanitize_masks(masks[mask_idx])
-        if ids.size == 0:
+        # Relabelled on the thread pool: one image after another on the calling
+        # thread left the workers idle (sort and relabel release the GIL).
+        sanitized = map_images(
+            lambda b: sanitize_masks(masks[b, mask_idx]),
+            batch_idx,
+            pixels=len(batch_idx) * masks[0, mask_idx].size,
+        )
+        items = [
+            (b, clean, ids) for b, (clean, ids) in zip(batch_idx, sanitized) if ids.size
+        ]
+        if not items:
             continue
+        results: list[dict[str, np.ndarray]] = [{} for _ in items]
 
-        results: dict[str, np.ndarray] = {}
-
+        # Shape features are purely geometric and ignore pixel values. One call
+        # per feature over the whole batch.
         for func, params in shape_feats:
-            results.update(func(clean, dummy_pixels, **params))
+            outputs = func([clean for _, clean, _ in items], None, **params)
+            for result, output in zip(results, outputs):
+                result.update(output)
 
-        for ch_idx, ch_name in enumerate(channels):
-            pixels = image[ch_idx]
-            for func, params in channel_feats:
-                for key, values in func(clean, pixels, **params).items():
-                    results[f"{key}__{ch_name}"] = values
+        # One call per channel feature, returned channel-major (image i, channel c).
+        # Reshape each flat result to one row of n_ch per image, so the scatter
+        # indexes [i][c] explicitly instead of computing i * n_ch + c; strict=True
+        # fails if the backend returned the wrong count. Columns stay channel-major.
+        per_feature = [
+            list(
+                itertools.batched(
+                    func(
+                        [clean for _, clean, _ in items for _ in range(n_ch)],
+                        [image[b, c] for b, _, _ in items for c in range(n_ch)],
+                        **params,
+                    ),
+                    n_ch,
+                    strict=True,
+                )
+            )
+            for func, params in (channel_feats if n_ch else [])
+        ]
+        for i, result in enumerate(results):
+            for c, ch_name in enumerate(channels):
+                for rows in per_feature:
+                    for key, values in rows[i][c].items():
+                        result[f"{key}__{ch_name}"] = values
 
-        n_ch = len(channels)
+        # One call per correlation feature, returned pair-major (image i, pair p);
+        # reshaped to one row of len(pairs) per image so the scatter indexes [i][p].
         for func, params, symmetric in corr_feats:
             iter_fn = itertools.combinations if symmetric else itertools.permutations
-            for ch_i, ch_j in iter_fn(range(n_ch), 2):
-                for key, values in func(
-                    pixels_1=image[ch_i],
-                    pixels_2=image[ch_j],
-                    masks=clean,
-                    **params,
-                ).items():
-                    results[f"{key}__{channels[ch_i]}__{channels[ch_j]}"] = values
-
-        # Build column list from the first non-empty mask.
-        # Order-sensitive comparison is safe: all measurement functions
-        # return plain dicts whose insertion order is deterministic in
-        # Python 3.7+ and we iterate channels/pairs in the same order
-        # for every mask.
-        col_names = list(results.keys())
-        if columns is None:
-            columns = col_names
-        elif col_names != columns:
-            raise RuntimeError(
-                f"feature keys for object {object_name!r} differ from "
-                f"the first object — this is a bug in cp_measure"
+            pairs = list(iter_fn(range(n_ch), 2))
+            if not pairs:
+                continue
+            rows = list(
+                itertools.batched(
+                    func(
+                        pixels_1=[image[b, c] for b, _, _ in items for c, _ in pairs],
+                        pixels_2=[image[b, c] for b, _, _ in items for _, c in pairs],
+                        masks=[clean for _, clean, _ in items for _ in pairs],
+                        **params,
+                    ),
+                    len(pairs),
+                    strict=True,
+                )
             )
+            for i, result in enumerate(results):
+                for p, (ch_i, ch_j) in enumerate(pairs):
+                    for key, values in rows[i][p].items():
+                        result[f"{key}__{channels[ch_i]}__{channels[ch_j]}"] = values
 
-        block = np.column_stack([results[c] for c in columns])
-        all_blocks.append(block)
-
-        all_rows.extend((image_id, object_name, label) for label in ids)
-
-    # Nonempty blocks imply columns was assigned; vstack rejects empty blocks.
-    return np.vstack(all_blocks), cast(list[str], columns), all_rows
+        # Every item uses the same feature lists, and all measurement functions
+        # return plain dicts in a deterministic order, so the columns must match.
+        for result, (b, _, ids) in zip(results, items):
+            if columns is None:
+                columns = list(result)
+            elif list(result) != columns:
+                raise RuntimeError(
+                    f"feature keys for object {object_name!r} differ from "
+                    f"the first object — this is a bug in cp_measure"
+                )
+            blocks, rows = out[b]
+            # One feature per row of a preallocated array, then transposed:
+            # column_stack over ~1000 columns was a large share of the time the
+            # calling thread spends with the GIL on a many-core batch.
+            block = np.empty((len(columns), len(ids)))
+            for j, key in enumerate(columns):
+                if np.ndim(result[key]) != 1 or len(result[key]) != len(ids):
+                    raise RuntimeError(
+                        f"feature {key!r} has the wrong length for object "
+                        f"{object_name!r} — this is a bug in cp_measure"
+                    )
+                block[j] = result[key]
+            blocks.append(block.T)
+            rows.extend(
+                zip(itertools.repeat(image_ids[b]), itertools.repeat(object_name), ids)
+            )
+    # featurize only calls this with at least one labelled image.
+    return out, cast(list[str], columns)
 
 
 def featurize(
@@ -338,6 +388,7 @@ def featurize(
     _validate_names(image, masks, channels, objects)
 
     from cp_measure.bulk import (
+        _2D_ONLY,
         get_core_measurements,
         get_core_measurements_3d,
         get_correlation_measurements,
@@ -363,33 +414,25 @@ def featurize(
     channel_feats = _collect_channel_features(config, core_funcs)
     corr_feats = _collect_correlation_features(config, corr_funcs, len(channels))
 
-    all_blocks: list[np.ndarray] = []
-    all_rows: list[tuple] = []
-    columns: list[str] | None = None
-    skipped: list[int] = []
-
-    for b in range(batch_size):
-        if not masks[b].any():  # empty mask stack: skip before the hot path
-            skipped.append(b)
-            continue
-        image_id = image_ids[b] if image_ids is not None else b
-        data, cols, rows = _featurize_one(
-            image[b],
-            masks[b],
-            channels,
-            objects,
-            shape_feats,
-            channel_feats,
-            corr_feats,
-            image_id=image_id,
-        )
-        # Every item is measured with the same feature lists, so columns are
-        # identical by construction (per-object consistency is guarded in
-        # _featurize_one); just capture them from the first non-empty item.
-        if columns is None:
-            columns = cols
-        all_blocks.append(data)
-        all_rows.extend(rows)
+    # Empty mask stacks are skipped before the hot path.
+    labelled = [bool(masks[b].any()) for b in range(batch_size)]
+    skipped = [b for b in range(batch_size) if not labelled[b]]
+    batch_idx = [b for b in range(batch_size) if labelled[b]]
+    ids = image_ids if image_ids is not None else list(range(batch_size))
+    measured, columns = _featurize_batch(
+        image,
+        masks,
+        batch_idx,
+        ids,
+        channels,
+        objects,
+        shape_feats,
+        channel_feats,
+        corr_feats,
+    )
+    # Rows stay image-major, then mask type, as when measuring image by image.
+    all_blocks = [block for b in batch_idx for block in measured[b][0]]
+    all_rows = [row for b in batch_idx for row in measured[b][1]]
 
     if not all_blocks:
         raise ValueError("no images had labelled objects (all batch items were empty)")
@@ -401,7 +444,13 @@ def featurize(
             stacklevel=2,
         )
 
-    return np.vstack(all_blocks), cast(list[str], columns), all_rows
+    # One C-ordered matrix; the blocks are transposed views, copied into it once.
+    data = np.empty((sum(len(block) for block in all_blocks), len(columns)))
+    start = 0
+    for block in all_blocks:
+        data[start : start + len(block)] = block
+        start += len(block)
+    return data, columns, all_rows
 
 
 def _validate_batch_inputs(image: np.ndarray, masks: np.ndarray, is_3d: bool) -> None:
@@ -527,6 +576,8 @@ def _collect_shape_features(config: dict, core_funcs: dict) -> list[_Feature]:
 
 def _warn_2d_only_in_3d(config: dict) -> None:
     """Warn if the config enables 2D-only features for a multi-slice volume."""
+    from cp_measure.bulk import _2D_ONLY
+
     requested = sorted(name for name in _2D_ONLY if config.get(name, False))
     if requested:
         warnings.warn(

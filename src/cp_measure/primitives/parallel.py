@@ -13,6 +13,7 @@ data is copied to workers, unlike a process pool.
 """
 
 import os
+import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypeVar
@@ -30,14 +31,41 @@ PIXELS_PER_WORKER = 512 * 512
 def _usable_cpus() -> int:
     """CPUs this process may use, as scirpy's ``_get_usable_cpus``: the affinity set
     (which Slurm and cgroups restrict, unlike ``os.cpu_count()``), else the machine's
-    count (macOS has no ``sched_getaffinity``), capped by ``NUMBA_NUM_THREADS``."""
-    from numba import config
-
+    count (macOS has no ``sched_getaffinity``), capped by ``NUMBA_NUM_THREADS`` when
+    numba is installed (it is optional)."""
     try:
         usable = len(os.sched_getaffinity(0))
     except AttributeError:
         usable = os.cpu_count() or 1
+    try:
+        from numba import config
+    except ImportError:
+        return usable
     return min(usable, config.NUMBA_NUM_THREADS)
+
+
+_THREAD_PREFIX = "cp_measure"
+
+
+_POOLS: dict[int, ThreadPoolExecutor] = {}
+# ponytail: a fork while another thread holds this lock (a dict lookup, or the
+# first pool creation) would leave it held in the child; add an at-fork reset if
+# that ever shows up.
+_POOLS_LOCK = threading.Lock()
+
+
+def _pool(pid: int) -> ThreadPoolExecutor:
+    """The process's thread pool, created on first use and kept for later calls
+    (starting threads per call held the GIL for about 5% of a 32-core batch).
+    Keyed by process id: a forked child gets its own pool, as the parent's threads
+    do not exist there. Sized to the CPUs usable when it is first created. The lock
+    makes concurrent first uses (e.g. the featurizer's measurements) share one."""
+    with _POOLS_LOCK:
+        if pid not in _POOLS:
+            _POOLS[pid] = ThreadPoolExecutor(
+                _usable_cpus(), thread_name_prefix=_THREAD_PREFIX
+            )
+        return _POOLS[pid]
 
 
 def map_images(
@@ -52,18 +80,52 @@ def map_images(
 
     Order matches ``items``. ``max_workers`` defaults to the CPUs this process may
     use (see :func:`_usable_cpus`) and is
-    capped at ``len(items)`` so a batch never spawns more threads than images (an
-    explicit ``0`` is passed through and rejected by ``ThreadPoolExecutor``).
+    capped at ``len(items)``, and at the size of the process's shared pool (an
+    explicit ``0`` is rejected).
     Without ``max_workers``, ``pixels`` (the batch's total pixel count) also caps
     it at one worker per :data:`PIXELS_PER_WORKER`; one worker runs serially.
-    Parallelism requires ``func`` to release the GIL during its heavy work.
+    A call from inside a pool task runs serially on that task's thread, so a full
+    pool never waits on itself. Parallelism requires ``func`` to release the GIL
+    during its heavy work.
     """
+    if max_workers == 0:
+        raise ValueError("max_workers must be greater than 0")
     workers = max_workers if max_workers is not None else _usable_cpus()
     if max_workers is None and pixels is not None:
         workers = min(workers, max(1, pixels // PIXELS_PER_WORKER))
     if workers:
         workers = min(workers, len(items))
-    if len(items) <= 1 or workers == 1:
+    nested = threading.current_thread().name.startswith(_THREAD_PREFIX)
+    if len(items) <= 1 or workers == 1 or nested:
         return [func(x) for x in items]
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        return list(executor.map(func, items))
+    # ``workers`` runner tasks take the next item until none is left, so this call
+    # uses at most ``workers`` pool threads and slow images do not hold up a queue.
+    results: list = [None] * len(items)
+    indices = iter(range(len(items)))
+    errors: dict[int, Exception] = {}
+    lock = threading.Lock()
+
+    def runner() -> None:
+        while True:
+            with lock:
+                # A sibling already failed: stop pulling new items so no runner
+                # keeps working after the call is about to raise.
+                i = None if errors else next(indices, None)
+            if i is None:
+                return
+            try:
+                results[i] = func(items[i])
+            except Exception as exc:  # noqa: BLE001 - re-raised after every runner joins
+                with lock:
+                    errors[i] = exc
+                return
+
+    pool = _pool(os.getpid())
+    # Wait for every runner before returning or raising, so none outlives the call.
+    for future in [pool.submit(runner) for _ in range(workers)]:
+        future.result()  # surfaces a fault in the runner machinery itself
+    if errors:
+        # Deterministic: the lowest-index item's exception, not whichever thread
+        # happened to finish first.
+        raise errors[min(errors)]
+    return results

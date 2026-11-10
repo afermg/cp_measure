@@ -1,7 +1,7 @@
 {
   "source_commit": "8513bf33a17f78c056ca1891ba485b2d7c80e2f7",
   "numpy": "1.26.4",
-  "description": "Pre-#129 per-backend results; not a cross-backend or CellProfiler parity oracle.",
+  "description": "Pre-#129 per-backend results; not a cross-backend or CellProfiler parity oracle. Numba entries equal NumPy's since #125 kept the float32 background dtype.",
   "normalization": "uint16.astype(float32) / float32(65535)",
   "pixels": [
     [
@@ -195,10 +195,10 @@
         },
         "numba": {
           "Granularity_1": [
-            86.07781681214942
+            86.07781626251163
           ],
           "Granularity_2": [
-            13.922183187850578
+            13.922183737488384
           ],
           "Granularity_3": [
             0.0
@@ -227,13 +227,13 @@
         },
         "numba": {
           "Granularity_1": [
-            72.17413208181641
+            72.17413200879673
           ],
           "Granularity_2": [
-            17.266141093436264
+            17.266141354204237
           ],
           "Granularity_3": [
-            10.236066265331058
+            10.236066230321892
           ]
         }
       }

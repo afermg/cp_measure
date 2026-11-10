@@ -8,8 +8,10 @@ against the right scale (see ``RTOL`` below). The rest of ``get_sizeshape`` is u
 """
 
 import numpy
+import pytest
 import skimage.measure
 
+from cp_measure._detect import HAS_NUMBA
 from cp_measure.core.measureobjectsizeshape import get_sizeshape
 from cp_measure.primitives._moments import inertia_2d, spatial_moments_2d
 
@@ -39,8 +41,8 @@ def _generate_disk(size, cy, cx, r, label=1):
     return masks
 
 
-def _assert_moments_match(masks):
-    raw, central, normalized, hu = spatial_moments_2d(masks)
+def _assert_moments_match(masks, moments=spatial_moments_2d):
+    raw, central, normalized, hu = moments(masks)
     ref = skimage.measure.regionprops_table(
         masks,
         properties=["moments", "moments_central", "moments_normalized", "moments_hu"],
@@ -135,6 +137,30 @@ def test_moments_single_pixel_object():
     masks[16, 16] = 1
     masks[5:15, 5:15] = 2
     _assert_moments_match(masks)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+def test_moments_match_mixed_objects(backend):
+    # Objects of very different sizes in one image: a 1-px object, 1-px-wide lines (horizontal,
+    # vertical, diagonal), an off-grid disk, an L-shape and boxes touching every image border.
+    if backend == "numba":
+        if not HAS_NUMBA:
+            pytest.skip("numba not installed")
+        from cp_measure.core.numba._sizeshape import spatial_moments_2d as moments
+    else:
+        moments = spatial_moments_2d
+    masks = _generate_disk(160, 80.3, 79.6, 30)
+    masks[0:12, 0:40] = 2
+    masks[150:160, 120:160] = 3
+    masks[40:90, 150:160] = 4
+    masks[20, 60] = 5
+    masks[30, 50:100] = 6
+    masks[115:155, 100] = 7
+    for t in range(25):
+        masks[120 + t, 40 + t] = 8
+    masks[60:110, 0:6] = 9
+    masks[104:110, 0:30] = 9
+    _assert_moments_match(masks, moments)
 
 
 def test_get_sizeshape_wires_moment_features():

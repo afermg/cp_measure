@@ -93,3 +93,56 @@ def test_radial_object_rejects_nonfinite_bins_before_indexing(maximum_radius):
     distance = np.ones(mask.shape)
     with pytest.raises(ValueError, match="non-finite radial bin"):
         radial_object(mask, pixels, distance, False, 4, maximum_radius)
+
+
+@requires_numba
+@pytest.mark.parametrize("seed", range(4))
+def test_distance_transform_edt_matches_scipy_exactly(seed):
+    """Masks touching every edge (no implicit background outside the array), single
+    background pixels, thin shapes, and the all-foreground scipy fallback."""
+    from cp_measure.primitives._edt_numba import distance_transform_edt
+
+    rng = np.random.default_rng(seed)
+    for _ in range(200):
+        h, w = rng.integers(1, 40, 2)
+        mask = rng.random((h, w)) < rng.uniform(0.3, 0.995)
+        if rng.random() < 0.2:
+            mask[:] = True
+            mask.flat[rng.integers(mask.size)] = False
+        np.testing.assert_array_equal(
+            distance_transform_edt(mask), scipy.ndimage.distance_transform_edt(mask)
+        )
+    full = np.ones((4, 5), bool)
+    np.testing.assert_array_equal(
+        distance_transform_edt(full), scipy.ndimage.distance_transform_edt(full)
+    )
+
+
+@requires_numba
+def test_radial_cv_matches_numpy_ma_bitwise():
+    """RadialCV against the reference's numpy.ma expression, bit for bit: a ring with
+    no pixels, a single pixel (one wedge), a zero-mean ring, overflowing and
+    non-finite sums, and random rows with empty wedges."""
+    from cp_measure.core.numba._radial import radial_cv
+    from cp_measure.primitives._segment_numba import numpy_sum_chunk
+
+    rng = np.random.default_rng(0)
+    counts = rng.integers(0, 3, (500, 2, 8)).astype(float)
+    sums = rng.normal(size=counts.shape) * counts
+    counts[0, 0] = 0  # no pixels in the ring
+    counts[1, 0] = 0
+    counts[1, 0, 3], sums[1, 0, 3] = 1, 2.5  # a single pixel
+    counts[2, 0], sums[2, 0] = 2, np.arange(8.0) - 3.5  # zero mean
+    counts[3, 0], sums[3, 0] = 1, [1e308] * 8  # the mean sum overflows
+    sums[4, 0, 0], sums[5, 0, 0] = np.nan, np.inf
+
+    expected = np.zeros(counts.shape[:2])
+    with np.errstate(all="ignore"):
+        for b in range(counts.shape[1]):
+            mask = counts[:, b] == 0
+            means = np.ma.MaskedArray(sums[:, b] / counts[:, b], mask)
+            cv = np.std(means, 1) / np.mean(means, 1)
+            cv[np.sum(~mask, 1) == 0] = 0
+            expected[:, b] = np.array(cv)
+    got = radial_cv(sums, counts, numpy_sum_chunk())
+    np.testing.assert_array_equal(got.view(np.uint64), expected.view(np.uint64))

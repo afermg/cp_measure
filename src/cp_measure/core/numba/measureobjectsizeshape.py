@@ -7,7 +7,8 @@ case (binary shape, ``weights ≡ 1``); the normalisation denominator is the
 enclosing-circle area ``π·r²`` (vs the radial backend's pixel count), and only the
 magnitude is emitted.
 
-Centrosome still supplies the radial LUT (degree-only) and ``minimum_enclosing_circle``.
+Centrosome still supplies the radial LUT (degree-only); the enclosing circles and pixel
+coordinates are numba kernels too.
 Batch handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
 """
 
@@ -15,11 +16,13 @@ from cp_measure.core.measureobjectsizeshape import _zernike_features
 from cp_measure.core.numba._zernike import zernike_per_image
 
 
-def get_zernike(masks, pixels=None, zernike_numbers: int = 9):
+def get_zernike(masks, pixels=None, zernike_numbers: int = 9, *, max_workers=None):
     """Shape Zernike magnitudes per object; single image/volume or batch.
 
     ``pixels`` is accepted for signature parity with the numpy baseline but unused
-    (shape Zernike is a binary-mask descriptor).
+    (shape Zernike is a binary-mask descriptor). ``max_workers`` caps the batch
+    thread pool (default: the CPUs this process may use); pass it when nesting under an outer
+    parallel map.
     """
     return zernike_per_image(
         masks,
@@ -28,4 +31,5 @@ def get_zernike(masks, pixels=None, zernike_numbers: int = 9):
         lambda vr, vi, radii, _counts, indexes: _zernike_features(
             vr, vi, radii, indexes
         ),
+        max_workers=max_workers,
     )

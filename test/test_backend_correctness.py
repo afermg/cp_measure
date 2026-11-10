@@ -64,6 +64,27 @@ def test_numba_intensity_matches_numpy(dim, edge, legacy):
     _assert_dicts_match(ref, got)
 
 
+@requires_numba
+@pytest.mark.parametrize("legacy", [False, True], ids=["new", "legacy"])
+@pytest.mark.parametrize("shape", [(48, 48), (3, 24, 24)], ids=["2d", "3d"])
+def test_numba_intensity_quantiles_exact_on_ties(shape, legacy):
+    """Quantiles and MAD are order statistics, so numba must equal the numpy
+    sort-based reference exactly, including heavily tied values and a 1-px object."""
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as intensity_numba,
+    )
+
+    rng = get_rng()
+    mask = rng.integers(1, 6, shape).astype(np.int32)
+    mask.flat[0] = 6  # single-pixel object
+    pixels = rng.integers(0, 4, shape) / 4.0  # few distinct levels -> many ties
+    ref = intensity_numpy(mask, pixels, edge_measurements=False, legacy=legacy)
+    got = intensity_numba(mask, pixels, edge_measurements=False, legacy=legacy)
+    for name in ("LowerQuartile", "Median", "UpperQuartile", "MAD"):
+        key = f"Intensity_{name}Intensity"
+        np.testing.assert_array_equal(got[key], ref[key], err_msg=key)
+
+
 def test_numpy_intensity_rejects_rank_mismatch():
     """Reject a broadcastable 2D mask whose Y/X dimensions match the volume."""
     mask3d, pixels3d = _mask_pixels_3d()
@@ -108,10 +129,59 @@ def test_numba_granularity_matches_numpy(sub):
 
 
 @requires_numba
+def test_intensity_max_location_tie_keeps_last_raster_pixel():
+    """On tied maxima both backends return the LAST pixel in raster (C) order
+    (CellProfiler / scipy.ndimage.maximum_position), not numpy.argmax's first."""
+    from cp_measure.core.measureobjectintensity import get_intensity as intensity_numpy
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as intensity_numba,
+    )
+
+    mask = np.ones((4, 4), dtype=np.int32)
+    pixels = np.zeros((4, 4))
+    pixels[1, 1] = 1.0  # first max in raster order
+    pixels[2, 3] = 1.0  # later in raster order -> the tie-break must pick this one
+    ref = intensity_numpy(mask, pixels, edge_measurements=False)
+    got = intensity_numba(mask, pixels, edge_measurements=False)
+    for key in ("Location_MaxIntensity_X", "Location_MaxIntensity_Y"):
+        assert ref[key][0] == got[key][0], key
+    assert ref["Location_MaxIntensity_X"][0] == 3  # col of (2, 3)
+    assert ref["Location_MaxIntensity_Y"][0] == 2  # row of (2, 3)
+
+
+@requires_numba
+def test_numba_granularity_unsigned_image_matches_numpy():
+    """An unsigned-integer image must not wrap on the background subtraction: both
+    backends cast to float64 before it, so numpy and numba agree. Before the numpy
+    fix the uint path wrapped and diverged ~100%."""
+    from cp_measure.core.measuregranularity import get_granularity as gran_numpy
+    from cp_measure.core.numba.measuregranularity import (
+        get_granularity as gran_numba,
+    )
+
+    mask, pixels = _mask_pixels_2d()
+    pixels_u16 = (pixels * 65535).astype(np.uint16)
+    ref = gran_numpy(mask, pixels_u16)
+    got = gran_numba(mask, pixels_u16)
+    assert set(got) == set(ref)
+    for key in ref:
+        np.testing.assert_allclose(
+            got[key], ref[key], rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
+        )
+
+
+@requires_numba
 @pytest.mark.parametrize("shape", [(6, 7), (1, 6, 7), (2, 6, 7)])
 @pytest.mark.parametrize("kind", ["list", "tuple", "stacked"])
 def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
     from cp_measure.core.numba import measureobjectintensity as accelerated
+
+    if kind in ("list", "tuple") and len(shape) == 2:
+        pytest.skip(
+            "2D list/tuple batches run the prange kernel, which stacks the batch; "
+            "the no-copy views guarantee applies to the serial path (3D / 4D / "
+            "single) — kernel coverage is in test_intensity_prange"
+        )
 
     masks = [np.ones(shape, dtype=np.int32) for _ in range(2)]
     pixels = [np.full(shape, float(i)) for i in range(2)]
@@ -125,7 +195,7 @@ def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
     seen = []
 
     def volume(mask, image, *args, spatial_ndim):
-        i = len(seen)
+        i = int(image.flat[0])  # batches run on threads, so identify the item by value
         assert spatial_ndim == pixels[i].ndim
         assert np.shares_memory(mask, masks[i])
         assert np.shares_memory(image, pixels[i])
@@ -134,7 +204,8 @@ def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):
 
     monkeypatch.setattr(accelerated, "_intensity_volume", volume)
     result = accelerated.get_intensity(masks, pixels)
-    assert seen == [0, 1] and len(result) == 2
+    assert sorted(seen) == [0, 1]
+    assert [int(r["index"][0]) for r in result] == [0, 1]  # results keep batch order
 
 
 @requires_numba
@@ -225,3 +296,37 @@ def test_set_accelerator_numba_absent_raises(monkeypatch):
             cp_measure.bulk.get_core_measurements()
     finally:
         cp_measure.set_accelerator(None)
+
+
+@pytest.mark.parametrize(
+    "feature",
+    ["intensity", "texture", "granularity", "radial_distribution", "radial_zernikes"],
+)
+@pytest.mark.parametrize("dim", ["2d", "3d"])
+def test_numpy_channel_features_accept_batches(feature, dim):
+    """A list/tuple or 4D batch returns one result per image, in order, equal to
+    calling each image alone. 2D images stay 2D; a 4D batch holds singleton-Z
+    volumes and matches those."""
+    fn = cp_measure.bulk.get_core_measurements()[feature]
+    mask, pixels = _mask_pixels_2d() if dim == "2d" else _mask_pixels_3d()
+    # two distinct images, so a misordered batch is caught
+    masks = [mask, np.ascontiguousarray(np.flip(mask, -1))]
+    images = [pixels, np.ascontiguousarray(np.flip(pixels, -1)) * 0.5]
+    stacked = (
+        [x if dim == "3d" else x[None] for x in masks],
+        [x if dim == "3d" else x[None] for x in images],
+    )
+    cases = [
+        ((masks, images), [fn(m, p) for m, p in zip(masks, images)]),
+        ((tuple(masks), tuple(images)), [fn(m, p) for m, p in zip(masks, images)]),
+        (tuple(np.stack(x) for x in stacked), [fn(m, p) for m, p in zip(*stacked)]),
+    ]
+    for batch, expected in cases:
+        got = fn(*batch)
+        assert isinstance(got, list) and len(got) == 2
+        for result, want in zip(got, expected):
+            assert list(result) == list(want)
+            for key in want:
+                np.testing.assert_array_equal(result[key], want[key], err_msg=key)
+    with pytest.raises(ValueError, match="same shape"):
+        fn([masks[0], masks[0][..., :-1]], [images[0], images[0][..., :-1]])

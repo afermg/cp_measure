@@ -159,6 +159,18 @@ def _assert_features_equal(got, ref):
     # Moment budgets are dimensionless and object-local, not scaled by another
     # object's largest value. Geometry, schemas and undefined values stay strict.
     perimeter_features = {"Perimeter", "PerimeterCrofton", "FormFactor", "Compactness"}
+    # From moments whose summation order BLAS chooses: bit parity depends on the BLAS build.
+    inertia_features = {
+        "InertiaTensor_0_0",
+        "InertiaTensor_0_1",
+        "InertiaTensor_1_0",
+        "InertiaTensor_1_1",
+        "InertiaTensorEigenvalues_0",
+        "InertiaTensorEigenvalues_1",
+        "MajorAxisLength",
+        "MinorAxisLength",
+        "Eccentricity",
+    }
     for key in ref:
         assert got[key].shape == ref[key].shape, key
         assert got[key].dtype == ref[key].dtype, key
@@ -183,7 +195,7 @@ def _assert_features_equal(got, ref):
                 equal_nan=True,
                 err_msg=key,
             )
-        elif key in perimeter_features:
+        elif key in perimeter_features | inertia_features:
             numpy.testing.assert_allclose(
                 got[key],
                 ref[key],
@@ -236,7 +248,7 @@ def test_sizeshape_moment_comparison_budget():
 @requires_numba
 @pytest.mark.parametrize("calculate_advanced", [False, True])
 @pytest.mark.parametrize("new_features", [False, True])
-@pytest.mark.parametrize("kind", ["empty", "ring", "degenerate", "irregular"])
+@pytest.mark.parametrize("kind", ["empty", "ring", "degenerate", "irregular", "holes"])
 def test_get_sizeshape_schema_and_numerics(kind, calculate_advanced, new_features):
     from cp_measure.core.measureobjectsizeshape import get_sizeshape as baseline
     from cp_measure.core.numba._sizeshape import get_sizeshape
@@ -250,6 +262,16 @@ def test_get_sizeshape_schema_and_numerics(kind, calculate_advanced, new_feature
         masks[10:20, 15] = 2
     elif kind == "irregular":
         masks = numpy.random.default_rng(78).integers(0, 4, (40, 40), dtype=numpy.int32)
+    elif kind == "holes":
+        # FilledArea: a 1-px wall whose hole reaches the outside only diagonally (not
+        # filled: skimage fills with 8-connectivity), and a hole holding another object.
+        masks[:] = 0
+        masks[2:12, 2:12] = 1
+        masks[3:11, 3:11] = 0
+        masks[2, 2] = 0
+        masks[20:34, 20:34] = 2
+        masks[23:31, 23:31] = 0
+        masks[25:29, 25:29] = 3
     pixels = numpy.random.default_rng(0).random(masks.shape)
     before, pixels_before = masks.copy(), pixels.copy()
     kwargs = dict(calculate_advanced=calculate_advanced, new_features=new_features)
@@ -259,6 +281,16 @@ def test_get_sizeshape_schema_and_numerics(kind, calculate_advanced, new_feature
         )
     numpy.testing.assert_array_equal(masks, before)
     numpy.testing.assert_array_equal(pixels, pixels_before)
+
+
+@requires_numba
+def test_get_sizeshape_rejects_negative_labels():
+    from cp_measure.core.numba._sizeshape import get_sizeshape
+
+    masks = _ring()
+    masks[0, 0] = -1
+    with pytest.raises(ValueError, match="no negative elements"):
+        get_sizeshape(masks, None)
 
 
 @requires_numba
@@ -307,6 +339,32 @@ def test_get_sizeshape_orientation_and_central_moment_regressions():
 
 
 @requires_numba
+def test_get_sizeshape_3d_convex_volume_matches_skimage():
+    # Degenerate hulls (one voxel, a plate, a line: skimage warns and counts 0, so
+    # Solidity is inf), objects cut by the volume border, and an irregular one.
+    from cp_measure.core.numba._sizeshape import get_sizeshape
+
+    masks = numpy.zeros((12, 20, 24), numpy.int32)
+    masks[5, 5, 5] = 1
+    masks[1, 2:8, 10:20] = 2
+    masks[3:11, 12, 3] = 3
+    masks[0:4, 15:20, 0:6] = 4
+    masks[6:12, 14:20, 16:24] = 5
+    masks[6:11, 2:8, 10:17][numpy.random.default_rng(1).random((5, 6, 7)) < 0.6] = 6
+    with pytest.warns(UserWarning, match="Failed to get convex hull image") as record:
+        with numpy.errstate(divide="ignore"):
+            got = get_sizeshape(masks, None)
+    assert len([w for w in record if w.category is UserWarning]) == 3
+    with pytest.warns(UserWarning):
+        ref = skimage.measure.regionprops_table(
+            masks, properties=["area_convex", "solidity"]
+        )
+    numpy.testing.assert_array_equal(got["ConvexArea"], ref["area_convex"])
+    numpy.testing.assert_array_equal(got["Solidity"], ref["solidity"])
+    assert numpy.isinf(got["Solidity"][:3]).all()
+
+
+@requires_numba
 @pytest.mark.parametrize(
     "calculate_advanced,new_features", [(False, False), (True, True)]
 )
@@ -328,14 +386,14 @@ def test_get_sizeshape_3d_fallback(calculate_advanced, new_features):
 
 
 @requires_numba
-@pytest.mark.parametrize("shape", [(2, 1, 40), (2, 40, 1), (1, 1, 40, 40)])
+@pytest.mark.parametrize("shape", [(2, 1, 40), (2, 40, 1)])
 def test_get_sizeshape_preserves_unsupported_rank_errors(shape):
     from cp_measure.core.measureobjectsizeshape import get_sizeshape as baseline
     from cp_measure.core.numba._sizeshape import get_sizeshape
 
     masks = numpy.ones(shape, dtype=numpy.int32)
-    # Only singleton Z is normalized; multi-slice thin axes and raw batches
-    # retain NumPy's existing errors.
+    # Only singleton Z is normalized; multi-slice thin axes retain NumPy's
+    # existing errors (a 4D array is a batch, see test_batch_contract).
     with pytest.raises((ValueError, TypeError)) as ref:
         baseline(masks, None)
     with pytest.raises(type(ref.value)) as got:
@@ -349,7 +407,12 @@ def test_get_sizeshape_signature_and_pixel_shape_validation():
     from cp_measure.core.measureobjectsizeshape import get_sizeshape as baseline
     from cp_measure.core.numba._sizeshape import get_sizeshape
 
-    assert inspect.signature(get_sizeshape) == inspect.signature(baseline)
+    # Same public parameters; the numba backend adds a keyword-only batch pool cap.
+    params = dict(inspect.signature(get_sizeshape).parameters)
+    assert params.pop("max_workers").kind is inspect.Parameter.KEYWORD_ONLY
+    assert list(params.values()) == list(
+        inspect.signature(baseline).parameters.values()
+    )
     for fn in (baseline, get_sizeshape):
         with pytest.raises(ValueError, match="shape"):
             fn(_ring(), numpy.zeros((2, 2)))

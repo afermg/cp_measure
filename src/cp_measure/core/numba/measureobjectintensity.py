@@ -39,7 +39,9 @@ from cp_measure.core.measureobjectintensity import (
     STD_INTENSITY_EDGE,
     UPPER_QUARTILE_INTENSITY,
 )
-from cp_measure.primitives.shapes import to_bzyx
+from cp_measure.core.numba._intensity import N_BASE, N_EDGE, fill_intensity_2d
+from cp_measure.primitives.parallel import map_images
+from cp_measure.primitives.shapes import each_volume, native
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
     inner_boundary,
@@ -48,6 +50,54 @@ from cp_measure.primitives._segment_numba import (
     segment_resid_sumsq,
     segment_stats,
 )
+
+# Column order of the 2D kernel output, matching ``measurement_names`` below.
+_BASE_KEYS = (
+    f"{INTENSITY}_{INTEGRATED_INTENSITY}",
+    f"{INTENSITY}_{MEAN_INTENSITY}",
+    f"{INTENSITY}_{STD_INTENSITY}",
+    f"{INTENSITY}_{MIN_INTENSITY}",
+    f"{INTENSITY}_{MAX_INTENSITY}",
+    f"{INTENSITY}_{MASS_DISPLACEMENT}",
+    f"{INTENSITY}_{LOWER_QUARTILE_INTENSITY}",
+    f"{INTENSITY}_{MEDIAN_INTENSITY}",
+    f"{INTENSITY}_{MAD_INTENSITY}",
+    f"{INTENSITY}_{UPPER_QUARTILE_INTENSITY}",
+    f"{C_LOCATION}_{LOC_CMI_X}",
+    f"{C_LOCATION}_{LOC_CMI_Y}",
+    f"{C_LOCATION}_{LOC_CMI_Z}",
+    f"{C_LOCATION}_{LOC_MAX_X}",
+    f"{C_LOCATION}_{LOC_MAX_Y}",
+    f"{C_LOCATION}_{LOC_MAX_Z}",
+)
+_EDGE_KEYS = (
+    f"{INTENSITY}_{INTEGRATED_INTENSITY_EDGE}",
+    f"{INTENSITY}_{MEAN_INTENSITY_EDGE}",
+    f"{INTENSITY}_{STD_INTENSITY_EDGE}",
+    f"{INTENSITY}_{MIN_INTENSITY_EDGE}",
+    f"{INTENSITY}_{MAX_INTENSITY_EDGE}",
+)
+
+
+def _intensity_2d(mask, pixels, edge, legacy):
+    """One 2D image through :func:`fill_intensity_2d`; a bool mask is read as uint8."""
+    mask, pixels = native(mask), native(pixels)
+    if mask.dtype == numpy.bool_:
+        mask = mask.view(numpy.uint8)
+    nobj = int(mask.max()) if mask.size else 0
+    out = numpy.zeros((1, N_BASE + (N_EDGE if edge else 0), nobj))
+    fill_intensity_2d(
+        mask[None], numpy.asarray(pixels)[None], legacy, edge, out, 0, nobj
+    )
+    return _assemble_intensity(out, 0, nobj, edge)
+
+
+def _assemble_intensity(out, b, nobj, edge):
+    """One per-image dict from the kernel output. Each feature is a view of its own
+    row of the image's buffer (rows do not overlap), so no copy is made; copying
+    every row held the GIL for about 20 ms of a 160-image batch."""
+    keys = _BASE_KEYS + _EDGE_KEYS if edge else _BASE_KEYS
+    return {k: out[b, f, :nobj] for f, k in enumerate(keys)}
 
 
 def get_intensity(
@@ -65,48 +115,27 @@ def get_intensity(
     ``legacy=True`` retains the original quartiles and rank-dependent MAD;
     a singleton-Z image uses the 3D convention.
     """
-    masks_is_seq = isinstance(masks, (list, tuple))
-    pixels_is_seq = isinstance(pixels, (list, tuple))
-    if masks_is_seq != pixels_is_seq:
-        raise ValueError("masks and pixels must both be sequences, or both arrays")
-    if pixels_is_seq:
-        if len(masks) != len(pixels):
-            raise ValueError("masks and pixels must have matching batch sizes")
-        if any(numpy.shape(m) != numpy.shape(p) for m, p in zip(masks, pixels)):
-            raise ValueError("labels and pixels must have matching shapes and rank")
-    elif numpy.shape(masks) != numpy.shape(pixels):
-        raise ValueError("labels and pixels must have matching shapes and rank")
+    # each_volume validates the batch once (matching shapes and rank, ragged and
+    # empty rejection) and yields per-image (Z, Y, X) views, the same normalizer the
+    # other numba families use, instead of a hand-rolled copy of that logic.
+    items, unwrap = each_volume(masks, pixels)
 
-    is_batch = pixels_is_seq or numpy.ndim(pixels) == 4
-    if is_batch:
-        if len(pixels) == 0:
-            raise ValueError("intensity batches must not be empty")
-        if pixels_is_seq and any(
-            numpy.shape(p) != numpy.shape(pixels[0]) for p in pixels
-        ):
-            raise ValueError("all images in a batch must have the same shape")
-        pairs = zip(masks, pixels)
-    else:
-        pairs = zip([masks], [pixels])
-
-    results = []
-    for mask, image in pairs:
-        spatial_ndim = numpy.ndim(image)
-        if spatial_ndim not in (2, 3):
-            raise ValueError("expected a 2D or 3D image per batch item")
-        # Normalize one image at a time: these are views, not whole-batch copies.
-        # The per-volume kernel is serial, so materializing a stack buys nothing.
-        masks_zyx, pixels_zyx, _ = to_bzyx(mask, image)
-        results.append(
-            _intensity_volume(
-                masks_zyx[0],
-                pixels_zyx[0],
-                edge_measurements,
-                legacy,
-                spatial_ndim=spatial_ndim,
-            )
+    def one(item):
+        mask_zyx, pixels_zyx, spatial_ndim = item
+        # Views, not whole-batch copies; native() fixes byte order for the kernels.
+        mask_zyx, pixels_zyx = native(mask_zyx), native(pixels_zyx)
+        if spatial_ndim == 2:
+            # 2D convention (MAD fraction 1/2). A singleton-Z volume has spatial
+            # rank 3 and keeps the 3D convention below.
+            return _intensity_2d(mask_zyx[0], pixels_zyx[0], edge_measurements, legacy)
+        return _intensity_volume(
+            mask_zyx, pixels_zyx, edge_measurements, legacy, spatial_ndim=spatial_ndim
         )
-    return results if is_batch else results[0]
+
+    # Volumes are independent and the segment kernels release the GIL, so
+    # map_images runs a batch on threads.
+    results = map_images(one, items, pixels=sum(m.size for m, _, _ in items))
+    return unwrap(results)
 
 
 def _intensity_volume(
@@ -191,6 +220,27 @@ def _intensity_volume(
             upper_quartile_intensity,
             mad_intensity,
         ) = segment_quantiles(values, seg0, count, nobjects, 1.0 / spatial_ndim, legacy)
+        # Objects without a finite pixel keep NumPy's zeros (not 0/0 or +-inf).
+        empty = count == 0
+        for values_ in (
+            integrated_intensity,
+            mean_intensity,
+            std_intensity,
+            min_intensity,
+            max_intensity,
+            mass_displacement,
+            lower_quartile_intensity,
+            median_intensity,
+            upper_quartile_intensity,
+            mad_intensity,
+            cmi_x,
+            cmi_y,
+            cmi_z,
+            max_x,
+            max_y,
+            max_z,
+        ):
+            values_[empty] = 0
 
     if edge_measurements:
         integrated_intensity_edge = numpy.zeros(nobjects)
@@ -205,6 +255,7 @@ def _intensity_volume(
             emask = inner_boundary(numpy.ascontiguousarray(masks[0]))[numpy.newaxis] > 0
         else:
             emask = skimage.segmentation.find_boundaries(masks, mode="inner") > 0
+        emask &= numpy.isfinite(pixels)  # as NumPy: finite edge pixels only
         e_values = pixels[emask].astype(numpy.float64)
         e_seg0 = masks[emask] - 1
 

@@ -6,6 +6,23 @@ Notable user-facing changes are documented here.
 
 ### Fixed
 
+- Numba `intensity` skips non-finite pixels as NumPy does: an object without a
+  finite pixel gets zeros (not NaN or +-inf), and edge features use only finite
+  edge pixels. Values change only for images with NaN/inf pixels.
+- Shape and radial Zernike values no longer depend on where an object sits in
+  the image. The minimum enclosing circle passes exactly through two or three
+  boundary pixels; a strict `r^2 > 1` cutoff let float rounding, which changes
+  with the absolute coordinates, drop them. They now always count (cutoff
+  `r^2 > 1 + 1e-9`, both backends). Values change for objects whose on-circle
+  pixels were dropped (about 40-50% of real nuclei; a few percent per moment),
+  and differ from CellProfiler only in those pixels.
+- NumPy `granularity` opens the background with edge padding. A background grid
+  with only 2 samples along an axis (3D volumes with 8 to 11 slices at default
+  sizes) made SciPy's reflect padding read outside the array, so results were
+  wrong and changed between identical calls. Other inputs are unchanged.
+- Numba `granularity` keeps float32 backgrounds in float32, as NumPy does (#123),
+  measures integer images as float64 (no wraparound), and rejects masks and
+  pixels of different shapes instead of reading outside the image.
 - `radial_distribution` sums intensities in float64. Integer images no longer
   wrap around (uint8/uint16 results were wrong), and float32 results gain
   precision (relative changes up to ~2e-4).
@@ -17,6 +34,11 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- `featurize` measures each feature once over the whole batch (every FOV,
+  channel and channel pair of a mask), so the numba backend runs them on threads
+  and shares per-mask work. On 4 FOVs x 5 channels (1024 x 1024, 32 cores) the
+  numba featurizer takes 1.9 s (cells) and 1.4 s (mitosis) instead of 80 s and
+  167 s. Shape-only runs (no channels) skip the channel features.
 - **Return type change:** the colocalization label APIs (`get_correlation_pearson`,
   `get_correlation_manders_fold`, `get_correlation_rwc`, `get_correlation_costes`
   and `get_correlation_overlap`, NumPy and Numba, single image and batch) return
@@ -56,16 +78,36 @@ Notable user-facing changes are documented here.
   Previously rejected searches may now yield finite coefficients (including 0/1),
   leaving quality filtering downstream. Invalid input/regression and zero
   denominator checks remain. See [boundary policy](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
+- NumPy `intensity` accepts a batch (a list/tuple of images or a 4D
+  `(B, Z, Y, X)` array) and returns one result per image.
+- NumPy `texture` accepts a batch (a list/tuple of images or a 4D
+  `(B, Z, Y, X)` array) and returns one result per image. Numba texture builds
+  every object's crop in one kernel call and measures batches on threads.
+- NumPy size/shape, Feret, radial distribution and radial Zernike accept a batch
+  (a list/tuple of images or a 4D `(B, Z, Y, X)` array) and return one result per
+  image. The numba backend measures these batches on threads and shares per-mask
+  work (Zernike coordinates and basis, radial crops and distance transforms)
+  between images that use the same mask.
+- Numba Feret computes the convex hull and diameters in Numba instead of
+  centrosome, so batch images run fully in parallel. Results are bit-identical.
+- Numba `granularity` measures 3D volumes with numba kernels, bit-identical to
+  NumPy (about 45 times faster on cells3d volumes), and batches on threads. NumPy
+  `granularity` accepts a batch (a list/tuple of images or a 4D `(B, Z, Y, X)`
+  array) and returns one result per image.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
-  and processes them sequentially.
+  and measures them on a thread pool.
 - **Breaking:** NumPy intensity now requires matching label/image shapes instead
   of broadcasting a 2D mask over a 3D image. To retain that measurement, pass
   `numpy.broadcast_to(mask_2d, pixels_3d.shape)` explicitly.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
-  output remains integer and the existing moment implementation is retained.
+  output remains integer.
+- Numba size/shape computes the 2D spatial moments in one GIL-free kernel, so
+  batch images scale across threads. Raw moments are unchanged; the
+  inertia-derived features (inertia tensor, eigenvalues, axis lengths,
+  eccentricity) match NumPy within 1e-12.
 - Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
   (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
   widening of float16/float32 before arithmetic in both backends). Opting in can

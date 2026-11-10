@@ -88,7 +88,7 @@ import scipy.ndimage
 import scipy.stats
 
 from cp_measure._precision import Precision, promote_float_pixels, validate_precision
-from cp_measure.primitives.shapes import apply_per_pair, is_batch
+from cp_measure.primitives.shapes import per_image_pair_batch
 
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
@@ -754,6 +754,7 @@ def _values(per_object: list[float]) -> NDArray[numpy.float64]:
     return numpy.array(per_object, dtype=numpy.float64)
 
 
+@per_image_pair_batch
 def get_correlation_pearson(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
@@ -763,8 +764,6 @@ def get_correlation_pearson(
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
-    if is_batch(masks):  # list/tuple or 4D: one result per image
-        return apply_per_pair(get_correlation_pearson, pixels_1, pixels_2, masks)
     corrs: list[float] = []
     slopes: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -778,6 +777,7 @@ def get_correlation_pearson(
     return {F_CORRELATION_FORMAT: _values(corrs), F_SLOPE_FORMAT: _values(slopes)}
 
 
+@per_image_pair_batch
 def get_correlation_manders_fold(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
@@ -793,15 +793,6 @@ def get_correlation_manders_fold(
     widens float16/32 before arithmetic (see measurement notes).
     """
     validate_precision(precision)
-    if is_batch(masks):  # list/tuple or 4D: one result per image
-        return apply_per_pair(
-            get_correlation_manders_fold,
-            pixels_1,
-            pixels_2,
-            masks,
-            thr=thr,
-            precision=precision,
-        )
     m1_list: list[float] = []
     m2_list: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -872,6 +863,7 @@ def _rwc_object_set(
     return {f"{F_RWC_FORMAT}_1": results[0], f"{F_RWC_FORMAT}_2": results[1]}
 
 
+@per_image_pair_batch
 def get_correlation_rwc(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
@@ -895,16 +887,6 @@ def get_correlation_rwc(
     widens float16/32 before arithmetic (see measurement notes).
     """
     validate_precision(precision)
-    if is_batch(masks):  # list/tuple or 4D: one result per image
-        return apply_per_pair(
-            get_correlation_rwc,
-            pixels_1,
-            pixels_2,
-            masks,
-            thr=thr,
-            precision=precision,
-            rank_scope=rank_scope,
-        )
     if rank_scope == "object_set":
         return _rwc_object_set(
             promote_float_pixels(pixels_1, precision),
@@ -927,6 +909,7 @@ def get_correlation_rwc(
     return {f"{F_RWC_FORMAT}_1": _values(r1), f"{F_RWC_FORMAT}_2": _values(r2)}
 
 
+@per_image_pair_batch
 def get_correlation_costes(
     pixels_1: NDArray[numpy.number],
     pixels_2: NDArray[numpy.number],
@@ -960,16 +943,6 @@ def get_correlation_costes(
     affects the numba backend (this backend always decides with SciPy); it is
     accepted here so the same parameters work with both backends.
     """
-    if is_batch(masks):  # list/tuple or 4D: one result per image
-        return apply_per_pair(
-            get_correlation_costes,
-            pixels_1,
-            pixels_2,
-            masks,
-            fast_costes=fast_costes,
-            thr=thr,
-            scale_max=scale_max,
-        )
     first, second, scale = _prepare_costes_inputs(pixels_1, pixels_2, scale_max)
     if masks.shape != first.shape or not numpy.issubdtype(masks.dtype, numpy.integer):
         raise ValueError("Costes labels must be an integer array matching the images")
@@ -992,6 +965,7 @@ def get_correlation_costes(
     return {f"{F_COSTES_FORMAT}_1": _values(c1), f"{F_COSTES_FORMAT}_2": _values(c2)}
 
 
+@per_image_pair_batch
 def get_correlation_overlap(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
@@ -1007,15 +981,6 @@ def get_correlation_overlap(
     widens float16/32 before arithmetic (see measurement notes).
     """
     validate_precision(precision)
-    if is_batch(masks):  # list/tuple or 4D: one result per image
-        return apply_per_pair(
-            get_correlation_overlap,
-            pixels_1,
-            pixels_2,
-            masks,
-            thr=thr,
-            precision=precision,
-        )
     overlap_list: list[float] = []
     k1_list: list[float] = []
     k2_list: list[float] = []

@@ -4,15 +4,18 @@
 but replaces its per-moment Horner array operations and ``bincount`` reductions
 with a single fused Numba kernel
 (:func:`cp_measure.core.numba._zernike.zernike_moments`). Centrosome still provides
-the radial LUT (degree-only) and ``minimum_enclosing_circle`` (host). Batch
-handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
+the radial LUT (degree-only); the enclosing circles and pixel coordinates are numba
+kernels too. Batch handling is :func:`cp_measure.core.numba._zernike.zernike_per_image`.
 
 ``get_radial_distribution`` processes each object on its bounding-box crop,
 grown by one pixel and clipped to the image. It replaces centrosome's
 ``propagate`` with a numba chamfer geodesic plus centre and histogram/wedge
 reductions, fused into one per-crop kernel
-(:func:`cp_measure.core.numba._radial.radial_object`). The exact-Euclidean
-``distance_transform_edt`` (scipy) and masked ``RadialCV`` stay host-side.
+(:func:`cp_measure.core.numba._radial.radial_object`). The exact Euclidean
+distance transform is the bit-identical numba port in
+:mod:`cp_measure.primitives._edt_numba`, and ``RadialCV`` is
+:func:`cp_measure.core.numba._radial.radial_cv`, a port of the reference's ``numpy.ma``
+expression with identical results, run per image on the batch threads.
 Results match the NumPy reference, which is label-independent since #96 (Issue #22).
 """
 
@@ -33,20 +36,28 @@ from cp_measure.core.measureobjectintensitydistribution import (
     get_radial_distribution as _numpy_radial_distribution,
 )
 from cp_measure.core.numba._radial import (
+    radial_all,
+    radial_cv,
     radial_object,
 )
 from cp_measure.core.numba._zernike import (
+    _pixel_tuple,
     zernike_per_image,
 )
-from cp_measure.primitives.shapes import to_bzyx
+from cp_measure.primitives._edt_numba import distance_transform_edt
+from cp_measure.primitives._segment_numba import numpy_sum_chunk
+from cp_measure.primitives.parallel import map_images
+from cp_measure.primitives.shapes import each_volume, memory_key, native
 
 
-def get_radial_zernikes(labels, pixels, zernike_degree: int = 9):
+def get_radial_zernikes(labels, pixels, zernike_degree: int = 9, *, max_workers=None):
     """Radial Zernike magnitude/phase per object; single image/volume or batch.
 
     Measured 2D entries require matching label and intensity shapes; mismatches
     raise ``ValueError`` rather than selecting an intensity plane. Compare phases
-    modulo 2π; near-zero moments have numerically unstable phases.
+    modulo 2π; near-zero moments have numerically unstable phases. ``max_workers``
+    caps the batch thread pool (default: the CPUs this process may use); pass it when nesting
+    under an outer parallel map.
     """
     return zernike_per_image(
         labels,
@@ -55,6 +66,7 @@ def get_radial_zernikes(labels, pixels, zernike_degree: int = 9):
         lambda vr, vi, _radii, counts, indexes: _radial_zernike_features(
             vr, vi, counts, indexes
         ),
+        max_workers=max_workers,
     )
 
 
@@ -75,18 +87,40 @@ def get_radial_distribution(
     is_sequence = isinstance(labels, (list, tuple))
     if not is_sequence and numpy.ndim(labels) == 3 and labels.shape[0] != 1:
         return {}
-    masks_zyx, pixels_zyx, unwrap = to_bzyx(labels, pixels)
-    results: list[dict[str, NDArray[numpy.floating]]] = []
-    for i, (m, p) in enumerate(zip(masks_zyx, pixels_zyx)):
-        mask_ndim = numpy.ndim(labels[i] if is_sequence else labels)
-        if m.shape[0] != 1:
-            results.append({})
-            continue
-        pixel_ndim = numpy.ndim(pixels[i] if is_sequence else pixels)
-        if mask_ndim != pixel_ndim or m.shape != p.shape:
-            raise ValueError("radial labels and pixels must have matching shapes")
-        results.append(_radial_distribution_2d(m, p, scaled, bin_count, maximum_radius))
-    return unwrap(results)
+    # Views, no batch copy: images that share a mask keep sharing its memory.
+    # each_volume also checks that labels and pixels match in shape and rank.
+    volumes, unwrap = each_volume(labels, pixels)
+    # Images that share a mask (the featurizer passes one mask per channel) are
+    # measured together, so each object's crop and distance transform are built once.
+    groups: dict = {}
+    for i, (m, _, _) in enumerate(volumes):
+        if m.shape[0] == 1:
+            groups.setdefault(memory_key(m), []).append(i)
+
+    def one(items):
+        return _radial_measure(
+            volumes[items[0]][0],
+            [volumes[i][1] for i in items],
+            scaled,
+            bin_count,
+            maximum_radius,
+        )
+
+    # Groups are independent and the per-object kernel releases the GIL, so
+    # map_images runs a batch on threads.
+    measured: list = [{} for _ in volumes]
+    grouped = list(groups.values())
+    for items, outs in zip(
+        grouped,
+        map_images(
+            one,
+            grouped,
+            pixels=sum(volumes[i][0].size for items in grouped for i in items),
+        ),
+    ):
+        for i, out in zip(items, outs):
+            measured[i] = out
+    return unwrap(measured)
 
 
 # (per-bin name template, overflow-bin name) per feature, in result order. The
@@ -106,28 +140,29 @@ def _radial_features(scaled, bin_count):
             yield col, (of if b == bin_count else mf % (b + 1, bin_count)), b
 
 
-def _radial_distribution_2d(
+def _radial_measure(
     labels_zyx: NDArray[numpy.integer],
-    pixels_zyx: NDArray[numpy.floating],
+    channels: list[NDArray[numpy.floating]],
     scaled: bool,
     bin_count: int,
     maximum_radius: int,
-) -> dict[str, NDArray[numpy.floating]]:
+) -> list:
+    """The result dict of each channel image measured with ``labels_zyx``."""
     # Validate before the empty-image path and allocation. Unlike int(), index()
     # rejects fractional bin counts instead of silently changing the requested bins.
     bin_count = operator.index(bin_count)
     if bin_count < 0:
         raise ValueError("bin_count must be >= 0")
     labels = labels_zyx[0]
-    pixels = pixels_zyx[0]
     # cp_measure labels are the contiguous 1..n of relabel_sequential, so the object
     # count is max() and the segment index is label-1 (matching the numpy baseline,
     # which indexes its (nobjects, ...) arrays by label-1).
     n = int(labels.max()) if labels.size else 0
     if n == 0:  # no objects (fringe) -> empty array per key
-        return {
-            name: numpy.zeros(0) for _, name, _ in _radial_features(scaled, bin_count)
-        }
+        return [
+            {name: numpy.zeros(0) for _, name, _ in _radial_features(scaled, bin_count)}
+            for _ in channels
+        ]
 
     # Fixed scalar types keep the cached kernel to one compiled signature; the
     # radius is unused (and may be None, as NumPy allows) when scaled.
@@ -136,59 +171,53 @@ def _radial_distribution_2d(
     if not scaled and (radius == 0 or numpy.isnan(radius)):
         # Non-finite-to-int bin casts in NumPy are platform/version-dependent.
         # Preserve its result or exception without exposing unchecked kernel indices.
-        return _numpy_radial_distribution(
-            labels,
-            pixels,
-            scaled=scaled,
-            bin_count=bin_count,
-            maximum_radius=maximum_radius,
-        )
-    slices = scipy.ndimage.find_objects(labels)
-    nb = bin_count + 1
-    frac_at_d = numpy.zeros((n, nb))
-    mean_frac = numpy.zeros((n, nb))
-    wedge_sums = numpy.zeros((n, nb, 8))
-    wedge_counts = numpy.zeros((n, nb, 8))
-    for label in range(1, n + 1):
-        sl = slices[label - 1]
-        if sl is None:
-            continue
-        # Crop to the object's bbox grown by 1px and clipped to the image: the
-        # margin gives the EDT its background edge, and the clip keeps the image
-        # border from counting as one, as in the whole-image reference.
-        sl = tuple(
-            slice(max(s.start - 1, 0), min(s.stop + 1, dim))
-            for s, dim in zip(sl, labels.shape)
-        )
-        m = numpy.ascontiguousarray(labels[sl] == label)
-        pix = numpy.ascontiguousarray(pixels[sl], dtype=numpy.float64)
-        d_to_edge = scipy.ndimage.distance_transform_edt(m)
-        (
-            frac_at_d[label - 1],
-            mean_frac[label - 1],
-            wedge_sums[label - 1],
-            wedge_counts[label - 1],
-        ) = radial_object(m, pix, d_to_edge, scaled, bin_count, radius)
+        return [
+            _numpy_radial_distribution(
+                labels,
+                p[0],
+                scaled=scaled,
+                bin_count=bin_count,
+                maximum_radius=maximum_radius,
+            )
+            for p in channels
+        ]
+    # Per-channel (H, W) views, no (C, H, W) copy. numba has no float16, so widen it
+    # exactly to float64 first (the kernel reads float64 either way); _pixel_tuple then
+    # makes the channels one numba type (same-dtype views, or float64 copies for a
+    # mixed batch), as the Zernike backend does.
+    chans = [
+        p[0].astype(numpy.float64) if p.dtype == numpy.float16 else p[0]
+        for p in channels
+    ]
+    pix_tuple = _pixel_tuple(chans)
+    frac_at_d, mean_frac, wedge_sums, wedge_counts, fallback = radial_all(
+        numpy.ascontiguousarray(native(labels)), pix_tuple, n, scaled, bin_count, radius
+    )
+    # A crop without background (an object filling its image-clipped box) gets
+    # scipy's distance transform, whose result for that case differs.
+    if fallback.any():
+        slices = scipy.ndimage.find_objects(labels)
+        for k in numpy.flatnonzero(fallback):
+            sl = tuple(
+                slice(max(s.start - 1, 0), min(s.stop + 1, dim))
+                for s, dim in zip(slices[k], labels.shape)
+            )
+            m = numpy.ascontiguousarray(labels[sl] == k + 1)
+            d_to_edge = distance_transform_edt(m)
+            for c, p in enumerate(channels):
+                pix = numpy.ascontiguousarray(p[0][sl], dtype=numpy.float64)
+                (
+                    frac_at_d[c, k],
+                    mean_frac[c, k],
+                    wedge_sums[c, k],
+                    wedge_counts[c, k],
+                ) = radial_object(m, pix, d_to_edge, scaled, bin_count, radius)
 
-    arrays = (frac_at_d, mean_frac, _radial_cv(wedge_sums, wedge_counts))
-    return {
-        name: arrays[col][:, b] for col, name, b in _radial_features(scaled, bin_count)
-    }
-
-
-def _radial_cv(wedge_sums, wedge_counts):
-    """RadialCV per (object, bin) with the reference's own ``numpy.ma`` expression.
-
-    ``numpy.ma`` division masks zero or non-finite denominators and keeps the
-    numerator, so all-dark rings give 0 rather than NaN; evaluating the same
-    expression (vectorised over objects) keeps those cases identical.
-    """
-    radial_cv = numpy.zeros(wedge_sums.shape[:2])
-    with numpy.errstate(invalid="ignore", divide="ignore"):
-        for b in range(wedge_sums.shape[1]):
-            mask = wedge_counts[:, b] == 0
-            means = numpy.ma.MaskedArray(wedge_sums[:, b] / wedge_counts[:, b], mask)
-            cv = numpy.std(means, 1) / numpy.mean(means, 1)
-            cv[numpy.sum(~mask, 1) == 0] = 0
-            radial_cv[:, b] = numpy.array(cv)
-    return radial_cv
+    cv = radial_cv(wedge_sums, wedge_counts, numpy_sum_chunk())
+    return [
+        {
+            name: (frac_at_d, mean_frac, cv)[col][c, :, b]
+            for col, name, b in _radial_features(scaled, bin_count)
+        }
+        for c in range(len(channels))
+    ]

@@ -629,6 +629,23 @@ def _prepare(g1, g2, offsets, scale):
 
 
 @njit(cache=True, nogil=True, error_model="numpy")
+def _object_regression(g1, g2, lo, hi, chunk):
+    """The per-object prelude both search modes run before their own search: object
+    validity, then the regression line. Returns ``(st, a, b)``; ``st`` is
+    ``SEARCHED`` only when the object is valid and ``a``/``b`` are finite (otherwise
+    ``EMPTY_OBJECT`` or ``REPLAY``, matching ``reference._costes_pair``), in which
+    case the caller runs its search from ``a``/``b``."""
+    st = _validity(g1, g2, lo, hi) if hi > lo else EMPTY_OBJECT
+    a = np.nan
+    b = np.nan
+    if st == SEARCHED:
+        a, b = _regression_ab(g1, g2, lo, hi, chunk)
+        if not (np.isfinite(a) and np.isfinite(b)):
+            st = REPLAY  # rare; the reference's NumPy diagnostics decide
+    return st, a, b
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
 def costes_faster(g1, g2, offsets, scale, defer, chunk):
     """Costes coefficients of every object, Faster mode (bisection).
 
@@ -645,25 +662,21 @@ def costes_faster(g1, g2, offsets, scale, defer, chunk):
     states = np.empty((offsets.size - 1, 8))
     for k in range(offsets.size - 1):
         lo, hi = offsets[k], offsets[k + 1]
-        st = _validity(g1, g2, lo, hi) if hi > lo else EMPTY_OBJECT
+        st, a, b = _object_regression(g1, g2, lo, hi, chunk)
         if st == SEARCHED:
-            a, b = _regression_ab(g1, g2, lo, hi, chunk)
-            if not (np.isfinite(a) and np.isfinite(b)):
-                st = REPLAY  # rare; the reference's NumPy diagnostics decide
+            state = _bisection_state(a, b, scale)
+            totals = _moment_totals(g1, g2, lo, hi)
+            code = _bisection_steps(g1, g2, lo, hi, scale, state, totals, defer)
+            if code == STEPS_AMBIGUOUS:
+                st = RESUME
+                states[k] = state
+            elif code == STEPS_NOT_CONVERGED:
+                st = REPLAY
             else:
-                state = _bisection_state(a, b, scale)
-                totals = _moment_totals(g1, g2, lo, hi)
-                code = _bisection_steps(g1, g2, lo, hi, scale, state, totals, defer)
-                if code == STEPS_AMBIGUOUS:
-                    st = RESUME
-                    states[k] = state
-                elif code == STEPS_NOT_CONVERGED:
-                    st = REPLAY
-                else:
-                    thr1, thr2 = _bisection_end(scale, state)
-                    st, c1[k], c2[k] = _coefficients(
-                        g1, g2, lo, hi, thr1, thr2, keep, buf, chunk
-                    )
+                thr1, thr2 = _bisection_end(scale, state)
+                st, c1[k], c2[k] = _coefficients(
+                    g1, g2, lo, hi, thr1, thr2, keep, buf, chunk
+                )
         status[k] = st
         if st == OUT_OF_RANGE:
             break
@@ -676,19 +689,15 @@ def costes_linear(g1, g2, offsets, scale, accurate, defer, chunk):
     c1, c2, status, buf, keep = _prepare(g1, g2, offsets, scale)
     for k in range(offsets.size - 1):
         lo, hi = offsets[k], offsets[k + 1]
-        st = _validity(g1, g2, lo, hi) if hi > lo else EMPTY_OBJECT
+        st, a, b = _object_regression(g1, g2, lo, hi, chunk)
         if st == SEARCHED:
-            a, b = _regression_ab(g1, g2, lo, hi, chunk)
-            if not (np.isfinite(a) and np.isfinite(b)):
+            thr1, thr2, st = _linear(g1, g2, lo, hi, a, b, scale, accurate, defer)
+            if st == SEARCHED and not (np.isfinite(thr1) and np.isfinite(thr2)):
                 st = REPLAY
-            else:
-                thr1, thr2, st = _linear(g1, g2, lo, hi, a, b, scale, accurate, defer)
-                if st == SEARCHED and not (np.isfinite(thr1) and np.isfinite(thr2)):
-                    st = REPLAY
-                elif st == SEARCHED:
-                    st, c1[k], c2[k] = _coefficients(
-                        g1, g2, lo, hi, thr1, thr2, keep, buf, chunk
-                    )
+            elif st == SEARCHED:
+                st, c1[k], c2[k] = _coefficients(
+                    g1, g2, lo, hi, thr1, thr2, keep, buf, chunk
+                )
         status[k] = st
         if st == OUT_OF_RANGE:
             break
