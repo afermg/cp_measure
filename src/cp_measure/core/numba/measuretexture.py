@@ -18,7 +18,7 @@ from numpy.typing import NDArray
 from cp_measure.core.measuretexture import _pack, _prep_levels
 from cp_measure.core.numba._texture import DELTAS_2D, DELTAS_3D, haralick_all
 from cp_measure.primitives.parallel import map_images
-from cp_measure.primitives.shapes import _stack, native
+from cp_measure.primitives.shapes import _reject_ragged, native
 
 
 def get_texture(
@@ -44,22 +44,37 @@ def get_texture(
         raise ValueError("masks and pixels must both be batches, or both single images")
     if not masks_batched:
         return _texture_image(masks, pixels, scale, gray_levels)
-    # A list/tuple batch must be equal-shape, as ``to_bzyx`` requires; ``_stack``
-    # rejects a ragged one without normalising 2D images to volumes.
+    # A list/tuple batch must be equal-shape, as ``to_bzyx`` requires. Its images
+    # are measured as views at the batch's common dtype (what stacking gave), cast
+    # per image on its worker: stacking copied every image on the calling thread.
     if isinstance(masks, (list, tuple)):
-        masks = _stack(masks, "masks")
+        _reject_ragged([numpy.shape(m) for m in masks], "masks")
     if isinstance(pixels, (list, tuple)):
-        pixels = _stack(pixels, "pixels")
+        _reject_ragged([numpy.shape(p) for p in pixels], "pixels")
     if len(masks) != len(pixels):
         raise ValueError(
             f"batch size mismatch: {len(masks)} masks vs {len(pixels)} images"
         )
+    if len(masks) == 0:  # an empty batch measures nothing
+        return []
+    mask_dtype = numpy.result_type(*(numpy.asarray(m).dtype for m in masks))
+    pixel_dtype = numpy.result_type(*(numpy.asarray(p).dtype for p in pixels))
+
+    def one(item):
+        mask, image = item
+        return _texture_image(
+            numpy.asarray(mask).astype(mask_dtype, copy=False),
+            numpy.asarray(image).astype(pixel_dtype, copy=False),
+            scale,
+            gray_levels,
+        )
+
     # Images are independent and the Haralick kernel releases the GIL, so
     # map_images runs a batch on threads.
     return map_images(
-        lambda item: _texture_image(*item, scale, gray_levels),
+        one,
         list(zip(masks, pixels)),
-        pixels=numpy.size(masks),
+        pixels=sum(numpy.size(m) for m in masks),
     )
 
 
