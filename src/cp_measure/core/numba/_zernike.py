@@ -406,16 +406,47 @@ def enclosing_circles(labels, n):
     centre and radius 0, also as centrosome.
     """
     H, W = labels.shape
-    row_min = np.full((n + 1, H), W, np.int64)
-    row_max = np.full((n + 1, H), -1, np.int64)
+    # Each label's occupied rows and their min/max column, grouped by label in
+    # ascending row order (CSR), instead of a dense (n + 1, H) row_min/row_max that
+    # is O(n*H) however few rows a label spans (megabytes per image for ~1e4 labels
+    # on a tall image, times the worker threads). Pass 1 counts each label's occupied
+    # rows; pass 2 writes one (row, min_col, max_col) entry per occupied row. The
+    # per-label (row, min, max) sequence is identical to the dense scan's, so the
+    # hull and circle below are unchanged.
+    counts = np.zeros(n + 1, np.int64)
+    last_row = np.full(n + 1, -1, np.int64)
     for r in range(H):
         for c in range(W):
             lab = labels[r, c]
-            if lab > 0:
-                if c < row_min[lab, r]:
-                    row_min[lab, r] = c
-                if c > row_max[lab, r]:
-                    row_max[lab, r] = c
+            if lab > 0 and last_row[lab] != r:
+                last_row[lab] = r
+                counts[lab] += 1
+    starts = np.zeros(n + 2, np.int64)
+    for lab in range(1, n + 1):
+        starts[lab + 1] = starts[lab] + counts[lab]
+    rows = np.empty(starts[n + 1], np.int64)
+    mincol = np.empty(starts[n + 1], np.int64)
+    maxcol = np.empty(starts[n + 1], np.int64)
+    cursor = starts.copy()
+    last_row[:] = -1
+    for r in range(H):
+        for c in range(W):
+            lab = labels[r, c]
+            if lab <= 0:
+                continue
+            if last_row[lab] != r:
+                last_row[lab] = r
+                idx = cursor[lab]
+                cursor[lab] += 1
+                rows[idx] = r
+                mincol[idx] = c
+                maxcol[idx] = c
+            else:
+                idx = cursor[lab] - 1
+                if c < mincol[idx]:
+                    mincol[idx] = c
+                if c > maxcol[idx]:
+                    maxcol[idx] = c
     centers = np.full((n, 2), np.nan)
     radii = np.zeros(n)
     px = np.empty(2 * H)
@@ -423,16 +454,15 @@ def enclosing_circles(labels, n):
     hx = np.empty(4 * H + 2)
     hy = np.empty(4 * H + 2)
     for lab in range(1, n + 1):
-        m = 0  # extreme pixels per row, in (row, col) order
-        for r in range(H):
-            if row_max[lab, r] >= 0:
-                px[m] = r
-                py[m] = row_min[lab, r]
+        m = 0  # extreme pixels per occupied row, in (row, col) order
+        for idx in range(starts[lab], starts[lab + 1]):
+            px[m] = rows[idx]
+            py[m] = mincol[idx]
+            m += 1
+            if maxcol[idx] != mincol[idx]:
+                px[m] = rows[idx]
+                py[m] = maxcol[idx]
                 m += 1
-                if row_max[lab, r] != row_min[lab, r]:
-                    px[m] = r
-                    py[m] = row_max[lab, r]
-                    m += 1
         if m == 0:
             continue
         k = 0  # Andrew's monotone chain: lower then upper hull
