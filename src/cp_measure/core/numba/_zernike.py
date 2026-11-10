@@ -32,7 +32,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from cp_measure.primitives.parallel import map_images
-from cp_measure.primitives.shapes import each_volume, memory_key
+from cp_measure.primitives.shapes import each_volume, memory_key, native
 from cp_measure.utils import _UNIT_DISK_EDGE
 
 
@@ -243,7 +243,9 @@ def _weighted_coords(labels, pixels):
 
 def _pixel_tuple(pixels):
     """The images as a tuple numba can index with a loop variable: all of one array type,
-    so they are passed as views; otherwise as float64 copies (the weights are float64)."""
+    so they are passed as views; otherwise as float64 copies (the weights are float64).
+    Non-native byte orders, which numba cannot type, are converted first."""
+    pixels = [native(p) for p in pixels]
     if len({numba.typeof(p) for p in pixels}) == 1:
         return tuple(pixels)
     return tuple(np.ascontiguousarray(p, dtype=np.float64) for p in pixels)
