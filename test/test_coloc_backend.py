@@ -83,10 +83,10 @@ def test_matches_numpy_2d(name, regime):
 
 @requires_numba
 @pytest.mark.parametrize("name", FUNCS)
-def test_degenerate_object_matches_reference_per_object_fallback(name):
-    """With one constant (degenerate) object among valid ones, the kernel result is
-    non-finite for that object; the backend recomputes only it with the single-object
-    reference, so every object still matches the reference (was a whole-image pass)."""
+def test_degenerate_object_matches_reference(name):
+    """A constant (degenerate) object among valid ones still matches the reference
+    key by key, NaN included: the kernel reproduces the reference's undefined
+    results, so no object is wrong."""
     masks = np.zeros((SIZE_2D, SIZE_2D), np.int32)
     _stamp_objects_2d(masks, n_objects=3)
     rng = get_rng()
@@ -100,6 +100,29 @@ def test_degenerate_object_matches_reference_per_object_fallback(name):
         np.testing.assert_allclose(
             got[key], expected[key], rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
         )
+
+
+@requires_numba
+@pytest.mark.parametrize("name", ["pearson", "manders_fold", "rwc"])
+def test_degenerate_object_does_not_fall_back_to_reference(name, monkeypatch):
+    """Pearson/Manders/RWC produce the reference's NaN for a signal-less object in
+    the kernel, so the backend never calls the reference for it. Real FOVs are full
+    of such objects; a reference fall-back there serialised the whole batch."""
+    masks = np.zeros((SIZE_2D, SIZE_2D), np.int32)
+    _stamp_objects_2d(masks, n_objects=3)
+    rng = get_rng()
+    p1, p2 = rng.random((SIZE_2D, SIZE_2D)), rng.random((SIZE_2D, SIZE_2D))
+    p1[masks == 2] = 0.0  # no signal in channel 1 -> undefined correlation -> NaN
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(f"reference get_correlation_{name} must not be called")
+
+    monkeypatch.setattr(ref, f"get_correlation_{name}", forbidden)
+    monkeypatch.setattr(ref, f"get_correlation_{name}_ind", forbidden)
+    got = _numba_fn(name)(p1, p2, masks)
+    # object 2 (index 1) is undefined; the kernel returned it without the reference.
+    first_key = next(iter(got))
+    assert np.isnan(got[first_key][1])
 
 
 @requires_numba

@@ -149,7 +149,7 @@ def _featurize(
     compute_rwc,
     build,
     ref,
-    ref_ind,
+    ref_ind=None,
     *,
     force_reference=False,
     **kwargs,
@@ -192,13 +192,14 @@ def _featurize(
         res = _run(m, p1, p2, frac, compute_rwc, compute_pearson, frac32, ranks, chunk)
         return m, p1, p2, res
 
-    # Kwargs the single-object reference accepts (e.g. thr/precision), for the
-    # per-object fallback below; pearson's takes none.
-    ind_params = set(inspect.signature(ref_ind).parameters)
+    # Kwargs the single-object reference accepts (e.g. thr/precision); only used by
+    # the per-object fallback, which only overlap needs (see finish).
+    ind_params = set(inspect.signature(ref_ind).parameters) if ref_ind else set()
 
     def finish(staged):
-        # Reference fallbacks (and their warnings) on the calling thread, in order.
         m, p1, p2, res = staged
+        # Dtypes the kernel cannot handle (and the object-set RWC scope) go to the
+        # whole-image reference.
         if (
             force_reference
             or p1.dtype not in _KERNEL_DTYPES
@@ -206,23 +207,27 @@ def _featurize(
         ):
             return ref(p1, p2, m, **kwargs)
         arrays = build(res)
-        # The kernel reproduces the reference for well-defined objects, so only
-        # objects whose kernel result is non-finite are recomputed, one at a time,
-        # with the single-object reference. A whole-image reference pass on any one
-        # bad object (a single degenerate cell is common on real FOVs) used to
-        # discard the kernel result for every object. Labels are contiguous 1..N, so
-        # object index k is label k + 1; one object's pixels are the same set whether
-        # gathered per-label or by boolean mask, so this matches the old full pass.
-        bad = numpy.zeros(next(iter(arrays.values())).shape[0], dtype=bool)
-        for values in arrays.values():
-            bad |= ~numpy.isfinite(values)
-        if bad.any():
-            ind_kwargs = {k: v for k, v in kwargs.items() if k in ind_params}
-            arrays = {key: numpy.array(values) for key, values in arrays.items()}
-            for k in numpy.nonzero(bad)[0]:
-                obj = ref_ind(p1, p2, m == (k + 1), **ind_kwargs)
-                for key in arrays:
-                    arrays[key][k] = obj[key]
+        # The kernel's centred second moments reproduce the reference's for every
+        # object, including the NaN of a degenerate object (zero variance / zero
+        # signal is 0/0, as in numpy.cov and the Manders denominators), so Pearson,
+        # Manders and RWC use the kernel result directly (ref_ind is None). An
+        # earlier guard re-ran the reference whenever ANY object was non-finite,
+        # which on real FOVs full of signal-less objects discarded the kernel work
+        # for nearly every pair and made the batch serial. Only overlap passes a
+        # ref_ind: its reference divides by a Python float, raising ZeroDivisionError
+        # on a zero channel, which the njit kernel cannot reproduce, so each
+        # non-finite overlap object is replayed through the single-object reference.
+        if ref_ind is not None:
+            bad = numpy.zeros(next(iter(arrays.values())).shape[0], dtype=bool)
+            for values in arrays.values():
+                bad |= ~numpy.isfinite(values)
+            if bad.any():
+                ind_kwargs = {k: v for k, v in kwargs.items() if k in ind_params}
+                arrays = {key: numpy.array(values) for key, values in arrays.items()}
+                for k in numpy.nonzero(bad)[0]:
+                    obj = ref_ind(p1, p2, m == (k + 1), **ind_kwargs)
+                    for key in arrays:
+                        arrays[key][k] = obj[key]
         return arrays
 
     items = [(m, p1, p2) for (m, p1, _), (_, p2, _) in zip(first, second)]
@@ -276,7 +281,6 @@ def get_correlation_pearson(
         False,
         build,
         reference.get_correlation_pearson,
-        reference.get_correlation_pearson_ind,
     )
 
 
@@ -299,7 +303,6 @@ def get_correlation_manders_fold(
         False,
         build,
         reference.get_correlation_manders_fold,
-        reference.get_correlation_manders_fold_ind,
         thr=thr,
         precision=precision,
     )
@@ -329,7 +332,6 @@ def get_correlation_rwc(
         True,
         build,
         reference.get_correlation_rwc,
-        reference.get_correlation_rwc_ind,
         force_reference=rank_scope == "object_set",
         thr=thr,
         precision=precision,
