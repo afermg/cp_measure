@@ -1,5 +1,7 @@
 """Bit-exact validation of the numba granularity morphology kernels vs skimage."""
 
+import math
+
 import numpy
 import pytest
 import scipy.ndimage
@@ -9,8 +11,11 @@ from cp_measure.core.numba._granularity import (
     _disk_halfwidths,
     ball_dilation_3d,
     ball_erosion_3d,
+    bilinear_resample_2d,
     erosion_6conn_3d,
+    granularity_spectrum_2d,
     reconstruction_by_dilation_3d,
+    subtract_background_2d,
     upsample_label_sums_3d,
     disk_dilation_2d,
     disk_erosion_2d,
@@ -22,6 +27,157 @@ from cp_measure.core.numba._granularity import (
     reconstruction_by_dilation_2d,
     spectrum_sums_2d,
 )
+
+
+def _assert_same_bits(got, expected):
+    """Same dtype, shape and bytes (tells -0.0 from 0.0, and NaN from a value)."""
+    assert got.dtype == expected.dtype
+    assert got.shape == expected.shape
+    width = numpy.uint32 if got.dtype == numpy.float32 else numpy.uint64
+    numpy.testing.assert_array_equal(got.view(width), expected.view(width))
+
+
+def _grid_image(shape, dtype, seed, non_finite):
+    image = numpy.random.default_rng(seed).normal(size=shape).astype(dtype)
+    if non_finite:
+        # The order-1 tap past the last sample (weight 0) mirrors back onto the
+        # second-to-last one, so inf there turns edge samples into NaN.
+        image[-2 if shape[0] > 1 else 0, 0] = numpy.inf
+        image[0, -2 if shape[1] > 1 else 0] = -numpy.inf
+        image[shape[0] // 2, shape[1] // 2] = numpy.nan
+    return image
+
+
+# (shape, factor): odd sizes, factors whose last coordinate rounds just past the
+# edge (160 * 0.4) or lands on it, and grids that collapse to 2 or 1 samples.
+RESAMPLE_CASES = [
+    ((64, 80), 0.25),
+    ((37, 41), 0.25),
+    ((160, 161), 0.4),
+    ((97, 53), 0.3),
+    ((9, 31), 0.7),
+    ((8, 8), 0.25),
+    ((5, 12), 0.5),
+    ((3, 17), 0.1),
+]
+
+
+@pytest.mark.parametrize("non_finite", [False, True])
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+@pytest.mark.parametrize("shape,factor", RESAMPLE_CASES)
+def test_bilinear_resample_2d_matches_map_coordinates(shape, factor, dtype, non_finite):
+    """Bit for bit equal to order-1 ``map_coordinates`` on the three grids the 2D
+    path builds: the subsample (``k / factor`` over ``int(n * factor)`` samples),
+    the background downsample (``k / factor`` over ``ceil(n * factor)`` samples,
+    from ``mgrid``'s float bounds) and the upsample back (``k * scale``)."""
+    image = _grid_image(shape, dtype, 0, non_finite)
+
+    # subsample: integer-shaped grid
+    rows, cols = (int(n * factor) for n in shape)
+    if min(rows, cols) >= 1:
+        i, j = numpy.mgrid[0:rows, 0:cols].astype(float) / factor
+        expected = scipy.ndimage.map_coordinates(image, (i, j), order=1)
+        got = bilinear_resample_2d(image, rows, cols, factor, factor, True)
+        _assert_same_bits(got, expected)
+
+    # background downsample: float bounds, ceil-sized grid
+    back = numpy.array(shape) * factor
+    i, j = numpy.mgrid[0 : back[0], 0 : back[1]].astype(float) / factor
+    expected = scipy.ndimage.map_coordinates(image, (i, j), order=1)
+    got = bilinear_resample_2d(
+        image, math.ceil(back[0]), math.ceil(back[1]), factor, factor, True
+    )
+    _assert_same_bits(got, expected)
+
+    # upsample of the (possibly 1- or 2-sample) background grid back to `shape`
+    grid = _grid_image(expected.shape, dtype, 1, non_finite)
+    scale_y = float(back[0] - 1) / float(shape[0] - 1)
+    scale_x = float(back[1] - 1) / float(shape[1] - 1)
+    i, j = numpy.mgrid[0 : shape[0], 0 : shape[1]].astype(float)
+    i *= scale_y
+    j *= scale_x
+    expected = scipy.ndimage.map_coordinates(grid, (i, j), order=1)
+    got = bilinear_resample_2d(grid, shape[0], shape[1], scale_y, scale_x, False)
+    _assert_same_bits(got, expected)
+
+
+def _background_steps(pixels, radius, sample_size):
+    """The 2D path's background subtraction as NumPy/scipy steps (its old code)."""
+    new_shape = numpy.array(pixels.shape)
+    if sample_size < 1:
+        back_shape = new_shape * sample_size
+        i, j = numpy.mgrid[0 : back_shape[0], 0 : back_shape[1]].astype(float)
+        back = scipy.ndimage.map_coordinates(
+            pixels, (i / sample_size, j / sample_size), order=1
+        )
+    else:
+        back, back_shape = pixels, new_shape
+    dtype = back.dtype
+    back = disk_dilation_2d(disk_erosion_2d(back, radius), radius).astype(dtype)
+    if sample_size < 1:
+        i, j = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
+        i *= float(back_shape[0] - 1) / float(new_shape[0] - 1)
+        j *= float(back_shape[1] - 1) / float(new_shape[1] - 1)
+        back = scipy.ndimage.map_coordinates(back, (i, j), order=1)
+    out = pixels - back
+    out[out < 0] = 0
+    return out
+
+
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+@pytest.mark.parametrize(
+    "shape,radius,sample_size",
+    [
+        ((64, 80), 10, 0.25),
+        ((41, 37), 3, 0.3),
+        ((40, 40), 2, 1.0),
+        ((23, 19), 0, 0.5),
+        ((9, 31), 4, 0.1),
+    ],
+)
+def test_subtract_background_2d_matches_numpy_steps(shape, radius, sample_size, dtype):
+    """One kernel call equals, bit for bit, the resample, disk opening, resample
+    back and clamped subtraction it replaces, in the input dtype."""
+    rng = numpy.random.default_rng(2)
+    pixels = (rng.random(shape) + 2 * rng.random(shape) ** 8).astype(dtype)
+    back = numpy.array(shape) * sample_size
+    scales = [float(b - 1) / float(n - 1) for b, n in zip(back, shape)]
+    got = subtract_background_2d(
+        pixels, radius, sample_size, math.ceil(back[0]), math.ceil(back[1]), *scales
+    )
+    _assert_same_bits(got, _background_steps(pixels, radius, sample_size))
+
+
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+def test_granularity_spectrum_2d_matches_numpy_assembly(dtype):
+    """The spectrum kernel's per-object values equal, bit for bit, the NumPy
+    assembly from the starting sums and step sums: means as sum / count (NaN for
+    an absent label), the start clamped to eps, and ``(prev - new) * 100 / start``."""
+    rng = numpy.random.default_rng(4)
+    shape = (31, 27)
+    pixels = rng.random(shape).astype(dtype)
+    orig = rng.random((62, 54)).astype(dtype)
+    labels = rng.integers(0, 6, size=orig.shape)
+    labels[labels == 3] = 0  # absent label -> NaN
+    labels[0, 0] = 6
+    orig[labels == 6] = 0  # zero start mean -> clamped to eps
+    n = int(labels.max())
+    counts, *tables = readback_tables(labels, n, 30 / 61, 26 / 53, *shape)
+    counts = counts[1:]
+    ng = 5
+    got = granularity_spectrum_2d(pixels, ng, labels, orig, counts, *tables)
+
+    with numpy.errstate(invalid="ignore", divide="ignore"):
+        current = label_sums(labels, orig.astype(numpy.float64), n)[1:] / counts
+        start = numpy.maximum(current, numpy.finfo(float).eps)
+        steps = spectrum_sums_2d(pixels, ng, *tables)
+        expected = []
+        for g in range(ng):
+            new = steps[g][1:] / counts
+            expected.append((current - new) * 100 / start)
+            current = new
+    _assert_same_bits(got, numpy.array(expected))
+    assert numpy.isnan(got[:, 2]).all() and numpy.isfinite(got[:, 5]).all()
 
 
 @pytest.mark.parametrize("seed", [0, 1, 7])

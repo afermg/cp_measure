@@ -10,8 +10,10 @@ on a block over its bounding box in the working grid, and each spectrum step the
 reads only those blocks (:func:`._granularity.readback_sums`). This matches the
 upsample-then-mean to floating-point summation order (~1e-12 absolute on the
 spectrum, inside this backend's ``rtol=1e-7, atol=1e-10`` contract), and is
-bit-exact when no resampling is needed. The three one-off grid resamples
-(subsample / background) stay on ``map_coordinates``.
+bit-exact when no resampling is needed. In 2D the three one-off grid resamples
+(subsample / background) run in numba too, bit-exact with ``map_coordinates``
+order 1 (:func:`._granularity.bilinear_resample_2d`), so each image is three
+GIL-free kernel calls; 3D keeps ``map_coordinates`` for them.
 
 Batch-shaped via the canonical ``(B, Z, Y, X)`` form (see
 :func:`cp_measure.primitives.shapes.to_bzyx`): a single image is ``B == 1``. Each
@@ -21,6 +23,8 @@ per-object means that follow the baseline's 3D upsample voxel by voxel
 (:func:`_granularity_3d`).
 """
 
+import math
+
 import numpy
 import scipy.ndimage
 from numpy.typing import NDArray
@@ -29,13 +33,13 @@ from cp_measure._precision import Precision, promote_float_pixels, validate_prec
 from cp_measure.core.numba._granularity import (
     ball_dilation_3d,
     ball_erosion_3d,
-    disk_dilation_2d,
-    disk_erosion_2d,
+    bilinear_resample_2d,
     erosion_6conn_3d,
+    granularity_spectrum_2d,
     label_sums,
     readback_tables,
     reconstruction_by_dilation_3d,
-    spectrum_sums_2d,
+    subtract_background_2d,
     upsample_label_sums_3d,
 )
 from cp_measure.primitives.parallel import map_images
@@ -169,11 +173,15 @@ def _granularity_2d(
     ng: int,
     readback=None,
 ) -> dict[str, NDArray[numpy.floating]]:
-    orig_shape = numpy.array(orig_pixels.shape)
-    effective_shape = (
-        (orig_shape * subsample_size).astype(int) if subsample_size < 1 else orig_shape
+    # Shapes as Python numbers: under a batch, every small NumPy call on the
+    # calling thread waits for the GIL.
+    orig_shape = orig_pixels.shape
+    new_shape = (
+        tuple(int(n * subsample_size) for n in orig_shape)
+        if subsample_size < 1
+        else orig_shape
     )
-    if (effective_shape < 2).any():
+    if min(new_shape) < 2:
         # Match the baseline's undefined-spectrum contract before resampling or
         # padding an empty/single-sample axis (issue #90).
         n_objects = int(orig_mask.max()) if orig_mask.size else 0
@@ -181,84 +189,45 @@ def _granularity_2d(
             f"Granularity_{i}": numpy.full(n_objects, numpy.nan)
             for i in range(1, ng + 1)
         }
-    new_shape = orig_shape.copy()
-
-    # 1. Subsample image (scipy map_coordinates, as baseline). The baseline also
-    # resamples the mask here but never reads it (the spectrum loop uses orig_mask),
-    # so we skip that dead order-0 resample.
-    if subsample_size < 1:
-        new_shape = (orig_shape * subsample_size).astype(int)
-        i, j = (
-            numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
-            / subsample_size
-        )
-        pixels = scipy.ndimage.map_coordinates(orig_pixels, (i, j), order=1)
-    else:
-        pixels = orig_pixels.copy()
-
-    # 2. Background subtraction via greyscale opening (numba disk erosion+dilation)
-    if image_sample_size < 1:
-        back_shape = new_shape * image_sample_size
-        i, j = (
-            numpy.mgrid[0 : back_shape[0], 0 : back_shape[1]].astype(float)
-            / image_sample_size
-        )
-        back_pixels = scipy.ndimage.map_coordinates(pixels, (i, j), order=1)
-    else:
-        back_pixels = pixels
-        back_shape = new_shape
-    radius = element_size
-    # back_mask is all-ones (full-frame), so the baseline's masked re-zeroing is a no-op
-    background_dtype = back_pixels.dtype
-    back_pixels = disk_erosion_2d(back_pixels, radius)
-    back_pixels = disk_dilation_2d(back_pixels, radius)
-    # The kernels select extrema in float64, but the NumPy opening preserves
-    # its input dtype. Restore it before interpolation and subtraction: promoting
-    # these stages changes float32 rounding and the resulting spectrum (#123).
-    back_pixels = back_pixels.astype(background_dtype, copy=False)
-    if image_sample_size < 1:
-        i, j = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
-        i *= float(back_shape[0] - 1) / float(new_shape[0] - 1)
-        j *= float(back_shape[1] - 1) / float(new_shape[1] - 1)
-        back_pixels = scipy.ndimage.map_coordinates(back_pixels, (i, j), order=1)
-    pixels = pixels - back_pixels
-    pixels[pixels < 0] = 0
-
-    # 3. Per-object readback (dense labels 1..max, like baseline)
-    max_label = int(orig_mask.max()) if orig_mask.size else 0
-    results: dict[str, NDArray[numpy.floating]] = {}
-    if max_label == 0:  # no objects -> baseline returns empty arrays
-        empty = numpy.zeros((0,))
-        for granularity_id in range(1, ng + 1):
-            results[f"Granularity_{granularity_id}"] = empty
-        return results
-
+    resample = subsample_size < 1 or image_sample_size < 1
+    if resample and orig_pixels.dtype not in (numpy.float32, numpy.float64):
+        # scipy's map_coordinates error, which the baseline raises here (float16)
+        raise RuntimeError("data type not supported")
     if readback is None:
         readback = _readback(orig_mask, subsample_size)
-    mask, counts, tables = readback
-    # exact widening (any input dtype, incl. float16) for the starting means
-    pixels_f64 = numpy.ascontiguousarray(orig_pixels, dtype=numpy.float64)
-    sums = label_sums(mask, pixels_f64, max_label)
+    if readback is None:  # no objects -> baseline returns empty arrays
+        return {f"Granularity_{g}": numpy.zeros((0,)) for g in range(1, ng + 1)}
 
-    def _label_mean(label_sums):
-        with numpy.errstate(invalid="ignore", divide="ignore"):
-            # 0/0 -> nan for absent labels, matching scipy.ndimage.mean
-            return label_sums[1:] / counts
-
-    current_mean = _label_mean(sums)
-    start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
-
-    # 4. Granular spectrum: disk(1) erosion + cascaded reconstruction, all steps in
-    # one kernel call
-    step_sums = spectrum_sums_2d(pixels, ng, *tables)
-    for granularity_id in range(1, ng + 1):
-        new_mean = _label_mean(step_sums[granularity_id - 1])
-        results[f"Granularity_{granularity_id}"] = (
-            (current_mean - new_mean) * 100 / start_mean
+    # 1. Subsample image (bit-exact with the baseline's order-1 map_coordinates).
+    # The baseline also resamples the mask here but never reads it (the spectrum
+    # loop uses orig_mask), so we skip that dead order-0 resample.
+    if subsample_size < 1:
+        pixels = bilinear_resample_2d(
+            orig_pixels, *new_shape, subsample_size, subsample_size, True
         )
-        current_mean = new_mean
+    else:
+        pixels = orig_pixels
 
-    return results
+    # 2. Background subtraction via greyscale disk opening, on the baseline's
+    # background grid: ``mgrid`` over the float shape ``new_shape *
+    # image_sample_size`` has ``ceil`` samples per axis, and the way back scales by
+    # that float shape. The whole step stays in the input dtype, as the NumPy
+    # opening does: promoting it changes float32 rounding (#123). The baseline's
+    # background mask is all ones, so its masked re-zeroing is a no-op.
+    back_shape = [n * image_sample_size for n in new_shape]
+    pixels = subtract_background_2d(
+        pixels,
+        element_size,
+        image_sample_size,
+        *(math.ceil(b) for b in back_shape),
+        *(float(b - 1) / float(n - 1) for b, n in zip(back_shape, new_shape)),
+    )
+
+    # 3. Spectrum: disk(1) erosion + cascaded reconstruction and the per-object
+    # readback (dense labels 1..max, like the baseline), all in one kernel call
+    mask, counts, tables = readback
+    spectrum = granularity_spectrum_2d(pixels, ng, mask, orig_pixels, counts, *tables)
+    return {f"Granularity_{g}": spectrum[g - 1] for g in range(1, ng + 1)}
 
 
 def _granularity_3d(
