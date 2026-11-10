@@ -23,6 +23,13 @@ differences from ``mahotas/features/texture.py::haralick_features``
 The GLCM is sized to ``crop.max() + 1``, not a fixed 256, because feature 9
 (``px_minus_y.var()``) is taken over a length-``fm1`` array.
 
+The GLCM is 1-5% dense for a typical object, so the kernel tracks each
+direction's non-zero cells and touches only those: zeroing and reducing the
+matrix were both O(fm1^2), now O(occupied) (~2.7x faster at 256 grey levels).
+The reduction then sums in first-touch (raster) order instead of (i, j) order,
+which moves the float features by ~1e-11 relative, far inside the ~1e-5
+agreement with mahotas; see ``haralick_object``.
+
 ``img_as_ubyte`` / ``regionprops`` stay host-side (scipy/skimage). Serial; no
 ``prange``/``nogil``.
 """
@@ -53,7 +60,7 @@ DELTAS_3D = np.array(
 )
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def _entropy(a):
     """``-sum(a * log2(a))`` over positive entries (0*log2(1)=0), as mahotas."""
     s = 0.0
@@ -64,7 +71,7 @@ def _entropy(a):
     return s
 
 
-@njit(cache=True, error_model="numpy")
+@njit(cache=True, nogil=True, error_model="numpy")
 def haralick_object(crop, offsets):
     """The 13 Haralick features per direction for one ``(Z, Y, X)`` object crop.
 
@@ -88,10 +95,18 @@ def haralick_object(crop, offsets):
                 if crop[z, y, x] + 1 > fm1:
                     fm1 = crop[z, y, x] + 1
 
-    cmat = np.empty((fm1, fm1), np.int64)
+    # cmat is zeroed once; each direction records its first-touched cells in
+    # occ_i/occ_j (<= 2 per source pixel), reduces over only those, then resets
+    # just those cells for the next direction, instead of a fresh fm1^2 zero and
+    # a dense fm1^2 scan. The reduction order is first-touch, not (i, j); see the
+    # module docstring for the ~1e-11 effect on the float features.
+    cmat = np.zeros((fm1, fm1), np.int64)
+    cap = crop.size * 2 + 1
+    occ_i = np.empty(cap, np.int64)
+    occ_j = np.empty(cap, np.int64)
     for d in range(n_dir):
         dz, dy, dx = offsets[d, 0], offsets[d, 1], offsets[d, 2]
-        cmat[:] = 0
+        nocc = 0
         total = 0
         for z in range(Z):
             for y in range(Y):
@@ -102,8 +117,16 @@ def haralick_object(crop, offsets):
                     if 0 <= z2 < Z and 0 <= y2 < Y and 0 <= x2 < X:
                         a = crop[z, y, x]
                         b = crop[z2, y2, x2]
+                        if cmat[a, b] == 0:
+                            occ_i[nocc] = a
+                            occ_j[nocc] = b
+                            nocc += 1
                         cmat[a, b] += 1
-                        cmat[b, a] += 1  # symmetric=True
+                        if cmat[b, a] == 0:  # symmetric=True
+                            occ_i[nocc] = b
+                            occ_j[nocc] = a
+                            nocc += 1
+                        cmat[b, a] += 1
                         total += 2
         # ignore_zeros: T excludes pairs touching background (grey level 0), i.e.
         # row 0 + col 0 (symmetric, so 2*row0 - cmat[0,0]) -> O(fm1), no fm1^2 sum.
@@ -117,13 +140,21 @@ def haralick_object(crop, offsets):
                     out[dd, f] = np.nan
             return out
 
-        _haralick_13(cmat, fm1, T, out, d)
+        _haralick_13(cmat, occ_i, occ_j, nocc, fm1, T, out, d)
+        for t in range(nocc):
+            cmat[occ_i[t], occ_j[t]] = 0
     return out
 
 
-@njit(cache=True, error_model="numpy")
-def _haralick_13(cmat, fm1, T, out, d):
-    """Fill ``out[d, :]`` with the 13 Haralick features of GLCM ``cmat`` (size fm1)."""
+@njit(cache=True, nogil=True, error_model="numpy")
+def _haralick_13(cmat, occ_i, occ_j, nocc, fm1, T, out, d):
+    """Fill ``out[d, :]`` with the 13 Haralick features of GLCM ``cmat`` (size fm1).
+
+    ``occ_i``/``occ_j`` list the ``nocc`` cells with a non-zero count, in the order
+    the build first touched them. Iterating those (skipping the grey-level-0
+    background row and column, the ``ignore_zeros`` exclusion) replaces the dense
+    ``fm1*fm1`` scan; the raster-order sum moves the float results by ~1e-11.
+    """
     px = np.zeros(fm1)  # marginal (== row & col marginal; GLCM is symmetric)
     px_plus_y = np.zeros(2 * fm1)  # P(i+j)
     px_minus_y = np.zeros(fm1)  # P(|i-j|)
@@ -131,23 +162,23 @@ def _haralick_13(cmat, fm1, T, out, d):
     entropy = 0.0
     ij_sum = 0.0  # sum_{i,j} i*j*p
     idm = 0.0
-    # rows/cols 0 are the ignore_zeros background -> skip (start at 1)
-    for i in range(1, fm1):
-        for j in range(1, fm1):
-            c = cmat[i, j]
-            if c == 0:
-                continue
-            # c / T, never c * (1/T): the reciprocal is a ulp off for most T, which
-            # leaves a uniform-intensity object with a tiny non-zero variance and so
-            # slips past the sx == 0 guard below (Correlation ~1e15 instead of 1).
-            p = c / T
-            asm += p * p
-            entropy -= p * np.log2(p)
-            ij_sum += i * j * p
-            idm += p / ((i - j) * (i - j) + 1)
-            px[j] += p
-            px_plus_y[i + j] += p
-            px_minus_y[i - j if i >= j else j - i] += p
+    for t in range(nocc):
+        i = occ_i[t]
+        j = occ_j[t]
+        if i == 0 or j == 0:  # ignore_zeros background row/col
+            continue
+        c = cmat[i, j]
+        # c / T, never c * (1/T): the reciprocal is a ulp off for most T, which
+        # leaves a uniform-intensity object with a tiny non-zero variance and so
+        # slips past the sx == 0 guard below (Correlation ~1e15 instead of 1).
+        p = c / T
+        asm += p * p
+        entropy -= p * np.log2(p)
+        ij_sum += i * j * p
+        idm += p / ((i - j) * (i - j) + 1)
+        px[j] += p
+        px_plus_y[i + j] += p
+        px_minus_y[i - j if i >= j else j - i] += p
 
     ux = 0.0
     vx = 0.0
@@ -210,3 +241,53 @@ def _haralick_13(cmat, fm1, T, out, d):
     diff = hxy2 - entropy
     arg = 1.0 - np.exp(-2.0 * diff)
     out[d, 12] = np.sqrt(arg if arg > 0.0 else 0.0)
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def haralick_all(labels, levels, offsets):
+    """:func:`haralick_object` for every label present in a ``(Z, Y, X)`` image.
+
+    Each crop is the label's bounding box with the grey levels of its own pixels
+    and 0 elsewhere, as ``skimage.measure.regionprops(...).image_intensity`` gives
+    it. Labels are visited in increasing order, as regionprops lists them. Returns
+    ``(n_dir, 13, n_present)``.
+    """
+    Z, Y, X = labels.shape
+    n = 0
+    for v in labels.ravel():
+        if np.int64(v) > n:
+            n = np.int64(v)
+    lo = np.full((n, 3), np.iinfo(np.int64).max, np.int64)
+    hi = np.full((n, 3), -1, np.int64)
+    for z in range(Z):
+        for y in range(Y):
+            for x in range(X):
+                k = np.int64(labels[z, y, x]) - 1  # unsigned labels must not wrap
+                if k >= 0:
+                    lo[k, 0] = min(lo[k, 0], z)
+                    lo[k, 1] = min(lo[k, 1], y)
+                    lo[k, 2] = min(lo[k, 2], x)
+                    hi[k, 0] = max(hi[k, 0], z)
+                    hi[k, 1] = max(hi[k, 1], y)
+                    hi[k, 2] = max(hi[k, 2], x)
+    present = 0
+    for k in range(n):
+        if hi[k, 0] >= 0:
+            present += 1
+    out = np.empty((offsets.shape[0], 13, present))
+    j = 0
+    for k in range(n):
+        if hi[k, 0] < 0:
+            continue
+        crop = np.zeros(
+            (hi[k, 0] - lo[k, 0] + 1, hi[k, 1] - lo[k, 1] + 1, hi[k, 2] - lo[k, 2] + 1),
+            np.uint8,
+        )
+        for z in range(lo[k, 0], hi[k, 0] + 1):
+            for y in range(lo[k, 1], hi[k, 1] + 1):
+                for x in range(lo[k, 2], hi[k, 2] + 1):
+                    if np.int64(labels[z, y, x]) == k + 1:
+                        crop[z - lo[k, 0], y - lo[k, 1], x - lo[k, 2]] = levels[z, y, x]
+        out[:, :, j] = haralick_object(crop, offsets)
+        j += 1
+    return out

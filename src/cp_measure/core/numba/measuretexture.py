@@ -15,9 +15,10 @@ expressions where they differ, and why.
 import numpy
 from numpy.typing import NDArray
 
-from cp_measure.core.measuretexture import _pack, _prep
-from cp_measure.core.numba._texture import DELTAS_2D, DELTAS_3D, haralick_object
-from cp_measure.primitives.shapes import _stack
+from cp_measure.core.measuretexture import _pack, _prep_levels
+from cp_measure.core.numba._texture import DELTAS_2D, DELTAS_3D, haralick_all
+from cp_measure.primitives.parallel import map_images
+from cp_measure.primitives.shapes import _reject_ragged, native
 
 
 def get_texture(
@@ -43,17 +44,38 @@ def get_texture(
         raise ValueError("masks and pixels must both be batches, or both single images")
     if not masks_batched:
         return _texture_image(masks, pixels, scale, gray_levels)
-    # A list/tuple batch must be equal-shape, as ``to_bzyx`` requires; ``_stack``
-    # rejects a ragged one without normalising 2D images to volumes.
+    # A list/tuple batch must be equal-shape, as ``to_bzyx`` requires. Its images
+    # are measured as views at the batch's common dtype (what stacking gave), cast
+    # per image on its worker: stacking copied every image on the calling thread.
     if isinstance(masks, (list, tuple)):
-        masks = _stack(masks, "masks")
+        _reject_ragged([numpy.shape(m) for m in masks], "masks")
     if isinstance(pixels, (list, tuple)):
-        pixels = _stack(pixels, "pixels")
+        _reject_ragged([numpy.shape(p) for p in pixels], "pixels")
     if len(masks) != len(pixels):
         raise ValueError(
             f"batch size mismatch: {len(masks)} masks vs {len(pixels)} images"
         )
-    return [_texture_image(m, p, scale, gray_levels) for m, p in zip(masks, pixels)]
+    if len(masks) == 0:  # an empty batch measures nothing
+        return []
+    mask_dtype = numpy.result_type(*(numpy.asarray(m).dtype for m in masks))
+    pixel_dtype = numpy.result_type(*(numpy.asarray(p).dtype for p in pixels))
+
+    def one(item):
+        mask, image = item
+        return _texture_image(
+            numpy.asarray(mask).astype(mask_dtype, copy=False),
+            numpy.asarray(image).astype(pixel_dtype, copy=False),
+            scale,
+            gray_levels,
+        )
+
+    # Images are independent and the Haralick kernel releases the GIL, so
+    # map_images runs a batch on threads.
+    return map_images(
+        one,
+        list(zip(masks, pixels)),
+        pixels=sum(numpy.size(m) for m in masks),
+    )
 
 
 def _texture_image(
@@ -62,14 +84,13 @@ def _texture_image(
     scale: int,
     gray_levels: int,
 ) -> dict[str, NDArray[numpy.floating]]:
-    props, n_directions = _prep(masks, pixels, scale, gray_levels)
+    levels, n_directions = _prep_levels(masks, pixels, scale, gray_levels)
     deltas = DELTAS_2D if n_directions == 4 else DELTAS_3D
     offsets = numpy.ascontiguousarray(scale * deltas)
-
-    features = numpy.empty((n_directions, 13, len(props)))
-    for index, prop in enumerate(props):
-        crop = numpy.ascontiguousarray(prop.image_intensity)  # uint8 from regionprops
-        if crop.ndim == 2:
-            crop = crop[numpy.newaxis]  # the kernel always takes (Z, Y, X)
-        features[:, :, index] = haralick_object(crop, offsets)
+    labels = native(masks)
+    if labels.ndim == 2:  # the kernel always takes (Z, Y, X)
+        labels, levels = labels[numpy.newaxis], levels[numpy.newaxis]
+    features = haralick_all(
+        numpy.ascontiguousarray(labels), numpy.ascontiguousarray(levels), offsets
+    )
     return _pack(features, scale, gray_levels)

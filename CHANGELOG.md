@@ -12,6 +12,9 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- NumPy `texture` accepts a batch (a list/tuple of images or a 4D
+  `(B, Z, Y, X)` array) and returns one result per image. Numba texture builds
+  every object's crop in one kernel call and measures batches on threads.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
   and processes them sequentially.
