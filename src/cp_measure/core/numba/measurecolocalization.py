@@ -14,6 +14,8 @@ NumPy's scale preparation and measures all objects in one compiled pass whose
 sums reproduce NumPy's; no combined featurizer dispatch is introduced here.
 """
 
+import inspect
+
 import numpy
 from numpy.typing import NDArray
 
@@ -147,6 +149,7 @@ def _featurize(
     compute_rwc,
     build,
     ref,
+    ref_ind,
     *,
     force_reference=False,
     **kwargs,
@@ -189,6 +192,10 @@ def _featurize(
         res = _run(m, p1, p2, frac, compute_rwc, compute_pearson, frac32, ranks, chunk)
         return m, p1, p2, res
 
+    # Kwargs the single-object reference accepts (e.g. thr/precision), for the
+    # per-object fallback below; pearson's takes none.
+    ind_params = set(inspect.signature(ref_ind).parameters)
+
     def finish(staged):
         # Reference fallbacks (and their warnings) on the calling thread, in order.
         m, p1, p2, res = staged
@@ -199,8 +206,23 @@ def _featurize(
         ):
             return ref(p1, p2, m, **kwargs)
         arrays = build(res)
-        if not all(numpy.isfinite(values).all() for values in arrays.values()):
-            return ref(p1, p2, m, **kwargs)
+        # The kernel reproduces the reference for well-defined objects, so only
+        # objects whose kernel result is non-finite are recomputed, one at a time,
+        # with the single-object reference. A whole-image reference pass on any one
+        # bad object (a single degenerate cell is common on real FOVs) used to
+        # discard the kernel result for every object. Labels are contiguous 1..N, so
+        # object index k is label k + 1; one object's pixels are the same set whether
+        # gathered per-label or by boolean mask, so this matches the old full pass.
+        bad = numpy.zeros(next(iter(arrays.values())).shape[0], dtype=bool)
+        for values in arrays.values():
+            bad |= ~numpy.isfinite(values)
+        if bad.any():
+            ind_kwargs = {k: v for k, v in kwargs.items() if k in ind_params}
+            arrays = {key: numpy.array(values) for key, values in arrays.items()}
+            for k in numpy.nonzero(bad)[0]:
+                obj = ref_ind(p1, p2, m == (k + 1), **ind_kwargs)
+                for key in arrays:
+                    arrays[key][k] = obj[key]
         return arrays
 
     items = [(m, p1, p2) for (m, p1, _), (_, p2, _) in zip(first, second)]
@@ -247,7 +269,14 @@ def get_correlation_pearson(
         return {F_CORRELATION_FORMAT: res[0], F_SLOPE_FORMAT: res[1]}
 
     return _featurize(
-        pixels_1, pixels_2, masks, 15, False, build, reference.get_correlation_pearson
+        pixels_1,
+        pixels_2,
+        masks,
+        15,
+        False,
+        build,
+        reference.get_correlation_pearson,
+        reference.get_correlation_pearson_ind,
     )
 
 
@@ -270,6 +299,7 @@ def get_correlation_manders_fold(
         False,
         build,
         reference.get_correlation_manders_fold,
+        reference.get_correlation_manders_fold_ind,
         thr=thr,
         precision=precision,
     )
@@ -299,6 +329,7 @@ def get_correlation_rwc(
         True,
         build,
         reference.get_correlation_rwc,
+        reference.get_correlation_rwc_ind,
         force_reference=rank_scope == "object_set",
         thr=thr,
         precision=precision,
@@ -329,6 +360,7 @@ def get_correlation_overlap(
         False,
         build,
         reference.get_correlation_overlap,
+        reference.get_correlation_overlap_ind,
         thr=thr,
         precision=precision,
     )
