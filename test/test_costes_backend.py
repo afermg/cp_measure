@@ -564,6 +564,28 @@ def test_costes_resumed_bisection_matches_reference():
     parity(a, b, np.ones(a.shape, int), scale_max=255, scipy_ties=True)
 
 
+def test_costes_image_kernel_returns_pixels_only_for_replays():
+    """The per-image kernel hands its grouped pixels back only when an object
+    needs the reference, and matches grouping then searching separately."""
+    from cp_measure.core.numba._costes import costes_faster, costes_faster_image
+    from cp_measure.primitives._segment_numba import group_pairs, numpy_sum_chunk
+
+    tie = np.array([[[2, 2, 4, 4, 0, 7, 5, 6, 0, 5], [4, 2, 6, 3, 1, 6, 8, 8, 8, 0]]])
+    masks = np.ones((1, 1, 10), np.int32)
+    chunk = numpy_sum_chunk()
+    for defer, replayed in ((True, True), (False, False)):
+        a, b = (tie[:, i : i + 1] / 255 for i in (0, 1))
+        got = costes_faster_image(masks, a, b, 255.0, defer, chunk)
+        g1, g2, offsets = group_pairs(masks, a, b)
+        expected = costes_faster(g1, g2, offsets, 255.0, defer, chunk)
+        for value, want in zip(got[:4], expected):
+            np.testing.assert_array_equal(value, want)
+        np.testing.assert_array_equal(got[6], offsets)
+        assert got[4].size == got[5].size == (10 if replayed else 0)
+        if replayed:  # canonicalized in place, as costes_faster leaves them
+            np.testing.assert_array_equal(got[4], g1)
+
+
 def test_costes_kernel_decides_ties_by_default():
     """By default the kernel decides an exact-zero tie and a near-constant subset
     itself: no SciPy call, no SciPy warning, and the same result every run."""

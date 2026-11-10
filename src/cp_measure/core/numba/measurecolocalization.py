@@ -31,7 +31,7 @@ from cp_measure.core.measurecolocalization import (
     M_FAST,
     M_FASTER,
 )
-from cp_measure.core.numba._colocalization import coloc_per_object, dense_ranks_grouped
+from cp_measure.core.numba._colocalization import channel_ranks, coloc_image
 from cp_measure.core.numba._costes import (
     CONSTANT_CHANNEL,
     EMPTY_OBJECT,
@@ -48,10 +48,10 @@ from cp_measure.core.numba._costes import (
     _bisection_steps,
     _coefficients,
     _moment_totals,
-    costes_faster,
-    costes_linear,
+    costes_faster_image,
+    costes_linear_image,
 )
-from cp_measure.primitives._segment_numba import group_pairs, numpy_sum_chunk
+from cp_measure.primitives._segment_numba import numpy_sum_chunk
 from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import each_volume, is_batch, memory_key, native
 
@@ -69,22 +69,12 @@ _UNDEFINED_REASONS = {
 _KERNEL_DTYPES = (numpy.dtype(numpy.float64), numpy.dtype(numpy.float32))
 
 
-def _grouped(masks_zyx, pixels_1_zyx, pixels_2_zyx):
-    """Each object's pixels of both channels as contiguous float64 blocks.
-
-    Returns ``(g1, g2, offsets)``: object ``k`` owns ``g1[offsets[k] : offsets[k + 1]]``,
-    in raster order like the reference's per-label extraction.
-    """
+def _kernel_labels(masks):
+    """Contiguous native integer labels, without copying them if they are."""
     # Numba requires native-endian labels; convert values, never reinterpret or
-    # byteswap the caller's array in place. Native contiguous inputs stay zero-copy.
-    masks = numpy.ascontiguousarray(masks_zyx, dtype=masks_zyx.dtype.newbyteorder("="))
-    if not numpy.issubdtype(masks.dtype, numpy.integer):
-        masks = masks.astype(numpy.intp)
-    # Labels are contiguous 1..N by contract (see cp_measure._sanitize), so the
-    # segment index is label - 1. The kernel widens float32 pixels itself.
-    return group_pairs(
-        masks, _kernel_pixels(pixels_1_zyx), _kernel_pixels(pixels_2_zyx)
-    )
+    # byteswap the caller's array in place.
+    masks = numpy.ascontiguousarray(masks, dtype=masks.dtype.newbyteorder("="))
+    return masks if masks.dtype.kind in "iu" else masks.astype(numpy.intp)
 
 
 def _kernel_pixels(pixels):
@@ -104,7 +94,7 @@ def _run(
     ranks=(None, None),
     chunk=0,
 ):
-    """Flatten one ``(Z, Y, X)`` image triple and run the fused kernel.
+    """Group one ``(Z, Y, X)`` image triple and run the fused kernel, in one call.
 
     Returns the nine per-object arrays from ``coloc_per_object`` (empty when the
     image holds no objects).
@@ -114,32 +104,27 @@ def _run(
     ``chunk`` is ``numpy_sum_chunk()``, read by the caller on its own thread
     (``np.setbufsize`` is thread-local, so worker threads would read the default).
     """
-    g1, g2, offsets = _grouped(masks_zyx, pixels_1_zyx, pixels_2_zyx)
-    round32 = tuple(
-        frac32 is not None and p.dtype == numpy.float32
-        for p in (pixels_1_zyx, pixels_2_zyx)
-    )
-    # Pearson's means use NumPy's pairwise summation (see coloc_per_object).
-    return coloc_per_object(
-        g1,
-        g2,
-        offsets,
-        offsets.size - 1,
+    # Pearson's means use NumPy's pairwise summation (see coloc_per_object). A
+    # Python float holds the float32 fraction exactly.
+    return coloc_image(
+        _kernel_labels(masks_zyx),
+        _kernel_pixels(pixels_1_zyx),
+        _kernel_pixels(pixels_2_zyx),
         thr_frac,
         compute_rwc,
         compute_pearson,
         chunk,
-        numpy.float32(0) if frac32 is None else frac32,
-        round32,
+        0.0 if frac32 is None else float(frac32),
+        frac32 is not None and pixels_1_zyx.dtype == numpy.float32,
+        frac32 is not None and pixels_2_zyx.dtype == numpy.float32,
         *ranks,
     )
 
 
 def _channel_ranks(mask, pixels):
-    """One channel's RWC ranks over the object blocks of ``mask``, as ``_run`` groups
-    them; ``None`` for an image without objects."""
-    g, _, offsets = _grouped(mask, pixels, pixels)
-    return dense_ranks_grouped(g, offsets) if offsets.size > 1 else None
+    """One channel's RWC ranks over the object blocks of ``mask``, as ``_run``
+    groups them."""
+    return channel_ranks(_kernel_labels(mask), _kernel_pixels(pixels))
 
 
 def _float32_fraction(threshold):
@@ -185,11 +170,8 @@ def _featurize(
     second, _ = each_volume(masks, pixels_2)
 
     def compute(item):
-        # Kernel work only (the GIL is released): map_images runs batches on threads.
-        m, p1, p2 = item
-        ranks = tuple(shared.get((memory_key(m), memory_key(p))) for p in (p1, p2))
-        if None in ranks:
-            ranks = (None, None)
+        # One kernel call (the GIL is released): map_images runs batches on threads.
+        (m, p1, p2), ranks = item
         # big-endian channels would otherwise miss the kernel dtypes
         p1, p2 = native(p1), native(p2)
         if ref is not reference.get_correlation_pearson:
@@ -222,29 +204,37 @@ def _featurize(
         return arrays
 
     items = [(m, p1, p2) for (m, p1, _), (_, p2, _) in zip(first, second)]
+    ranks = [(None, None)] * len(items)
     # RWC's rank sort dominates it. In a batch of channel pairs each channel recurs
     # (once per pair it is in), so rank each (mask, channel) once, on threads, and
     # let every pair read the ranks. Ranks of the exactly widened float64 values
-    # equal those of the input, so they are keyed on the caller's arrays.
-    shared = {}
+    # equal those of the input, so they are keyed on the caller's arrays, here on
+    # the calling thread.
     if compute_rwc and not force_reference and len(items) > 1:
+        keys = [
+            [(memory_key(m), memory_key(p)) for p in (p1, p2)] for m, p1, p2 in items
+        ]
         channels = {}
-        for m, p1, p2 in items:
-            for p in (p1, p2):
+        for (m, p1, p2), pair in zip(items, keys):
+            for p, key in zip((p1, p2), pair):
                 if p.dtype in _KERNEL_DTYPES or precision == "float64":
-                    channels.setdefault((memory_key(m), memory_key(p)), (m, p))
-        keys = list(channels)
+                    channels.setdefault(key, (m, p))
+        unique = list(channels)
         shared = dict(
             zip(
-                keys,
+                unique,
                 map_images(
                     lambda k: _channel_ranks(*channels[k]),
-                    keys,
-                    pixels=sum(channels[k][0].size for k in keys),
+                    unique,
+                    pixels=sum(channels[k][0].size for k in unique),
                 ),
             )
         )
-    staged = map_images(compute, items, pixels=sum(m.size for m, _, _ in items))
+        found = [tuple(shared.get(key) for key in pair) for pair in keys]
+        ranks = [r if None not in r else (None, None) for r in found]
+    staged = map_images(
+        compute, list(zip(items, ranks)), pixels=sum(m.size for m, _, _ in items)
+    )
     return unwrap([finish(s) for s in staged])
 
 
@@ -428,34 +418,35 @@ def get_correlation_costes(
         # Per-image preparation and kernel work (the kernel releases the GIL):
         # map_images runs batches on threads, with no whole-batch float64 copy.
         p1, p2, mask = item
-        first, second, scale = reference._prepare_costes_inputs(p1, p2, scale_max)
+        first, second = numpy.asarray(p1), numpy.asarray(p2)
+        scale = reference._costes_scale(first, second, scale_max)
+        # The kernel widens float32/float64 pixels itself; others convert here.
+        first, second = (
+            p if p.dtype in _KERNEL_DTYPES else reference._costes_float64(p, scale)
+            for p in (first, second)
+        )
         labels = numpy.asarray(mask)
-        if labels.shape != first.shape or not numpy.issubdtype(
-            labels.dtype, numpy.integer
-        ):
+        if labels.shape != first.shape or labels.dtype.kind not in "iu":
             raise ValueError(
                 "Costes labels must be an integer array matching the images"
             )
         if labels.ndim not in (2, 3):
             raise ValueError(f"Costes expects 2D or 3D images, got {labels.ndim}D")
-        zyx = (labels, first, second)
         if labels.ndim != 3:
-            zyx = (labels[None], first[None], second[None])
-        g1, g2, offsets = _grouped(*zyx)
+            labels, first, second = labels[None], first[None], second[None]
+        zyx = (_kernel_labels(labels), _kernel_pixels(first), _kernel_pixels(second))
+        # One kernel call; the grouped pixels come back only for replays.
         states = None
         if fast_costes == M_FASTER:
-            c1, c2, status, states = costes_faster(
-                g1, g2, offsets, float(scale), scipy_ties, chunk
+            c1, c2, status, states, g1, g2, offsets = costes_faster_image(
+                *zyx, float(scale), scipy_ties, chunk
             )
         else:
             accurate = fast_costes == M_ACCURATE
-            c1, c2, status = costes_linear(
-                g1, g2, offsets, float(scale), accurate, scipy_ties, chunk
+            c1, c2, status, g1, g2, offsets = costes_linear_image(
+                *zyx, float(scale), accurate, scipy_ties, chunk
             )
-        # Keep the grouped pixels only for objects the reference must decide.
-        needed = ((status == REPLAY) | (status == RESUME)).any()
-        replay = (g1, g2) if needed else (None, None)
-        return *replay, offsets, c1, c2, status, states, scale
+        return g1, g2, offsets, c1, c2, status, states, scale
 
     def finish(staged):
         g1, g2, offsets, c1, c2, status, states, scale = staged
