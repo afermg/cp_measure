@@ -34,7 +34,7 @@ def test_small_background_keeps_finite_coefficients(backend, mode):
 
 @pytest.mark.parametrize("backend", ["numpy", "numba"])
 @pytest.mark.parametrize("mode", [ref.M_FASTER, ref.M_FAST, ref.M_ACCURATE])
-def test_no_candidate_and_zero_denominators_remain_undefined(backend, mode):
+def test_no_candidate_fallback_still_checks_denominators(backend, mode):
     if backend == "numba":
         if not HAS_NUMBA:
             pytest.skip("numba not installed")
@@ -49,12 +49,10 @@ def test_no_candidate_and_zero_denominators_remain_undefined(backend, mode):
             first, second, np.ones(first.shape, int), scale_max=255, fast_costes=mode
         )
     values = np.array(list(result.values())).ravel()
-    assert np.isnan(values).all()
-    assert len(recorded) == 1
-    assert recorded[0].category is RuntimeWarning
-    reason = (
-        "no finite nonnegative background correlation found"
-        if mode == ref.M_FASTER
-        else "zero above-threshold intensity denominator"
-    )
-    assert str(recorded[0].message) == "Undefined Costes result: " + reason
+    if mode == ref.M_FASTER:
+        np.testing.assert_allclose(values, [3 / 82, 1.0])
+        assert not recorded
+    else:
+        assert np.isnan(values).all()
+        assert len(recorded) == 1
+        assert "zero above-threshold intensity denominator" in str(recorded[0].message)
