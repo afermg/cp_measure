@@ -72,3 +72,14 @@ def test_map_images_nested_in_a_pool_thread_runs_serially():
 
     big = 64 * PIXELS_PER_WORKER
     assert all(map_images(inner, range(64), pixels=big))
+
+
+def test_usable_cpus_without_numba(monkeypatch):
+    """The pool size does not need numba, which is optional: the NumPy paths
+    (e.g. the featurizer's mask relabelling) use the pool too."""
+    import sys
+
+    from cp_measure.primitives.parallel import _usable_cpus
+
+    monkeypatch.setitem(sys.modules, "numba", None)  # makes `import numba` fail
+    assert _usable_cpus() >= 1
