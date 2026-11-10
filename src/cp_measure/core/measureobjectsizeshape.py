@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Callable, Optional
 
 from numpy.typing import NDArray
 
@@ -615,6 +615,19 @@ def get_sizeshape(
             new_features=new_features,
             spacing=spacing,
         )
+    return _get_sizeshape(masks, pixels, calculate_advanced, new_features, spacing)
+
+
+def _get_sizeshape(
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None,
+    calculate_advanced: bool,
+    new_features: bool,
+    spacing: Optional[tuple[float, ...]],
+    convex_volume: Optional[Callable[[NDArray], NDArray[numpy.floating]]] = None,
+) -> dict[str, NDArray[numpy.floating]]:
+    """:func:`get_sizeshape` for one image. ``convex_volume(labels)``, when given,
+    replaces regionprops' 3D ``area_convex`` (and the ``solidity`` derived from it)."""
     masks, pixels = _single_slice_inputs(masks, pixels)
     # Properties available for both 2d and 3d
     desired_properties = [
@@ -735,9 +748,16 @@ def get_sizeshape(
             }
 
     else:
+        replaced = ("area_convex", "solidity") if convex_volume is not None else ()
         props = skimage.measure.regionprops_table(
-            labels, pixels, properties=desired_properties
+            labels,
+            pixels,
+            properties=[p for p in desired_properties if p not in replaced],
         )
+        if convex_volume is not None:
+            props["area_convex"] = convex_volume(labels)
+            if "solidity" in desired_properties:
+                props["solidity"] = props["area"] / props["area_convex"]
 
         # SurfaceArea
         distinct_labels = numpy.unique(labels[labels > 0])
