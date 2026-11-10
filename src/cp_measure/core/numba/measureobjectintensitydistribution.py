@@ -41,6 +41,7 @@ from cp_measure.core.numba._radial import (
     radial_object,
 )
 from cp_measure.core.numba._zernike import (
+    _pixel_tuple,
     zernike_per_image,
 )
 from cp_measure.primitives._edt_numba import distance_transform_edt
@@ -180,14 +181,17 @@ def _radial_measure(
             )
             for p in channels
         ]
-    # (C, H, W); one image's (1, H, W) view needs no copy. Numba has no float16;
-    # widening is exact (the kernel reads float64).
-    stack = channels[0] if len(channels) == 1 else numpy.stack([p[0] for p in channels])
-    stack = native(stack)
-    if stack.dtype == numpy.float16:
-        stack = stack.astype(numpy.float64)
+    # Per-channel (H, W) views, no (C, H, W) copy. numba has no float16, so widen it
+    # exactly to float64 first (the kernel reads float64 either way); _pixel_tuple then
+    # makes the channels one numba type (same-dtype views, or float64 copies for a
+    # mixed batch), as the Zernike backend does.
+    chans = [
+        p[0].astype(numpy.float64) if p.dtype == numpy.float16 else p[0]
+        for p in channels
+    ]
+    pix_tuple = _pixel_tuple(chans)
     frac_at_d, mean_frac, wedge_sums, wedge_counts, fallback = radial_all(
-        numpy.ascontiguousarray(native(labels)), stack, n, scaled, bin_count, radius
+        numpy.ascontiguousarray(native(labels)), pix_tuple, n, scaled, bin_count, radius
     )
     # A crop without background (an object filling its image-clipped box) gets
     # scipy's distance transform, whose result for that case differs.
