@@ -41,7 +41,7 @@ from cp_measure.core.measureobjectintensity import (
 )
 from cp_measure.core.numba._intensity import N_BASE, N_EDGE, fill_intensity_2d
 from cp_measure.primitives.parallel import map_images
-from cp_measure.primitives.shapes import native, to_bzyx
+from cp_measure.primitives.shapes import each_volume, native
 from cp_measure.primitives._segment_numba import (
     flatten_numba,
     inner_boundary,
@@ -115,61 +115,27 @@ def get_intensity(
     ``legacy=True`` retains the original quartiles and rank-dependent MAD;
     a singleton-Z image uses the 3D convention.
     """
-    masks_is_seq = isinstance(masks, (list, tuple))
-    pixels_is_seq = isinstance(pixels, (list, tuple))
-    if masks_is_seq != pixels_is_seq:
-        raise ValueError("masks and pixels must both be sequences, or both arrays")
-    if pixels_is_seq:
-        if len(masks) != len(pixels):
-            raise ValueError("masks and pixels must have matching batch sizes")
-        if any(numpy.shape(m) != numpy.shape(p) for m, p in zip(masks, pixels)):
-            raise ValueError("labels and pixels must have matching shapes and rank")
-    elif numpy.shape(masks) != numpy.shape(pixels):
-        raise ValueError("labels and pixels must have matching shapes and rank")
+    # each_volume validates the batch once (matching shapes and rank, ragged and
+    # empty rejection) and yields per-image (Z, Y, X) views, the same normalizer the
+    # other numba families use, instead of a hand-rolled copy of that logic.
+    items, unwrap = each_volume(masks, pixels)
 
-    is_batch = pixels_is_seq or numpy.ndim(pixels) == 4
-    if is_batch:
-        if len(pixels) == 0:
-            raise ValueError("intensity batches must not be empty")
-        if pixels_is_seq and any(
-            numpy.shape(p) != numpy.shape(pixels[0]) for p in pixels
-        ):
-            raise ValueError("all images in a batch must have the same shape")
-        pairs = zip(masks, pixels)
-    else:
-        pairs = zip([masks], [pixels])
-
-    # Fast path: a list/tuple batch of 2D images runs the 2D kernel per image on
-    # threads (no batch copy). A 4D (B, 1, Y, X) array is a batch of singleton-Z
-    # volumes (spatial rank 3), so it takes the volume path below; the 2D kernel's
-    # MAD fraction (1/2) would be wrong for it.
-    if masks_is_seq and all(numpy.ndim(m) == 2 for m in masks):
-        return map_images(
-            lambda item: _intensity_2d(*item, edge_measurements, legacy),
-            list(zip(masks, pixels)),
-            pixels=sum(numpy.size(m) for m in masks),
-        )
-
-    def one(pair):
-        mask, image = pair
-        spatial_ndim = numpy.ndim(image)
-        if spatial_ndim not in (2, 3):
-            raise ValueError("expected a 2D or 3D image per batch item")
-        # Normalize one image at a time: these are views, not whole-batch copies.
-        masks_zyx, pixels_zyx, _ = to_bzyx(native(mask), native(image))
+    def one(item):
+        mask_zyx, pixels_zyx, spatial_ndim = item
+        # Views, not whole-batch copies; native() fixes byte order for the kernels.
+        mask_zyx, pixels_zyx = native(mask_zyx), native(pixels_zyx)
+        if spatial_ndim == 2:
+            # 2D convention (MAD fraction 1/2). A singleton-Z volume has spatial
+            # rank 3 and keeps the 3D convention below.
+            return _intensity_2d(mask_zyx[0], pixels_zyx[0], edge_measurements, legacy)
         return _intensity_volume(
-            masks_zyx[0],
-            pixels_zyx[0],
-            edge_measurements,
-            legacy,
-            spatial_ndim=spatial_ndim,
+            mask_zyx, pixels_zyx, edge_measurements, legacy, spatial_ndim=spatial_ndim
         )
 
     # Volumes are independent and the segment kernels release the GIL, so
     # map_images runs a batch on threads.
-    items = list(pairs)
-    results = map_images(one, items, pixels=sum(numpy.size(m) for m, _ in items))
-    return results if is_batch else results[0]
+    results = map_images(one, items, pixels=sum(m.size for m, _, _ in items))
+    return unwrap(results)
 
 
 def _intensity_volume(
