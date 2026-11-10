@@ -19,7 +19,7 @@ never the kernel.
 import numpy as np
 from numba import njit
 
-from cp_measure.primitives._segment_numba import numpy_sum
+from cp_measure.primitives._segment_numba import group_pairs, numpy_sum
 
 
 @njit(cache=True, nogil=True)
@@ -221,3 +221,46 @@ def coloc_per_object(
                 rwc2[k] = sum_siw_c / tot_si
 
     return corr, slope, m1, m2, overlap, k1, k2, rwc1, rwc2
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def coloc_image(
+    masks,
+    pix1,
+    pix2,
+    thr_frac,
+    compute_rwc,
+    numpy_means,
+    chunk,
+    frac32,
+    round1,
+    round2,
+    ranks1=None,
+    ranks2=None,
+):
+    """:func:`coloc_per_object` of one ``(Z, Y, X)`` image triple, grouped by
+    :func:`group_pairs`, in one GIL-free call: the grouped pixels are allocated
+    and freed here and never reach Python."""
+    g1, g2, offsets = group_pairs(masks, pix1, pix2)
+    return coloc_per_object(
+        g1,
+        g2,
+        offsets,
+        offsets.size - 1,
+        thr_frac,
+        compute_rwc,
+        numpy_means,
+        chunk,
+        frac32,
+        (round1, round2),
+        ranks1,
+        ranks2,
+    )
+
+
+@njit(cache=True, nogil=True)
+def channel_ranks(masks, pixels):
+    """:func:`dense_ranks_grouped` of one channel, grouped as :func:`coloc_image`
+    groups it, in one GIL-free call."""
+    g, _, offsets = group_pairs(masks, pixels, pixels)
+    return dense_ranks_grouped(g, offsets)
