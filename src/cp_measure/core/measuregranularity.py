@@ -235,6 +235,13 @@ def get_granularity(
     # Promote before every resampling/morphology/subtraction stage, not just
     # the final reduction. Preserve the stored acquisition values exactly.
     pixels = promote_float_pixels(pixels, precision)
+    # Integer images are measured as their exact float64 values: subtracting the
+    # background in an integer dtype wraps (unsigned) or rounds where it exceeds a
+    # pixel, so cast up front, before any resampling/morphology/subtraction. This
+    # mirrors the numba backend (measuregranularity._granularity_image); float
+    # inputs are already float and unchanged.
+    if pixels.dtype.kind in "biu":
+        pixels = pixels.astype(numpy.float64)
     #
     # Downsample the image and mask
     #
