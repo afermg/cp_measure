@@ -67,61 +67,6 @@ def _to_zyx(arr: NDArray) -> NDArray:
     raise ValueError(f"expected a 2D or 3D image, got ndim={a.ndim}")
 
 
-def _stack(seq, what: str) -> NDArray:
-    """Stack a list/tuple of equal-shape images into one array; reject ragged."""
-    try:
-        arr = numpy.asarray(seq)
-    except ValueError:
-        arr = None
-    if arr is None or arr.dtype == object:
-        raise ValueError(
-            f"all {what} in a batch must have the same shape; got a ragged batch. "
-            "Normalise your images to a common shape first — ragged batches are "
-            "not supported."
-        )
-    return arr
-
-
-def to_bzyx(masks, pixels):
-    """Normalise ``(masks, pixels)`` to the canonical batch-of-volumes form.
-
-    Returns ``(masks_bzyx, pixels_bzyx, unwrap)`` where ``masks_bzyx`` and
-    ``pixels_bzyx`` are ``(B, Z, Y, X)`` arrays (one ``(Z, Y, X)`` volume per
-    image), and ``unwrap(results)`` maps a length-``B`` list of per-image results
-    back to a single result (non-batch input) or the list itself (batch input).
-    """
-    masks_is_seq = isinstance(masks, (list, tuple))
-    pixels_is_seq = isinstance(pixels, (list, tuple))
-    if masks_is_seq != pixels_is_seq:
-        raise ValueError("masks and pixels must both be sequences, or both arrays")
-
-    if masks_is_seq:
-        m, p = _stack(masks, "masks"), _stack(pixels, "pixels")
-        is_batch = True
-    else:
-        m, p = numpy.asarray(masks), numpy.asarray(pixels)
-        if (m.ndim == 4) != (p.ndim == 4):
-            raise ValueError("masks and pixels must both be 4D for a stacked batch")
-        is_batch = m.ndim == 4
-
-    if is_batch:
-        masks_bzyx = numpy.stack([_to_zyx(x) for x in m])
-        pixels_bzyx = numpy.stack([_to_zyx(x) for x in p])
-    else:
-        masks_bzyx = _to_zyx(m)[numpy.newaxis]
-        pixels_bzyx = _to_zyx(p)[numpy.newaxis]
-
-    if len(masks_bzyx) != len(pixels_bzyx):
-        raise ValueError(
-            f"batch size mismatch: {len(masks_bzyx)} masks vs {len(pixels_bzyx)} images"
-        )
-
-    def unwrap(results):
-        return results if is_batch else results[0]
-
-    return masks_bzyx, pixels_bzyx, unwrap
-
-
 def _reject_ragged(shapes, what: str) -> None:
     """Reject a batch whose images do not all share one shape (incl. rank)."""
     if any(s != shapes[0] for s in shapes[1:]):
@@ -132,23 +77,15 @@ def _reject_ragged(shapes, what: str) -> None:
         )
 
 
-def each_volume(masks, pixels):
-    """Per-item ``(Z, Y, X)`` views of a batch — like :func:`to_bzyx` but WITHOUT
-    stacking, so no whole-batch copy is made.
+def _batch_items(masks, pixels):
+    """Detect the batch structure shared by :func:`each_volume` and :func:`to_bzyx`.
 
-    Returns ``(items, unwrap)`` where ``items`` is a list of
-    ``(mask_zyx, pixels_zyx, spatial_ndim)``: both arrays are views (a 2D image
-    gains a unit Z axis) and ``spatial_ndim`` is the image's original rank (2 or
-    3). ``unwrap(results)`` maps a length-``B`` result list back to a single
-    result (non-batch input) or the list itself (batch input), exactly as
-    :func:`to_bzyx`.
-
-    Shares :func:`to_bzyx`'s contract: ``masks`` and ``pixels`` must have the same
-    batch structure (a 3D array is one volume; a 4D array or a list/tuple is a
-    batch), ragged batches are rejected, and no lower-rank mask is broadcast over a
-    volume. In addition each image's labels and pixels must match in shape and rank
-    (no broadcasting). Unlike :func:`to_bzyx` it never materialises the batch,
-    preserving each array's dtype and avoiding a whole-batch allocation.
+    Returns ``(pairs, is_batch, unwrap)`` where ``pairs`` is a list of
+    ``(mask, pixels)`` at each image's original rank (a 3D array is one volume; a
+    4D array or a list/tuple is a batch), ``is_batch`` says whether the input was a
+    batch, and ``unwrap(results)`` maps a length-``B`` result list back to a single
+    result (non-batch input) or the list itself (batch input). Ragged batches are
+    rejected; no lower-rank mask is broadcast over a volume.
     """
     masks_is_seq = isinstance(masks, (list, tuple))
     pixels_is_seq = isinstance(pixels, (list, tuple))
@@ -163,7 +100,7 @@ def each_volume(masks, pixels):
         if len(masks) == 0:
             raise ValueError("a batch must contain at least one image")
         _reject_ragged([numpy.shape(p) for p in pixels], "images")
-        batch = list(zip(masks, pixels))
+        pairs = list(zip(masks, pixels))
         is_batch = True
     else:
         m, p = numpy.asarray(masks), numpy.asarray(pixels)
@@ -177,20 +114,60 @@ def each_volume(masks, pixels):
                 )
             if len(m) == 0:
                 raise ValueError("a batch must contain at least one image")
-            batch = list(zip(m, p))
+            pairs = list(zip(m, p))
         else:
-            batch = [(m, p)]
-
-    items = []
-    for m, p in batch:
-        if numpy.shape(m) != numpy.shape(p):
-            raise ValueError("labels and pixels must have matching shapes and rank")
-        items.append((_to_zyx(m), _to_zyx(p), numpy.ndim(m)))
+            pairs = [(m, p)]
 
     def unwrap(results):
         return results if is_batch else results[0]
 
+    return pairs, is_batch, unwrap
+
+
+def each_volume(masks, pixels):
+    """Per-item ``(Z, Y, X)`` views of a batch, WITHOUT stacking, so no whole-batch
+    copy is made.
+
+    Returns ``(items, unwrap)`` where ``items`` is a list of
+    ``(mask_zyx, pixels_zyx, spatial_ndim)``: both arrays are views (a 2D image
+    gains a unit Z axis) and ``spatial_ndim`` is the image's original rank (2 or 3).
+    ``unwrap`` is as :func:`_batch_items`.
+
+    Batch structure (matching structure, ragged rejection, no broadcast) comes from
+    :func:`_batch_items`; in addition each image's labels and pixels must match in
+    shape and rank. Preserves each array's dtype and makes no whole-batch
+    allocation.
+    """
+    pairs, _, unwrap = _batch_items(masks, pixels)
+    items = []
+    for m, p in pairs:
+        if numpy.shape(m) != numpy.shape(p):
+            raise ValueError("labels and pixels must have matching shapes and rank")
+        items.append((_to_zyx(m), _to_zyx(p), numpy.ndim(m)))
     return items, unwrap
+
+
+def to_bzyx(masks, pixels):
+    """Normalise ``(masks, pixels)`` to the canonical batch-of-volumes form.
+
+    Returns ``(masks_bzyx, pixels_bzyx, unwrap)`` where ``masks_bzyx`` and
+    ``pixels_bzyx`` are ``(B, Z, Y, X)`` arrays (one ``(Z, Y, X)`` volume per
+    image), and ``unwrap`` is as :func:`_batch_items`.
+
+    Thin wrapper over :func:`each_volume`, sharing its batch contract and ragged
+    rejection. A real batch is stacked into one array; a single image keeps its
+    view (``_to_zyx`` of the caller's array, plus a unit batch axis), because
+    callers index ``[0]`` and rely on it sharing the caller's memory.
+    """
+    items, unwrap = each_volume(masks, pixels)
+    if is_batch(masks):
+        return (
+            numpy.stack([m for m, _, _ in items]),
+            numpy.stack([p for _, p, _ in items]),
+            unwrap,
+        )
+    m, p, _ = items[0]
+    return m[numpy.newaxis], p[numpy.newaxis], unwrap
 
 
 def memory_key(array) -> tuple:

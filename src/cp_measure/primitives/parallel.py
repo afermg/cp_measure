@@ -102,17 +102,30 @@ def map_images(
     # uses at most ``workers`` pool threads and slow images do not hold up a queue.
     results: list = [None] * len(items)
     indices = iter(range(len(items)))
+    errors: dict[int, Exception] = {}
     lock = threading.Lock()
 
     def runner() -> None:
         while True:
             with lock:
-                i = next(indices, None)
+                # A sibling already failed: stop pulling new items so no runner
+                # keeps working after the call is about to raise.
+                i = None if errors else next(indices, None)
             if i is None:
                 return
-            results[i] = func(items[i])
+            try:
+                results[i] = func(items[i])
+            except Exception as exc:  # noqa: BLE001 - re-raised after every runner joins
+                with lock:
+                    errors[i] = exc
+                return
 
     pool = _pool(os.getpid())
+    # Wait for every runner before returning or raising, so none outlives the call.
     for future in [pool.submit(runner) for _ in range(workers)]:
-        future.result()  # raises the runner's exception, if any
+        future.result()  # surfaces a fault in the runner machinery itself
+    if errors:
+        # Deterministic: the lowest-index item's exception, not whichever thread
+        # happened to finish first.
+        raise errors[min(errors)]
     return results
