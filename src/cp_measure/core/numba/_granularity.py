@@ -15,8 +15,8 @@ allocates its own outputs and only reads its inputs, so concurrent calls are saf
 - :func:`reconstruction_by_dilation_2d` — morphological reconstruction by dilation
   (4-connectivity) via the Vincent (1993) FIFO-hybrid, matching
   ``skimage.morphology.reconstruction(seed, mask, footprint=disk(1))``.
-- :func:`bilinear_resample_2d` — bit-exact ``scipy.ndimage.map_coordinates``
-  order 1 on the 2D path's subsample and background grids.
+- :func:`bilinear_resample_2d` / :func:`trilinear_resample_3d` — bit-exact
+  ``scipy.ndimage.map_coordinates`` order 1 on the subsample and background grids.
 
 Borders match skimage's footprint ops via ``edge`` (clamp) padding applied on the
 host before the kernel; min/max selection makes the result border-mode-insensitive
@@ -612,9 +612,17 @@ def granularity_spectrum_2d(
     give 0 / 0 = NaN, as ``scipy.ndimage.mean``); the arithmetic is the NumPy
     assembly's, element by element.
     """
-    n = counts.size
-    sums = label_sums(mask, orig_pixels, n)
+    sums = label_sums(mask, orig_pixels, counts.size)
     steps = spectrum_sums_2d(pixels, ng, starts, cells, values)
+    return _spectrum_values(sums, steps, counts)
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def _spectrum_values(sums, steps, counts):
+    """``(ng, n)`` granularity values from the start sums ``(n + 1,)`` and the
+    step sums ``(ng, n + 1)`` (index 0 is background) of each label."""
+    ng = steps.shape[0]
+    n = counts.size
     out = np.empty((ng, n))
     for lab in range(n):
         current = sums[lab + 1] / counts[lab]
@@ -631,6 +639,140 @@ def granularity_spectrum_2d(
 # The same morphology one dimension up: ``ball`` footprints instead of ``disk``,
 # 6-connectivity instead of 4. The per-object means follow the baseline's 3D
 # upsample + ``ndimage.mean`` voxel by voxel (:func:`upsample_label_sums_3d`).
+
+
+@njit(cache=True, nogil=True)
+def trilinear_resample_3d(
+    image, depth, rows, cols, factor_z, factor_y, factor_x, divide
+):
+    """:func:`bilinear_resample_2d` one dimension up: bit-exact
+    ``map_coordinates(image, (k, i, j), order=1)`` on a ``(depth, rows, cols)``
+    grid of coordinates ``k / factor`` (``divide``) or ``k * factor`` per axis.
+    Corners are summed in C order, each ``value * w_z * w_y * w_x``."""
+    D, H, W = image.shape
+    out = np.empty((depth, rows, cols), image.dtype)
+    y0 = np.empty(rows, np.int64)
+    y1 = np.empty(rows, np.int64)
+    wy = np.empty((rows, 2))
+    for y in range(rows):
+        cy = y / factor_y if divide else y * factor_y
+        y0[y], y1[y], wy[y, 0], wy[y, 1] = _order1_taps(cy, H)
+    x0 = np.empty(cols, np.int64)
+    x1 = np.empty(cols, np.int64)
+    wx = np.empty((cols, 2))
+    for x in range(cols):
+        cx = x / factor_x if divide else x * factor_x
+        x0[x], x1[x], wx[x, 0], wx[x, 1] = _order1_taps(cx, W)
+    for z in range(depth):
+        cz = z / factor_z if divide else z * factor_z
+        z0, z1, wz0, wz1 = _order1_taps(cz, D)
+        for y in range(rows):
+            for x in range(cols):
+                if z0 < 0 or y0[y] < 0 or x0[x] < 0:
+                    out[z, y, x] = 0.0
+                    continue
+                acc = 0.0
+                for a in range(2):
+                    za = z1 if a else z0
+                    wza = wz1 if a else wz0
+                    for b in range(2):
+                        yb = y1[y] if b else y0[y]
+                        for c in range(2):
+                            xc = x1[x] if c else x0[x]
+                            acc += (
+                                np.float64(image[za, yb, xc])
+                                * wza
+                                * wy[y, b]
+                                * wx[x, c]
+                            )
+                out[z, y, x] = acc
+    return out
+
+
+@njit(cache=True, nogil=True)
+def _pad_edge_3d(a, r):
+    """``np.pad(a, r, mode="edge")`` of a volume, as float64."""
+    D, H, W = a.shape
+    P = np.empty((D + 2 * r, H + 2 * r, W + 2 * r), np.float64)
+    for k in range(D + 2 * r):
+        sk = min(max(k - r, 0), D - 1)
+        for i in range(H + 2 * r):
+            si = min(max(i - r, 0), H - 1)
+            for j in range(W + 2 * r):
+                P[k, i, j] = a[sk, si, min(max(j - r, 0), W - 1)]
+    return P
+
+
+@njit(cache=True, nogil=True)
+def _ball_opening(image, radius):
+    """Greyscale opening by ``ball(radius)`` in ``image``'s dtype, as
+    :func:`ball_erosion_3d` then :func:`ball_dilation_3d` cast back (exactly: the
+    extrema are input values)."""
+    out = np.empty(image.shape, image.dtype)
+    if radius <= 0:
+        out[:] = image
+        return out
+    hw = _ball_halfwidths(radius)
+    eroded = _ball_reduce(_pad_edge_3d(image, radius), radius, hw, False)
+    out[:] = _ball_reduce(_pad_edge_3d(eroded, radius), radius, hw, True)
+    return out
+
+
+@njit(cache=True, nogil=True)
+def subtract_background_3d(pixels, radius, resample, factor, scale_z, scale_y, scale_x):
+    """The 3D path's background subtraction in one call, in ``pixels``' dtype.
+
+    With ``resample``, follows the baseline (and CellProfiler) 3D quirk: the
+    background is sampled on the subsample grid, ``pixels``' own shape at
+    coordinates ``k / factor`` (``factor`` is the subsample size), opened by
+    ``ball(radius)`` and resampled back at ``k * scale``. Otherwise ``pixels`` is
+    opened directly. The background is subtracted and negatives set to 0.
+    """
+    D, H, W = pixels.shape
+    if resample:
+        small = trilinear_resample_3d(pixels, D, H, W, factor, factor, factor, True)
+        back = trilinear_resample_3d(
+            _ball_opening(small, radius), D, H, W, scale_z, scale_y, scale_x, False
+        )
+    else:
+        back = _ball_opening(pixels, radius)
+    out = np.empty((D, H, W), pixels.dtype)
+    for k in range(D):
+        for i in range(H):
+            for j in range(W):
+                v = pixels[k, i, j] - back[k, i, j]
+                out[k, i, j] = 0.0 if v < 0 else v
+    return out
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def granularity_spectrum_3d(
+    pixels, ng, mask, orig_pixels, counts, scales, round_float32
+):
+    """Granularity values ``(ng, n)`` for labels ``1..n`` of a volume, in one
+    GIL-free call: ball(1) erosion, 6-connectivity reconstruction cascaded under
+    the previous step, and :func:`upsample_label_sums_3d` per step, with the start
+    means taken from ``orig_pixels`` in raster order (as ``label_sums``)."""
+    n = counts.size
+    sums = np.zeros(n + 1)
+    Z, Y, X = mask.shape
+    for z in range(Z):
+        for y in range(Y):
+            for x in range(X):
+                lab = mask[z, y, x]
+                if lab > 0:
+                    sums[lab] += np.float64(orig_pixels[z, y, x])
+    steps = np.empty((ng, n + 1))
+    if ng > 0:
+        # the first step's mask is ``pixels`` in its own dtype, the later ones float64
+        ero = _cross_min_3d(_pad_edge_3d(pixels, 1))
+        rec = reconstruction_by_dilation_3d(ero, pixels)
+        steps[0] = upsample_label_sums_3d(rec, mask, n, scales, round_float32)
+        for g in range(1, ng):
+            ero = _cross_min_3d(_pad_edge_3d(ero, 1))
+            rec = reconstruction_by_dilation_3d(ero, rec)
+            steps[g] = upsample_label_sums_3d(rec, mask, n, scales, round_float32)
+    return _spectrum_values(sums, steps, counts)
 
 
 @njit(cache=True, nogil=True)
@@ -695,14 +837,16 @@ def upsample_label_sums_3d(grid, mask, n, scales, round_float32):
     return sums
 
 
+@njit(cache=True, nogil=True)
 def _ball_halfwidths(radius: int) -> NDArray[np.int64]:
     """``hw[dz + r, dy + r]`` = x half-width of ``skimage.morphology.ball(radius)``'s
     row at offset ``(dz, dy)``, or -1 where the ball has no voxel."""
-    d = np.arange(-radius, radius + 1, dtype=np.float64)
-    rem = radius * radius - d[:, None] ** 2 - d[None, :] ** 2
-    hw = np.full(rem.shape, -1, np.int64)
-    inside = rem >= 0
-    hw[inside] = np.floor(np.sqrt(rem[inside])).astype(np.int64)
+    hw = np.full((2 * radius + 1, 2 * radius + 1), -1, np.int64)
+    for dz in range(-radius, radius + 1):
+        for dy in range(-radius, radius + 1):
+            rem = float(radius * radius - dz * dz - dy * dy)
+            if rem >= 0:
+                hw[dz + radius, dy + radius] = int(np.floor(np.sqrt(rem)))
     return hw
 
 
