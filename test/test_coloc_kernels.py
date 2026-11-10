@@ -135,6 +135,15 @@ def test_numpy_sum_and_var_match_numpy_bitwise(n, bufsize):
         np.setbufsize(previous)
 
 
+def test_numpy_var_singleton_is_nan():
+    """ddof=1 variance of a singleton is 0/0 = NaN (as numpy.var), not a crash:
+    numpy_var carries error_model='numpy' like the other segment kernels, so the
+    degenerate denominator returns NaN instead of raising ZeroDivisionError."""
+    from cp_measure.primitives._segment_numba import numpy_sum_chunk, numpy_var
+
+    assert np.isnan(numpy_var(np.array([3.0]), numpy_sum_chunk()))
+
+
 def _check_numpy_sum_and_var(n):
     from cp_measure.primitives._segment_numba import (
         numpy_sum,

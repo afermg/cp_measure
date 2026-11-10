@@ -22,6 +22,20 @@ def test_map_images_propagates_exceptions():
         map_images(boom, [0, 1, 2, 3])
 
 
+def test_map_images_raises_the_lowest_index_exception():
+    """Several failing items surface the lowest-index one deterministically, not
+    whichever worker finished first; the serial path raises in item order too."""
+
+    def f(x):
+        if x in (3, 7):
+            raise ValueError(f"fail-{x}")
+        return x
+
+    # Size the batch so the threaded path is used when the process may use 2+ CPUs.
+    with pytest.raises(ValueError, match="fail-3"):
+        map_images(f, list(range(8)), pixels=8 * 512 * 512)
+
+
 def test_map_images_sizes_the_pool_by_pixels():
     """A batch with less than two workers' worth of pixels runs on the calling
     thread; a larger one uses threads (when this process may use 2+ CPUs)."""
