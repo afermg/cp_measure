@@ -14,8 +14,11 @@ from cp_measure.core.numba._granularity import (
     bilinear_resample_2d,
     erosion_6conn_3d,
     granularity_spectrum_2d,
+    granularity_spectrum_3d,
     reconstruction_by_dilation_3d,
     subtract_background_2d,
+    subtract_background_3d,
+    trilinear_resample_3d,
     upsample_label_sums_3d,
     disk_dilation_2d,
     disk_erosion_2d,
@@ -439,3 +442,145 @@ def test_upsample_label_sums_3d_bit_exact(seed, dtype):
             / counts
         )
     numpy.testing.assert_array_equal(got, expected)
+
+
+def _grid_volume(shape, dtype, seed, non_finite):
+    volume = numpy.random.default_rng(seed).normal(size=shape).astype(dtype)
+    if non_finite:
+        # inf on the second-to-last plane, row and column (where the zero-weight
+        # tap past the last sample mirrors to), NaN inside
+        last = [n - 2 if n > 1 else 0 for n in shape]
+        volume[last[0], 0, :] = numpy.inf
+        volume[:, last[1], 0] = -numpy.inf
+        volume[0, :, last[2]] = numpy.inf
+        volume[tuple(n // 2 for n in shape)] = numpy.nan
+    return volume
+
+
+def _volume_grids():
+    """(input shape, output shape, per-axis factors, divide) for the three grids
+    the 3D path builds: the subsample (``k / sub`` over ``int(n * sub)``), the
+    background downsample, which reuses that grid on the subsampled volume (the
+    CellProfiler quirk), and the upsample back (``k * (n * isz - 1) / (n - 1)``);
+    plus 1- and 2-sample grids."""
+    cases = []
+    for shape, sub, isz in [
+        ((9, 48, 40), 0.5, 0.25),
+        ((12, 31, 17), 0.25, 0.25),
+        ((5, 23, 41), 0.4, 0.3),
+        ((8, 16, 16), 0.25, 0.5),
+        ((13, 7, 50), 0.3, 0.7),
+    ]:
+        new = tuple(int(n * sub) for n in shape)
+        cases.append((shape, new, (sub,) * 3, True))
+        cases.append((new, new, (sub,) * 3, True))
+        up = tuple((n * isz - 1) / (n - 1) for n in new)
+        cases.append((new, new, up, False))
+    cases.append(((1, 2, 5), (3, 4, 9), (0.0, 1 / 3, 0.5), False))
+    cases.append(((2, 1, 3), (2, 1, 3), (1.0, 1.0, 1.0), True))
+    cases.append(((2, 2, 2), (5, 5, 5), (0.25, 0.25, 0.25), False))
+    return cases
+
+
+@pytest.mark.parametrize("non_finite", [False, True])
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+@pytest.mark.parametrize("case", _volume_grids())
+def test_trilinear_resample_3d_matches_map_coordinates(case, dtype, non_finite):
+    """Bit for bit equal to order-1 ``map_coordinates`` on the 3D path's grids,
+    built with ``mgrid`` as the baseline does, at odd sizes, on 1- and 2-sample
+    axes and with inf/NaN on the edge planes."""
+    in_shape, out_shape, factors, divide = case
+    volume = _grid_volume(in_shape, dtype, 3, non_finite)
+    coords = list(numpy.mgrid[tuple(slice(0, n) for n in out_shape)].astype(float))
+    for axis, factor in enumerate(factors):
+        if divide:
+            coords[axis] = coords[axis] / factor
+        else:
+            coords[axis] *= factor
+    expected = scipy.ndimage.map_coordinates(volume, coords, order=1)
+    got = trilinear_resample_3d(volume, *out_shape, *factors, divide)
+    _assert_same_bits(got, expected)
+
+
+def _background_steps_3d(pixels, radius, subsample_size, sample_size):
+    """The 3D path's background subtraction as NumPy/scipy steps (its old code)."""
+    new_shape = numpy.array(pixels.shape)
+    grid = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1], 0 : new_shape[2]]
+    if sample_size < 1:
+        back_shape = new_shape * sample_size
+        back = scipy.ndimage.map_coordinates(
+            pixels, tuple(grid.astype(float) / subsample_size), order=1
+        )
+    else:
+        back, back_shape = pixels, new_shape
+    dtype = back.dtype
+    back = ball_dilation_3d(ball_erosion_3d(back, radius), radius).astype(dtype)
+    if sample_size < 1:
+        k, i, j = grid.astype(float)
+        k *= (back_shape[0] - 1) / (new_shape[0] - 1)
+        i *= (back_shape[1] - 1) / (new_shape[1] - 1)
+        j *= (back_shape[2] - 1) / (new_shape[2] - 1)
+        back = scipy.ndimage.map_coordinates(back, (k, i, j), order=1)
+    out = pixels.copy()
+    out -= back
+    out[out < 0] = 0
+    return out
+
+
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+@pytest.mark.parametrize(
+    "shape,radius,subsample_size,sample_size",
+    [
+        ((7, 32, 30), 3, 0.25, 0.25),
+        ((4, 12, 10), 2, 0.5, 0.25),
+        ((5, 9, 13), 0, 0.4, 0.5),
+        ((6, 11, 8), 2, 1.0, 0.5),
+        ((3, 10, 10), 2, 0.5, 1.0),
+    ],
+)
+def test_subtract_background_3d_matches_numpy_steps(
+    shape, radius, subsample_size, sample_size, dtype
+):
+    """One kernel call equals, bit for bit, the quirky background resample, ball
+    opening, resample back and clamped subtraction it replaces, in the input dtype."""
+    rng = numpy.random.default_rng(6)
+    pixels = (rng.random(shape) + 2 * rng.random(shape) ** 8).astype(dtype)
+    scales = [(n * sample_size - 1) / (n - 1) for n in shape]
+    got = subtract_background_3d(
+        pixels, radius, sample_size < 1, subsample_size, *scales
+    )
+    expected = _background_steps_3d(pixels, radius, subsample_size, sample_size)
+    _assert_same_bits(got, expected)
+
+
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+def test_granularity_spectrum_3d_matches_numpy_assembly(dtype):
+    """The 3D spectrum kernel equals, bit for bit, the step-by-step loop of
+    erosion, cascaded reconstruction and trilinear readback with the NumPy means."""
+    rng = numpy.random.default_rng(8)
+    pixels = rng.random((4, 9, 8)).astype(dtype)
+    orig = rng.random((9, 19, 17)).astype(dtype)
+    labels = rng.integers(0, 6, size=orig.shape)
+    labels[labels == 3] = 0  # absent label -> NaN
+    n = int(labels.max())
+    counts = numpy.bincount(labels.ravel(), minlength=n + 1)[1:].astype(float)
+    scales = (3 / 8, 8 / 18, 7 / 16)
+    rounding = dtype is numpy.float32
+    ng = 4
+    got = granularity_spectrum_3d(pixels, ng, labels, orig, counts, scales, rounding)
+
+    flat = labels.reshape(-1, labels.shape[-1])
+    with numpy.errstate(invalid="ignore", divide="ignore"):
+        sums = label_sums(flat, orig.astype(numpy.float64).reshape(flat.shape), n)
+        current = sums[1:] / counts
+        start = numpy.maximum(current, numpy.finfo(float).eps)
+        expected = []
+        ero, recon_mask = pixels, pixels
+        for _ in range(ng):
+            ero = erosion_6conn_3d(ero)
+            recon_mask = reconstruction_by_dilation_3d(ero, recon_mask)
+            step = upsample_label_sums_3d(recon_mask, labels, n, scales, rounding)
+            new = step[1:] / counts
+            expected.append((current - new) * 100 / start)
+            current = new
+    _assert_same_bits(got, numpy.array(expected))
