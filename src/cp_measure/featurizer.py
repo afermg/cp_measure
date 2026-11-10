@@ -33,8 +33,6 @@ from cp_measure._sanitize import sanitize_masks
 from cp_measure.primitives.parallel import map_images
 
 # Feature groups that only support 2D spatial data.
-_2D_ONLY = {"radial_distribution", "radial_zernikes", "zernike", "feret"}
-
 _Measurement = Callable[..., list[dict[str, np.ndarray]]]  # batch in, one dict per item
 _Feature = tuple[_Measurement, dict]  # measurement function, keyword arguments
 _CorrelationFeature = tuple[_Measurement, dict, bool]  # plus symmetric-pair flag
@@ -245,38 +243,52 @@ def _featurize_batch(
             for result, output in zip(results, outputs):
                 result.update(output)
 
-        # One call per channel feature: item i * n_ch + c is image i, channel c.
-        # Columns keep the channel-major order.
+        # One call per channel feature, returned channel-major (image i, channel c).
+        # Reshape each flat result to one row of n_ch per image, so the scatter
+        # indexes [i][c] explicitly instead of computing i * n_ch + c; strict=True
+        # fails if the backend returned the wrong count. Columns stay channel-major.
         per_feature = [
-            func(
-                [clean for _, clean, _ in items for _ in range(n_ch)],
-                [image[b, c] for b, _, _ in items for c in range(n_ch)],
-                **params,
+            list(
+                itertools.batched(
+                    func(
+                        [clean for _, clean, _ in items for _ in range(n_ch)],
+                        [image[b, c] for b, _, _ in items for c in range(n_ch)],
+                        **params,
+                    ),
+                    n_ch,
+                    strict=True,
+                )
             )
             for func, params in (channel_feats if n_ch else [])
         ]
         for i, result in enumerate(results):
             for c, ch_name in enumerate(channels):
-                for outputs in per_feature:
-                    for key, values in outputs[i * n_ch + c].items():
+                for rows in per_feature:
+                    for key, values in rows[i][c].items():
                         result[f"{key}__{ch_name}"] = values
 
-        # One call per correlation feature: item i * len(pairs) + p is image i,
-        # channel pair p. Columns keep the pair order.
+        # One call per correlation feature, returned pair-major (image i, pair p);
+        # reshaped to one row of len(pairs) per image so the scatter indexes [i][p].
         for func, params, symmetric in corr_feats:
             iter_fn = itertools.combinations if symmetric else itertools.permutations
             pairs = list(iter_fn(range(n_ch), 2))
             if not pairs:
                 continue
-            outputs = func(
-                pixels_1=[image[b, c] for b, _, _ in items for c, _ in pairs],
-                pixels_2=[image[b, c] for b, _, _ in items for _, c in pairs],
-                masks=[clean for _, clean, _ in items for _ in pairs],
-                **params,
+            rows = list(
+                itertools.batched(
+                    func(
+                        pixels_1=[image[b, c] for b, _, _ in items for c, _ in pairs],
+                        pixels_2=[image[b, c] for b, _, _ in items for _, c in pairs],
+                        masks=[clean for _, clean, _ in items for _ in pairs],
+                        **params,
+                    ),
+                    len(pairs),
+                    strict=True,
+                )
             )
             for i, result in enumerate(results):
                 for p, (ch_i, ch_j) in enumerate(pairs):
-                    for key, values in outputs[i * len(pairs) + p].items():
+                    for key, values in rows[i][p].items():
                         result[f"{key}__{channels[ch_i]}__{channels[ch_j]}"] = values
 
         # Every item uses the same feature lists, and all measurement functions
@@ -376,6 +388,7 @@ def featurize(
     _validate_names(image, masks, channels, objects)
 
     from cp_measure.bulk import (
+        _2D_ONLY,
         get_core_measurements,
         get_core_measurements_3d,
         get_correlation_measurements,
@@ -563,6 +576,8 @@ def _collect_shape_features(config: dict, core_funcs: dict) -> list[_Feature]:
 
 def _warn_2d_only_in_3d(config: dict) -> None:
     """Warn if the config enables 2D-only features for a multi-slice volume."""
+    from cp_measure.bulk import _2D_ONLY
+
     requested = sorted(name for name in _2D_ONLY if config.get(name, False))
     if requested:
         warnings.warn(
