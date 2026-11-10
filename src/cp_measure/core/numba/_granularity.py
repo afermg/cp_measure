@@ -15,6 +15,8 @@ allocates its own outputs and only reads its inputs, so concurrent calls are saf
 - :func:`reconstruction_by_dilation_2d` — morphological reconstruction by dilation
   (4-connectivity) via the Vincent (1993) FIFO-hybrid, matching
   ``skimage.morphology.reconstruction(seed, mask, footprint=disk(1))``.
+- :func:`bilinear_resample_2d` — bit-exact ``scipy.ndimage.map_coordinates``
+  order 1 on the 2D path's subsample and background grids.
 
 Borders match skimage's footprint ops via ``edge`` (clamp) padding applied on the
 host before the kernel; min/max selection makes the result border-mode-insensitive
@@ -24,6 +26,8 @@ for disks (verified bit-exact vs skimage over reflect/symmetric/edge).
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
+
+_EPS = np.finfo(np.float64).eps
 
 
 @njit(cache=True, nogil=True)
@@ -151,6 +155,107 @@ def readback_sums(grid, starts, cells, values):
     return out
 
 
+@njit(cache=True, nogil=True)
+def _order1_taps(c, n):
+    """``map_coordinates(order=1, mode="constant")``'s taps along one axis of length
+    ``n`` at coordinate ``c``: ``(i0, i1, w0, w1)``, or ``i0 == -1`` when ``c`` lies
+    outside ``[0, n - 1]`` (even by one ULP) and the sample is ``cval`` 0.
+
+    Weights as scipy's spline code: ``w0 = 1 - t`` and ``w1 = 1 - w0``. At
+    ``c == n - 1`` the second tap (weight 0) falls past the edge and scipy mirrors
+    it back onto ``n - 2``; it only shows when that value is not finite.
+    """
+    if c < 0 or c > n - 1:
+        return -1, -1, 0.0, 0.0
+    lo = np.floor(c)
+    i0 = int(lo)
+    i1 = i0 + 1 if i0 + 1 < n else max(n - 2, 0)
+    w0 = 1.0 - (c - lo)
+    return i0, i1, w0, 1.0 - w0
+
+
+@njit(cache=True, nogil=True)
+def bilinear_resample_2d(image, rows, cols, factor_y, factor_x, divide):
+    """Bit-exact ``scipy.ndimage.map_coordinates(image, (i, j), order=1)`` on a
+    ``(rows, cols)`` grid of coordinates ``k / factor`` (``divide``) or
+    ``k * factor`` per axis, as the 2D path builds them from ``mgrid``.
+
+    Like scipy, each sample is summed in float64 over the corners in C order, each
+    corner ``value * w_y * w_x``, and stored in ``image``'s dtype.
+    """
+    H, W = image.shape
+    out = np.empty((rows, cols), image.dtype)
+    x0 = np.empty(cols, np.int64)
+    x1 = np.empty(cols, np.int64)
+    wx0 = np.empty(cols)
+    wx1 = np.empty(cols)
+    for x in range(cols):
+        cx = x / factor_x if divide else x * factor_x
+        x0[x], x1[x], wx0[x], wx1[x] = _order1_taps(cx, W)
+    for y in range(rows):
+        cy = y / factor_y if divide else y * factor_y
+        y0, y1, wy0, wy1 = _order1_taps(cy, H)
+        for x in range(cols):
+            if y0 < 0 or x0[x] < 0:
+                out[y, x] = 0.0
+                continue
+            acc = 0.0
+            acc += np.float64(image[y0, x0[x]]) * wy0 * wx0[x]
+            acc += np.float64(image[y0, x1[x]]) * wy0 * wx1[x]
+            acc += np.float64(image[y1, x0[x]]) * wy1 * wx0[x]
+            acc += np.float64(image[y1, x1[x]]) * wy1 * wx1[x]
+            out[y, x] = acc
+    return out
+
+
+@njit(cache=True, nogil=True)
+def _disk_opening(image, radius):
+    """Greyscale opening by ``disk(radius)`` in ``image``'s dtype, as
+    :func:`disk_erosion_2d` then :func:`disk_dilation_2d` cast back (exactly: the
+    extrema are input values)."""
+    H, W = image.shape
+    out = np.empty((H, W), image.dtype)
+    if radius <= 0:
+        out[:] = image
+        return out
+    hx = _disk_halfwidths(radius)
+    eroded = _disk_reduce(_pad_edge(image, radius), radius, hx, H, W, False)
+    opened = _disk_reduce(_pad_edge(eroded, radius), radius, hx, H, W, True)
+    out[:] = opened
+    return out
+
+
+@njit(cache=True, nogil=True)
+def subtract_background_2d(
+    pixels, radius, sample_size, back_rows, back_cols, scale_y, scale_x
+):
+    """The 2D path's background subtraction in one call, in ``pixels``' dtype.
+
+    With ``sample_size < 1``, ``pixels`` is resampled to ``(back_rows, back_cols)``
+    (coordinates ``k / sample_size``), opened by ``disk(radius)`` and resampled back
+    (coordinates ``k * scale``), each step bit-exact with ``map_coordinates`` order
+    1 (:func:`bilinear_resample_2d`); otherwise ``pixels`` is opened in place of
+    that. The background is subtracted and negatives set to 0.
+    """
+    H, W = pixels.shape
+    if sample_size < 1:
+        small = bilinear_resample_2d(
+            pixels, back_rows, back_cols, sample_size, sample_size, True
+        )
+        back = bilinear_resample_2d(
+            _disk_opening(small, radius), H, W, scale_y, scale_x, False
+        )
+    else:
+        back = _disk_opening(pixels, radius)
+    out = np.empty((H, W), pixels.dtype)
+    for i in range(H):
+        for j in range(W):
+            v = pixels[i, j] - back[i, j]
+            out[i, j] = 0.0 if v < 0 else v
+    return out
+
+
+@njit(cache=True, nogil=True)
 def _disk_halfwidths(radius: int) -> NDArray[np.int64]:
     """Per-row half-widths of ``skimage.morphology.disk(radius)``.
 
@@ -462,14 +567,14 @@ def reconstruction_by_dilation_2d(seed, mask):
 
 
 @njit(cache=True, nogil=True)
-def _pad1_edge(a):
-    """``np.pad(a, 1, mode="edge")`` as float64."""
+def _pad_edge(a, r):
+    """``np.pad(a, r, mode="edge")`` as float64."""
     H, W = a.shape
-    P = np.empty((H + 2, W + 2), np.float64)
-    for i in range(H + 2):
-        si = min(max(i - 1, 0), H - 1)
-        for j in range(W + 2):
-            P[i, j] = a[si, min(max(j - 1, 0), W - 1)]
+    P = np.empty((H + 2 * r, W + 2 * r), np.float64)
+    for i in range(H + 2 * r):
+        si = min(max(i - r, 0), H - 1)
+        for j in range(W + 2 * r):
+            P[i, j] = a[si, min(max(j - r, 0), W - 1)]
     return P
 
 
@@ -485,13 +590,40 @@ def spectrum_sums_2d(pixels, ng, starts, cells, values):
     if ng == 0:
         return out
     # the first step's mask is ``pixels`` in its own dtype, the later ones float64
-    ero = _plus_reduce(_pad1_edge(pixels), H, W, False)
+    ero = _plus_reduce(_pad_edge(pixels, 1), H, W, False)
     rec = reconstruction_by_dilation_2d(ero, pixels)
     out[0] = readback_sums(rec, starts, cells, values)
     for g in range(1, ng):
-        ero = _plus_reduce(_pad1_edge(ero), H, W, False)
+        ero = _plus_reduce(_pad_edge(ero, 1), H, W, False)
         rec = reconstruction_by_dilation_2d(ero, rec)
         out[g] = readback_sums(rec, starts, cells, values)
+    return out
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def granularity_spectrum_2d(
+    pixels, ng, mask, orig_pixels, counts, starts, cells, values
+):
+    """Granularity values ``(ng, n)`` for labels ``1..n``, in one GIL-free call.
+
+    The start mean of each object is its mean in ``orig_pixels`` and each step's
+    mean comes from :func:`spectrum_sums_2d`; step ``g`` is ``(mean_{g-1} - mean_g)
+    * 100 / max(start, eps)``. ``counts`` are the label pixel counts (absent labels
+    give 0 / 0 = NaN, as ``scipy.ndimage.mean``); the arithmetic is the NumPy
+    assembly's, element by element.
+    """
+    n = counts.size
+    sums = label_sums(mask, orig_pixels, n)
+    steps = spectrum_sums_2d(pixels, ng, starts, cells, values)
+    out = np.empty((ng, n))
+    for lab in range(n):
+        current = sums[lab + 1] / counts[lab]
+        # np.maximum: NaN propagates
+        start = current if (current > _EPS or current != current) else _EPS
+        for g in range(ng):
+            new = steps[g, lab + 1] / counts[lab]
+            out[g, lab] = (current - new) * 100.0 / start
+            current = new
     return out
 
 
