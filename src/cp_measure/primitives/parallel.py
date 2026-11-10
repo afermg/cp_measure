@@ -32,13 +32,16 @@ PIXELS_PER_WORKER = 512 * 512
 def _usable_cpus() -> int:
     """CPUs this process may use, as scirpy's ``_get_usable_cpus``: the affinity set
     (which Slurm and cgroups restrict, unlike ``os.cpu_count()``), else the machine's
-    count (macOS has no ``sched_getaffinity``), capped by ``NUMBA_NUM_THREADS``."""
-    from numba import config
-
+    count (macOS has no ``sched_getaffinity``), capped by ``NUMBA_NUM_THREADS`` when
+    numba is installed (it is optional)."""
     try:
         usable = len(os.sched_getaffinity(0))
     except AttributeError:
         usable = os.cpu_count() or 1
+    try:
+        from numba import config
+    except ImportError:
+        return usable
     return min(usable, config.NUMBA_NUM_THREADS)
 
 
