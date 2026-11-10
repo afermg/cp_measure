@@ -412,6 +412,15 @@ def get_correlation_costes(
     """
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
+    # Fail fast on the calling thread when a float (or signed/mixed-dtype) image is
+    # passed without scale_max, e.g. the default featurize() config on a normalized
+    # float image. Reuses the reference's dtype/scale check (and its message) on the
+    # first image pair, so the error is raised here rather than from a map_images
+    # worker mid-batch with a threaded traceback.
+    if scale_max is None:
+        p1 = pixels_1[0] if is_batch(masks) else pixels_1
+        p2 = pixels_2[0] if is_batch(masks) else pixels_2
+        reference._costes_scale(numpy.asarray(p1), numpy.asarray(p2), scale_max)
     chunk = numpy_sum_chunk()  # on the calling thread: np.setbufsize is per thread
 
     def compute(item):

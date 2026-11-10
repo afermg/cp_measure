@@ -129,6 +129,48 @@ def test_numba_granularity_matches_numpy(sub):
 
 
 @requires_numba
+def test_intensity_max_location_tie_keeps_last_raster_pixel():
+    """On tied maxima both backends return the LAST pixel in raster (C) order
+    (CellProfiler / scipy.ndimage.maximum_position), not numpy.argmax's first."""
+    from cp_measure.core.measureobjectintensity import get_intensity as intensity_numpy
+    from cp_measure.core.numba.measureobjectintensity import (
+        get_intensity as intensity_numba,
+    )
+
+    mask = np.ones((4, 4), dtype=np.int32)
+    pixels = np.zeros((4, 4))
+    pixels[1, 1] = 1.0  # first max in raster order
+    pixels[2, 3] = 1.0  # later in raster order -> the tie-break must pick this one
+    ref = intensity_numpy(mask, pixels, edge_measurements=False)
+    got = intensity_numba(mask, pixels, edge_measurements=False)
+    for key in ("Location_MaxIntensity_X", "Location_MaxIntensity_Y"):
+        assert ref[key][0] == got[key][0], key
+    assert ref["Location_MaxIntensity_X"][0] == 3  # col of (2, 3)
+    assert ref["Location_MaxIntensity_Y"][0] == 2  # row of (2, 3)
+
+
+@requires_numba
+def test_numba_granularity_unsigned_image_matches_numpy():
+    """An unsigned-integer image must not wrap on the background subtraction: both
+    backends cast to float64 before it, so numpy and numba agree. Before the numpy
+    fix the uint path wrapped and diverged ~100%."""
+    from cp_measure.core.measuregranularity import get_granularity as gran_numpy
+    from cp_measure.core.numba.measuregranularity import (
+        get_granularity as gran_numba,
+    )
+
+    mask, pixels = _mask_pixels_2d()
+    pixels_u16 = (pixels * 65535).astype(np.uint16)
+    ref = gran_numpy(mask, pixels_u16)
+    got = gran_numba(mask, pixels_u16)
+    assert set(got) == set(ref)
+    for key in ref:
+        np.testing.assert_allclose(
+            got[key], ref[key], rtol=1e-6, atol=1e-8, equal_nan=True, err_msg=key
+        )
+
+
+@requires_numba
 @pytest.mark.parametrize("shape", [(6, 7), (1, 6, 7), (2, 6, 7)])
 @pytest.mark.parametrize("kind", ["list", "tuple", "stacked"])
 def test_intensity_batch_normalization_keeps_views(monkeypatch, kind, shape):

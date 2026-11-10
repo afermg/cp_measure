@@ -243,15 +243,16 @@ def get_intensity(
         mad_frac = (1.0 / source_ndim) if legacy else 0.5
         mad_intensity[out_i] = _interp(sorted_dev, n, mad_frac, legacy)
 
-        # Positions / centroids on the bbox crop, then shift by the bbox
-        # offset. Per-bbox np.argmax picks the FIRST tied-max in C-order;
-        # scipy.ndimage.maximum_position picks the LAST (and is version
-        # unstable on ties). On real continuous data the two agree.
+        # Positions / centroids on the bbox crop, then shift by the bbox offset.
+        # On a tie, keep the LAST max pixel in C (raster) order, matching
+        # CellProfiler / scipy.ndimage.maximum_position and the numba backend
+        # (segment_moments uses >=). numpy.argmax returns the FIRST, so index the
+        # reversed array; on real continuous data (no ties) the two coincide.
         coords = numpy.argwhere(finite)
         offset = numpy.array([s.start for s in sl], dtype=coords.dtype)
         coords = coords + offset
 
-        argmax = int(numpy.argmax(vals))
+        argmax = len(vals) - 1 - int(numpy.argmax(vals[::-1]))
         max_z[out_i] = coords[argmax, 0]
         max_y[out_i] = coords[argmax, 1]
         max_x[out_i] = coords[argmax, 2]

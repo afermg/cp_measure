@@ -636,3 +636,16 @@ def test_scipy_ties_two_pair_background_keeps_scipy_warnings(mode):
     assert got_warnings == expected_warnings
     for key in expected:
         np.testing.assert_array_equal(got[key], expected[key])
+
+
+def test_costes_float_batch_without_scale_max_fails_fast_at_entry():
+    """A float batch without scale_max raises at the entry (calling thread), before
+    any map_images worker runs, so the error is not wrapped in a threaded traceback.
+    This is the default featurize() path on a normalized float image."""
+    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
+
+    masks = [np.ones((8, 8), np.int32) for _ in range(3)]
+    p1 = [np.zeros((8, 8)) for _ in range(3)]
+    p2 = [np.full((8, 8), 0.5) for _ in range(3)]
+    with pytest.raises(ValueError, match="scale_max"):
+        get_correlation_costes(pixels_1=p1, pixels_2=p2, masks=masks)
