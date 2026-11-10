@@ -162,14 +162,17 @@ def get_intensity(
         quartiles at ``n*q`` and MAD as the ``(1/ndim)``-quantile of
         ``|x - median(x)|``. All other features are unaffected.
     """
+    # Labels and pixels must match in shape and rank; no implicit mask
+    # broadcasting over a 3D stack (mirrors the numba backend and the to_bzyx
+    # contract, which also refuses to broadcast a lower-rank mask).
+    if numpy.shape(masks) != numpy.shape(pixels):
+        raise ValueError("labels and pixels must have matching shapes and rank")
+
     # Captured before the (1, Y, X) reshape so the MAD quantile fraction matches
     # the original implementation (1/2 for 2D, 1/3 for 3D).
     source_ndim = pixels.ndim
 
-    # Normalize to (Z, Y, X). Broadcast 2D masks across a 3D pixel stack to
-    # match the original behavior.
-    if pixels.ndim == 3 and masks.ndim == 2:
-        masks = numpy.broadcast_to(masks, pixels.shape)
+    # Normalize to (Z, Y, X).
     if pixels.ndim == 2:
         pixels = pixels[numpy.newaxis, ...]
     if masks.ndim == 2:
