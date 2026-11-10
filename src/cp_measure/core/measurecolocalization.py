@@ -312,6 +312,12 @@ def _canonical_costes_pixels(values, scale):
 def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
     """Keep acquisition scale independent of the normalized array dtype."""
     first, second = numpy.asarray(pixels_1), numpy.asarray(pixels_2)
+    scale = _costes_scale(first, second, scale_max)
+    return _costes_float64(first, scale), _costes_float64(second, scale), scale
+
+
+def _costes_scale(first, second, scale_max) -> int:
+    """The acquisition scale for two Costes images, after checking them."""
     if first.shape != second.shape:
         raise ValueError("Costes images must have the same shape")
     if scale_max is None:
@@ -322,17 +328,18 @@ def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
             )
         scale_max = numpy.iinfo(first.dtype).max
     scale = _validate_costes_scale(scale_max)
-    converted = []
     for image in (first, second):
         if image.dtype.kind not in "uif":
             raise ValueError(
                 "Costes pixels must be real integer or floating-point arrays"
             )
-        values = image.astype(numpy.float64, copy=False)
-        if image.dtype.kind in "ui":
-            values = values / scale
-        converted.append(values)
-    return converted[0], converted[1], scale
+    return scale
+
+
+def _costes_float64(image, scale):
+    """Normalized float64 pixels: integer images are divided by the scale."""
+    values = image.astype(numpy.float64, copy=False)
+    return values / scale if image.dtype.kind in "ui" else values
 
 
 def _invalid_costes_reason(fi, si) -> str | None:

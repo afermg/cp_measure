@@ -48,10 +48,10 @@ from cp_measure.core.numba._costes import (
     _bisection_steps,
     _coefficients,
     _moment_totals,
-    costes_faster,
-    costes_linear,
+    costes_faster_image,
+    costes_linear_image,
 )
-from cp_measure.primitives._segment_numba import group_pairs, numpy_sum_chunk
+from cp_measure.primitives._segment_numba import numpy_sum_chunk
 from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import each_volume, is_batch, memory_key, native
 
@@ -67,21 +67,6 @@ _UNDEFINED_REASONS = {
 # Pixel dtypes the fused kernel reproduces: float64, and float32 (widened exactly; its
 # percentage thresholds keep NumPy's float32 rounding, see coloc_per_object).
 _KERNEL_DTYPES = (numpy.dtype(numpy.float64), numpy.dtype(numpy.float32))
-
-
-def _grouped(masks_zyx, pixels_1_zyx, pixels_2_zyx):
-    """Each object's pixels of both channels as contiguous float64 blocks.
-
-    Returns ``(g1, g2, offsets)``: object ``k`` owns ``g1[offsets[k] : offsets[k + 1]]``,
-    in raster order like the reference's per-label extraction.
-    """
-    # Labels are contiguous 1..N by contract (see cp_measure._sanitize), so the
-    # segment index is label - 1. The kernel widens float32 pixels itself.
-    return group_pairs(
-        _kernel_labels(masks_zyx),
-        _kernel_pixels(pixels_1_zyx),
-        _kernel_pixels(pixels_2_zyx),
-    )
 
 
 def _kernel_labels(masks):
@@ -433,34 +418,35 @@ def get_correlation_costes(
         # Per-image preparation and kernel work (the kernel releases the GIL):
         # map_images runs batches on threads, with no whole-batch float64 copy.
         p1, p2, mask = item
-        first, second, scale = reference._prepare_costes_inputs(p1, p2, scale_max)
+        first, second = numpy.asarray(p1), numpy.asarray(p2)
+        scale = reference._costes_scale(first, second, scale_max)
+        # The kernel widens float32/float64 pixels itself; others convert here.
+        first, second = (
+            p if p.dtype in _KERNEL_DTYPES else reference._costes_float64(p, scale)
+            for p in (first, second)
+        )
         labels = numpy.asarray(mask)
-        if labels.shape != first.shape or not numpy.issubdtype(
-            labels.dtype, numpy.integer
-        ):
+        if labels.shape != first.shape or labels.dtype.kind not in "iu":
             raise ValueError(
                 "Costes labels must be an integer array matching the images"
             )
         if labels.ndim not in (2, 3):
             raise ValueError(f"Costes expects 2D or 3D images, got {labels.ndim}D")
-        zyx = (labels, first, second)
         if labels.ndim != 3:
-            zyx = (labels[None], first[None], second[None])
-        g1, g2, offsets = _grouped(*zyx)
+            labels, first, second = labels[None], first[None], second[None]
+        zyx = (_kernel_labels(labels), _kernel_pixels(first), _kernel_pixels(second))
+        # One kernel call; the grouped pixels come back only for replays.
         states = None
         if fast_costes == M_FASTER:
-            c1, c2, status, states = costes_faster(
-                g1, g2, offsets, float(scale), scipy_ties, chunk
+            c1, c2, status, states, g1, g2, offsets = costes_faster_image(
+                *zyx, float(scale), scipy_ties, chunk
             )
         else:
             accurate = fast_costes == M_ACCURATE
-            c1, c2, status = costes_linear(
-                g1, g2, offsets, float(scale), accurate, scipy_ties, chunk
+            c1, c2, status, g1, g2, offsets = costes_linear_image(
+                *zyx, float(scale), accurate, scipy_ties, chunk
             )
-        # Keep the grouped pixels only for objects the reference must decide.
-        needed = ((status == REPLAY) | (status == RESUME)).any()
-        replay = (g1, g2) if needed else (None, None)
-        return *replay, offsets, c1, c2, status, states, scale
+        return g1, g2, offsets, c1, c2, status, states, scale
 
     def finish(staged):
         g1, g2, offsets, c1, c2, status, states, scale = staged

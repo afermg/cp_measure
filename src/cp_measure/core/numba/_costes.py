@@ -13,7 +13,7 @@ fastmath or grid rounding is used.
 import numpy as np
 from numba import njit
 
-from cp_measure.primitives._segment_numba import numpy_sum, numpy_var
+from cp_measure.primitives._segment_numba import group_pairs, numpy_sum, numpy_var
 
 # The values of r each check branches on. A check must defer to the reference when
 # r is within rounding of one of ITS decision points, and only those: bisection
@@ -693,3 +693,38 @@ def costes_linear(g1, g2, offsets, scale, accurate, defer, chunk):
         if st == OUT_OF_RANGE:
             break
     return c1, c2, status
+
+
+# One call per image: grouping and the search in the same GIL-free call, so the
+# grouped pixels never reach Python unless the reference must decide an object.
+
+
+@njit(cache=True)
+def _for_replay(g1, g2, status):
+    """The grouped pixels if an object needs the reference, else empty arrays."""
+    for st in status:
+        if st == REPLAY or st == RESUME:
+            return g1, g2
+    return np.empty(0), np.empty(0)
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def costes_faster_image(masks, pix1, pix2, scale, defer, chunk):
+    """:func:`costes_faster` of one ``(Z, Y, X)`` image triple, grouped by
+    ``group_pairs``. Returns ``(c1, c2, status, states, g1, g2, offsets)``, with
+    ``g1``/``g2`` empty unless an object needs the reference (see
+    :func:`_for_replay`)."""
+    g1, g2, offsets = group_pairs(masks, pix1, pix2)
+    c1, c2, status, states = costes_faster(g1, g2, offsets, scale, defer, chunk)
+    g1, g2 = _for_replay(g1, g2, status)
+    return c1, c2, status, states, g1, g2, offsets
+
+
+@njit(cache=True, nogil=True, error_model="numpy")
+def costes_linear_image(masks, pix1, pix2, scale, accurate, defer, chunk):
+    """:func:`costes_faster_image` for the Fast and Accurate modes; returns
+    ``(c1, c2, status, g1, g2, offsets)``."""
+    g1, g2, offsets = group_pairs(masks, pix1, pix2)
+    c1, c2, status = costes_linear(g1, g2, offsets, scale, accurate, defer, chunk)
+    g1, g2 = _for_replay(g1, g2, status)
+    return c1, c2, status, g1, g2, offsets
