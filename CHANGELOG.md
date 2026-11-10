@@ -12,8 +12,9 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
-- Costes permits threshold-boundary results in NumPy and Numba; scale validation
-  and invalid-input, regression and zero-denominator checks remain.
+- Costes retains selected thresholds despite small/constant final backgrounds
+  in NumPy and Numba. Searches without a finite nonnegative bisection candidate,
+  invalid inputs/regressions and zero denominators remain undefined.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler

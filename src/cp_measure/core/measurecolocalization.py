@@ -608,9 +608,9 @@ def bisection_costes(
     We're looking for the first point below 0, and R value can become highly variable
     at lower thresholds in some samples. Therefore the candidate tested in each
     loop is 1/6th of the window size below the maximum value (as opposed to the midpoint).
-    Inputs must be normalized 1D arrays. As in CellProfiler, the search retains
-    its boundary fallback when no nonnegative candidate is found and does not
-    validate the background again after choosing the final thresholds.
+    Inputs must be normalized 1D arrays. No finite nonnegative candidate means
+    NaN thresholds with RuntimeWarning. Once a candidate is found, the final
+    background is not used to veto the selected thresholds.
     """
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
@@ -647,9 +647,8 @@ def bisection_costes(
     right: float = scale_max
     mid: float = ((right - left) // (6 / 5)) + left
     lastmid: float = 0
-    # CP's boundary fallback: if no nonnegative candidate is found, use zero
-    # for the first threshold and the fitted intercept for the second.
-    valid: float = 1
+    # Do not mistake an initialized boundary for a successful search.
+    valid: float | None = None
     iterations = 0
     while lastmid != mid:
         iterations += 1
@@ -672,6 +671,8 @@ def bisection_costes(
         divisor = 6 / 5 if right - left > 6 else 2
         mid = ((right - left) // divisor) + left
 
+    if valid is None:
+        return _undefined_costes("no finite nonnegative background correlation found")
     thr_fi_c = (valid - 1) / scale_max
     thr_si_c = (a * thr_fi_c) + b
     return float(thr_fi_c), float(thr_si_c)
@@ -800,10 +801,10 @@ def get_correlation_costes(
     ``img_as_float``) are mapped to the integer path's division encoding. Other
     float values are not quantized or tolerance-snapped to the grid.
 
-    Small or constant threshold-search backgrounds do not veto the returned
-    coefficients; boundary results (including zero/one) are left for downstream
-    quality control. Invalid signals, undefined regressions and zero signal
-    denominators still return NaN with :class:`RuntimeWarning`.
+    Small or constant final backgrounds do not veto selected thresholds.
+    A bisection search without a finite nonnegative candidate, invalid signals,
+    undefined regressions and zero signal denominators return NaN with
+    :class:`RuntimeWarning`.
     ``thr`` is retained but unused. Input arrays are
     never modified. Labels must be contiguous ``1..N``; use the bulk API or
     :func:`cp_measure._sanitize.sanitize` for arbitrary IDs.

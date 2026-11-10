@@ -120,7 +120,7 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
     right = float(scale)
     mid = ((right - left) // (6 / 5)) + left
     lastmid = 0.0
-    valid = 1.0  # CP boundary fallback when no nonnegative candidate is found
+    valid = np.nan  # no candidate: request reference replay for its warning
     iterations = 0
     while lastmid != mid:
         iterations += 1
@@ -142,6 +142,8 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
             mid = ((right - left) // (6 / 5)) + left
         else:
             mid = ((right - left) // 2) + left
+    if np.isnan(valid):
+        return np.nan, np.nan
     thr_fi_c = (valid - 1) / scale
     thr_si_c = a * thr_fi_c + b
     return thr_fi_c, thr_si_c
