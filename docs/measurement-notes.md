@@ -24,6 +24,10 @@ With `set_accelerator("numba")`, size/shape accelerates convex-hull construction
 
 Both raw functions require contiguous labels. The featurizer and default bulk wrappers sanitize arbitrary positive IDs without modifying inputs. Multi-slice volumes use the NumPy fallback. Warmed gains depend on object size and density; first calls also pay compilation cost.
 
+## Granularity intermediate precision
+
+The Numba granularity backend preserves the input dtype through background opening, background resampling and subtraction, matching the NumPy path (#123). The extrema kernels may compute in float64 internally, but their selected values are restored to the incoming background dtype before interpolation. Without that boundary conversion, float32 inputs could produce small but observable backend differences (approximately `6.5e-6` in the real-image pilot). Float64 behavior is unchanged; this is not arbitrary rounding of final measurements or a relaxed comparison tolerance.
+
 ## Texture quantization
 
 Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim variation can disappear, and pairs containing zero are excluded. See the [#100 explanation](https://github.com/afermg/cp_measure/issues/100#issuecomment-5939719548) and [`get_texture` Notes](../src/cp_measure/core/measuretexture.py) for CellProfiler compatibility and zero/NaN behavior.
