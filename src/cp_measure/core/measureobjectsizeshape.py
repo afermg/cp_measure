@@ -347,6 +347,10 @@ F_NORMALIZED_MOMENT_0_2_0 = "NormalizedMoment_0_2_0"
 F_NORMALIZED_MOMENT_0_2_1 = "NormalizedMoment_0_2_1"
 F_NORMALIZED_MOMENT_0_2_2 = "NormalizedMoment_0_2_2"
 F_NORMALIZED_MOMENT_0_2_3 = "NormalizedMoment_0_2_3"
+F_NORMALIZED_MOMENT_0_3_0 = "NormalizedMoment_0_3_0"
+F_NORMALIZED_MOMENT_0_3_1 = "NormalizedMoment_0_3_1"
+F_NORMALIZED_MOMENT_0_3_2 = "NormalizedMoment_0_3_2"
+F_NORMALIZED_MOMENT_0_3_3 = "NormalizedMoment_0_3_3"
 F_NORMALIZED_MOMENT_1_0_0 = "NormalizedMoment_1_0_0"
 F_NORMALIZED_MOMENT_1_0_1 = "NormalizedMoment_1_0_1"
 F_NORMALIZED_MOMENT_1_0_2 = "NormalizedMoment_1_0_2"
@@ -408,6 +412,10 @@ F_CENTRAL_MOMENT_0_2_0 = "CentralMoment_0_2_0"
 F_CENTRAL_MOMENT_0_2_1 = "CentralMoment_0_2_1"
 F_CENTRAL_MOMENT_0_2_2 = "CentralMoment_0_2_2"
 F_CENTRAL_MOMENT_0_2_3 = "CentralMoment_0_2_3"
+F_CENTRAL_MOMENT_0_3_0 = "CentralMoment_0_3_0"
+F_CENTRAL_MOMENT_0_3_1 = "CentralMoment_0_3_1"
+F_CENTRAL_MOMENT_0_3_2 = "CentralMoment_0_3_2"
+F_CENTRAL_MOMENT_0_3_3 = "CentralMoment_0_3_3"
 F_CENTRAL_MOMENT_1_0_0 = "CentralMoment_1_0_0"
 F_CENTRAL_MOMENT_1_0_1 = "CentralMoment_1_0_1"
 F_CENTRAL_MOMENT_1_0_2 = "CentralMoment_1_0_2"
@@ -789,6 +797,10 @@ def get_sizeshape(
                     F_SPATIAL_MOMENT_0_2_1: props["moments-0-2-1"],
                     F_SPATIAL_MOMENT_0_2_2: props["moments-0-2-2"],
                     F_SPATIAL_MOMENT_0_2_3: props["moments-0-2-3"],
+                    F_SPATIAL_MOMENT_0_3_0: props["moments-0-3-0"],
+                    F_SPATIAL_MOMENT_0_3_1: props["moments-0-3-1"],
+                    F_SPATIAL_MOMENT_0_3_2: props["moments-0-3-2"],
+                    F_SPATIAL_MOMENT_0_3_3: props["moments-0-3-3"],
                     F_SPATIAL_MOMENT_1_0_0: props["moments-1-0-0"],
                     F_SPATIAL_MOMENT_1_0_1: props["moments-1-0-1"],
                     F_SPATIAL_MOMENT_1_0_2: props["moments-1-0-2"],
@@ -849,6 +861,10 @@ def get_sizeshape(
                     F_CENTRAL_MOMENT_0_2_1: props["moments_central-0-2-1"],
                     F_CENTRAL_MOMENT_0_2_2: props["moments_central-0-2-2"],
                     F_CENTRAL_MOMENT_0_2_3: props["moments_central-0-2-3"],
+                    F_CENTRAL_MOMENT_0_3_0: props["moments_central-0-3-0"],
+                    F_CENTRAL_MOMENT_0_3_1: props["moments_central-0-3-1"],
+                    F_CENTRAL_MOMENT_0_3_2: props["moments_central-0-3-2"],
+                    F_CENTRAL_MOMENT_0_3_3: props["moments_central-0-3-3"],
                     F_CENTRAL_MOMENT_1_0_0: props["moments_central-1-0-0"],
                     F_CENTRAL_MOMENT_1_0_1: props["moments_central-1-0-1"],
                     F_CENTRAL_MOMENT_1_0_2: props["moments_central-1-0-2"],
@@ -909,6 +925,10 @@ def get_sizeshape(
                     F_NORMALIZED_MOMENT_0_2_1: props["moments_normalized-0-2-1"],
                     F_NORMALIZED_MOMENT_0_2_2: props["moments_normalized-0-2-2"],
                     F_NORMALIZED_MOMENT_0_2_3: props["moments_normalized-0-2-3"],
+                    F_NORMALIZED_MOMENT_0_3_0: props["moments_normalized-0-3-0"],
+                    F_NORMALIZED_MOMENT_0_3_1: props["moments_normalized-0-3-1"],
+                    F_NORMALIZED_MOMENT_0_3_2: props["moments_normalized-0-3-2"],
+                    F_NORMALIZED_MOMENT_0_3_3: props["moments_normalized-0-3-3"],
                     F_NORMALIZED_MOMENT_1_0_0: props["moments_normalized-1-0-0"],
                     F_NORMALIZED_MOMENT_1_0_1: props["moments_normalized-1-0-1"],
                     F_NORMALIZED_MOMENT_1_0_2: props["moments_normalized-1-0-2"],

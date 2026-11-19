@@ -12,7 +12,7 @@ The featurizer supports both single- and multichannel volumes with `is_3d=True`.
 
 To use a 2D mask through a volume, the caller must explicitly repeat it before calling `featurize`, for example `masks_3d = np.repeat(masks_2d[:, :, None], image.shape[2], axis=2)`. Each repeated label becomes one 3D object, so intensity and shape measurements use the entire volume rather than separate 2D measurements per slice. The featurizer does not perform this conversion or modify its inputs.
 
-For `Z=1`, size/shape measures the sole plane in both backends, including through the bulk wrappers and featurizer. It returns 2D feature names and pixel-based values: 78 default features, not the 212-feature 3D schema. All-background raw masks use the same 2D schema with zero-length arrays. This replaces the previous nonempty-input error and changes the previous empty singleton-Z schema. As for explicit 2D inputs, `spacing` does not scale these measurements.
+For `Z=1`, size/shape measures the sole plane in both backends, including through the bulk wrappers and featurizer. It returns 2D feature names and pixel-based values: 78 default features, not the 224-feature 3D schema. All-background raw masks use the same 2D schema with zero-length arrays. This replaces the previous nonempty-input error and changes the previous empty singleton-Z schema. As for explicit 2D inputs, `spacing` does not scale these measurements.
 
 For `Z>1`, size/shape retains its 3D implementation and spacing convention. Its surface-area calculation still requires at least two voxels along each spatial axis; singleton X/Y axes are not squeezed. Raw size/shape calls remain per-image, not batch APIs.
 
@@ -23,6 +23,18 @@ With `set_accelerator("numba")`, size/shape accelerates convex-hull construction
 2D moment comparisons use object-local scaling: raw/central moments of total order k are divided by `Area**(1+k/2)` and compared with `rtol=1e-7, atol=1e-12`. Normalized and Hu moments use the same tolerance directly. Orientations are compared modulo 180 degrees with absolute tolerance `1e-8` degrees. These are test comparison rules only; other geometry, dtype and nonfinite checks are unchanged.
 
 Both raw functions require contiguous labels. The featurizer and default bulk wrappers sanitize arbitrary positive IDs without modifying inputs. Multi-slice volumes use the NumPy fallback. Warmed gains depend on object size and density; first calls also pay compilation cost.
+
+## Numba intensity batches
+
+The direct Numba `get_intensity` function accepts matching 2D or 3D images and returns one feature dictionary. Matching `(B, Z, Y, X)` arrays or lists/tuples of equally shaped 2D/3D images return a list of dictionaries. A 3D array is one image, never an implicit batch. Empty or ragged batches and mismatched input ranks/shapes are rejected; masks are not broadcast or repeated.
+
+`legacy` and `edge_measurements` apply to every image. Legacy MAD depends on the original spatial rank: a 2D list item uses the 2D convention, while a `(B, 1, Y, X)` batch contains singleton-Z volumes and retains the 3D convention. Batch items are processed sequentially using the existing kernels and per-item views. The NumPy direct function remains a single-image API, and featurizer input conventions are unchanged.
+
+Both intensity backends require matching label and image shapes. The NumPy function previously broadcast a 2D mask across a 3D image; callers who want that measurement can now pass `np.broadcast_to(mask_2d, pixels_3d.shape)` explicitly. Each repeated label is measured as one object across the volume.
+
+## Numba granularity batches
+
+Granularity retains its `to_bzyx` normalization, which stacks batch items into arrays with a common dtype. A mixed float32/float64 list or tuple therefore uses float64 arithmetic even with `precision="input"`. The `precision="float64"` option widens any remaining float16/float32 data before arithmetic. To preserve each input dtype independently, measure the images in separate calls.
 
 ## Texture quantization
 

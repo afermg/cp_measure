@@ -3,7 +3,7 @@
 import numpy
 import pytest
 
-from cp_measure.primitives.shapes import to_bzyx
+from cp_measure.primitives.shapes import each_volume, to_bzyx
 
 
 def _img(shape, seed):
@@ -74,6 +74,41 @@ def test_list_of_3d_volumes_batch():
         (numpy.ones((5,), int), numpy.ones((5,), float), "2D or 3D"),
     ],
 )
-def test_to_bzyx_raises(masks, pixels, match):
+@pytest.mark.parametrize("normalize", [to_bzyx, each_volume])
+def test_normalizer_raises(masks, pixels, match, normalize):
     with pytest.raises(ValueError, match=match):
-        to_bzyx(masks, pixels)
+        normalize(masks, pixels)
+
+
+@pytest.mark.parametrize("shape", [(4, 5), (1, 4, 5), (2, 4, 5), (2, 1, 4, 5)])
+def test_each_volume_preserves_views_and_original_rank(shape):
+    masks = numpy.ones(shape, numpy.int32)[..., ::-1]
+    pixels = _img(shape, 0)[..., ::-1]
+    masks.setflags(write=False)
+    pixels.setflags(write=False)
+    items, unwrap = each_volume(masks, pixels)
+    sources = list(zip(masks, pixels)) if len(shape) == 4 else [(masks, pixels)]
+    assert len(items) == len(sources)
+    for (mask, image, rank), (original_mask, original_image) in zip(items, sources):
+        assert rank == original_image.ndim
+        assert (
+            mask.shape
+            == image.shape
+            == ((1, *original_image.shape) if rank == 2 else original_image.shape)
+        )
+        assert numpy.shares_memory(mask, original_mask)
+        assert numpy.shares_memory(image, original_image)
+        assert not mask.flags.writeable and not image.flags.writeable
+    results = list(range(len(items)))
+    assert unwrap(results) == (results if len(shape) == 4 else results[0])
+
+
+def test_each_volume_mixed_dtype_sequence_keeps_item_dtypes():
+    masks = [numpy.ones((4, 5), numpy.int32) for _ in range(2)]
+    pixels = [_img((4, 5), 0).astype(dtype) for dtype in (numpy.float32, numpy.float64)]
+    items, unwrap = each_volume(masks, pixels)
+    assert len(items) == 2
+    for (_, image, rank), original in zip(items, pixels):
+        assert rank == 2 and image.dtype == original.dtype
+        assert numpy.shares_memory(image, original)
+    assert unwrap([0, 1]) == [0, 1]

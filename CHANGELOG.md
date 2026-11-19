@@ -9,6 +9,14 @@ Notable user-facing changes are documented here.
 - Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
   object-set ranks. The default remains independent per-object ranking (#121).
 
+### Fixed
+
+- 3D size/shape with `calculate_advanced=True` and `new_features=True` now
+  exports the 12 missing `(0, 3, r)` moments (`SpatialMoment_0_3_r`,
+  `CentralMoment_0_3_r`, `NormalizedMoment_0_3_r` for `r` in 0–3). The 3D schema
+  grows from 212 to 224 features. Existing columns keep their names and values;
+  the new columns appear in index order after the `0_2_3` moments.
+
 ## [0.4.0] - 2026-11-19
 
 ### Performance
@@ -26,6 +34,12 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
+  returning one dictionary per item. Intensity normalizes batch items as views
+  and processes them sequentially.
+- **Breaking:** NumPy intensity now requires matching label/image shapes instead
+  of broadcasting a 2D mask over a 3D image. To retain that measurement, pass
+  `numpy.broadcast_to(mask_2d, pixels_3d.shape)` explicitly.
 - Costes permits threshold-boundary results in NumPy and Numba; scale validation
   and invalid-input, regression and zero-denominator checks remain.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning

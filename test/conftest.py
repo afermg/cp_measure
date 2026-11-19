@@ -132,3 +132,22 @@ def masks_3d_multi():
     masks = np.stack([nuclei, cells], axis=0)
 
     return masks
+
+
+def onto_unit_disk(xm, ym):
+    """Pull pixels that rounding put just outside the unit disk back onto it.
+
+    Every object pixel lies inside or on its minimum enclosing circle, so a
+    normalized radius above 1 can only come from float rounding. cp_measure keeps
+    those on-circle pixels (``cp_measure.utils._UNIT_DISK_EDGE``); this lets a
+    centrosome reference with its strict ``r^2 > 1`` cutoff do the same. The
+    coordinates move by ~1e-12, far below the comparison tolerances.
+    """
+    xm, ym = np.array(xm, dtype=float), np.array(ym, dtype=float)
+    r2 = xm * xm + ym * ym
+    outside = r2 > 1  # NaN (zero-radius objects) stays as is
+    assert (r2[outside] <= 1 + 1e-9).all(), "a pixel outside its enclosing circle"
+    scale = (1 - 1e-12) / np.sqrt(r2[outside])
+    xm[outside] *= scale
+    ym[outside] *= scale
+    return xm, ym
