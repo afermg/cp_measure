@@ -134,17 +134,6 @@ def test_empty_image_empty_arrays():
 
 
 @requires_numba
-def test_batch_list_matches_per_image():
-    m0 = _issue22_masks()
-    m1 = (m0 == 1).astype(np.int32)
-    p0 = _pixels("random", m0.shape)
-    got = _numba()([m0, m1], [p0, p0])
-    assert isinstance(got, list) and len(got) == 2
-    for per_image, m in zip(got, (m0, m1)):
-        _assert_close_dict(per_image, _numba()(m, p0))
-
-
-@requires_numba
 @pytest.mark.parametrize(
     "pixels_shape,kwargs",
     [

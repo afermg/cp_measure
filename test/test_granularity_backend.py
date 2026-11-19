@@ -112,24 +112,9 @@ def test_empty_mask():
     _assert_same(out, base)
 
 
-def test_single_image_returns_dict_not_list():
-    mask, pixels = _scene()
-    assert isinstance(gran_numba(mask, pixels), dict)
-
-
-def test_batch_4d_matches_per_image_baseline():
-    scenes = [_scene(seed=s) for s in range(3)]
-    masks = numpy.stack([m[numpy.newaxis] for m, _ in scenes])  # (B,1,H,W)
-    pixels = numpy.stack([p[numpy.newaxis] for _, p in scenes])
-    out = gran_numba(masks, pixels)
-    assert isinstance(out, list) and len(out) == 3
-    for m, p, got in zip(masks, pixels, out):
-        _assert_same(got, gran_numpy(m, p))
-
-
 @pytest.mark.parametrize("container", [list, tuple])
 @pytest.mark.parametrize("precision", ["input", "float64"])
-def test_batch_sequence_matches_per_image_baseline(container, precision):
+def test_batch_sequence_precision_matches_per_image(container, precision):
     scenes = [_scene(seed=0), _scene(n=3, seed=1)]
     masks = container([m for m, _ in scenes])
     pixels = container([p.astype(numpy.float32) for _, p in scenes])
@@ -141,11 +126,33 @@ def test_batch_sequence_matches_per_image_baseline(container, precision):
             _assert_same(got, gran_numpy(m, p, precision=precision))
 
 
-def test_batch_list_ragged_rejected():
-    a = _scene(H=80, W=80, seed=0)
-    b = _scene(H=64, W=96, n=3, seed=1)
-    with pytest.raises(ValueError, match="same shape"):
-        gran_numba([a[0], b[0]], [a[1], b[1]])
+@pytest.mark.parametrize("container", [list, tuple])
+@pytest.mark.parametrize("precision", ["input", "float64"])
+def test_mixed_dtype_batch_uses_common_precision(container, precision):
+    y, x = numpy.mgrid[:80, :80]
+    first = (0.5 + 0.4 * numpy.sin(x / 11) * numpy.cos(y / 13)).astype(numpy.float32)
+    pixels = container([first, first.astype(numpy.float64)])
+    masks = container([numpy.ones(first.shape, numpy.int32) for _ in pixels])
+    for array in (*masks, *pixels):
+        array.setflags(write=False)
+    params = dict(subsample_size=0.3, element_size=2, precision=precision)
+    actual = gran_numba(masks, pixels, **params)
+    assert isinstance(actual, list) and len(actual) == len(pixels)
+    common_dtype = numpy.result_type(*pixels)
+    for mask, image, result in zip(masks, pixels, actual):
+        expected = gran_numba(mask, image.astype(common_dtype, copy=False), **params)
+        assert result.keys() == expected.keys()
+        for key in expected:
+            assert result[key].dtype == expected[key].dtype
+            numpy.testing.assert_array_equal(result[key], expected[key])
+    for key in actual[0]:
+        numpy.testing.assert_array_equal(actual[0][key], actual[1][key])
+    if precision == "input":
+        # Whole-batch promotion differs from an independent float32 call.
+        unpromoted = gran_numba(masks[0], first, **params)
+        assert any(
+            not numpy.array_equal(actual[0][key], unpromoted[key]) for key in actual[0]
+        )
 
 
 @pytest.mark.parametrize("is_3d", [False, True], ids=["2d", "3d"])

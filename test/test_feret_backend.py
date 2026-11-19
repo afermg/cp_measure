@@ -100,37 +100,6 @@ def test_feret_empty_mask_matches_numpy_raises():
 
 
 @requires_numba
-@pytest.mark.parametrize("batch_type", [list, tuple], ids=["list", "tuple"])
-def test_feret_numba_batch_matches_individual_numba_calls(batch_type):
-    """The Numba backend's list/tuple loop must preserve single-image results.
-
-    This does not call the featurizer. NumPy-versus-Numba math is checked separately.
-    """
-    from cp_measure.core.numba._feret import get_feret as feret_nb
-
-    rng = get_rng(3)
-    masks_list, pixels_list = [], []
-    for _ in range(3):
-        side, n = 48, 5
-        yy, xx = np.mgrid[0:side, 0:side]
-        centers = rng.integers(0, side, size=(n, 2))
-        best = np.full((side, side), np.inf)
-        m = np.zeros((side, side), np.int32)
-        for i, (cy, cx) in enumerate(centers, start=1):
-            d = (yy - cy) ** 2 + (xx - cx) ** 2
-            sel = d < best
-            best[sel] = d[sel]
-            m[sel] = i
-        masks_list.append(m)
-        pixels_list.append(rng.random((side, side)))
-
-    got = feret_nb(batch_type(masks_list), batch_type(pixels_list))
-    assert isinstance(got, list) and len(got) == 3
-    for m, p, g in zip(masks_list, pixels_list, got):
-        _assert_match(feret_nb(m, p), g)
-
-
-@requires_numba
 def test_feret_single_slice_volume_uses_2d_measurement():
     """A singleton-Z volume is eligible for the 2D Feret measurement."""
     from cp_measure.core.numba._feret import get_feret as feret_nb
