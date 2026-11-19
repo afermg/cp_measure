@@ -256,7 +256,8 @@ See [Measurement notes](docs/measurement-notes.md) for texture quantization, per
 - [CharmFeatures](https://gitlab.com/iggman/charm-features): Library, Python module, and command-line utility for extracting Wnd-Charm image features from large TIFF collections.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 - [CellProfiler Library](https://github.com/CellProfiler/CellProfiler/tree/main/src/subpackages/library): WIP library that isolates CellProfiler image-processing functions from its frontend.
-- [raster `cellStats`](https://www.rdocumentation.org/packages/raster/versions/3.6-32/topics/cellStats): R function that computes summary statistics (e.g., mean, standard deviation, min, max) of the cell values in a raster layer.
+- [MorphoLibJ](https://imagej.net/plugins/morpholibj): ImageJ/Fiji plugin that measures shape and intensity per label in 2D and 3D label images.
+- [terra `zonal`](https://rspatial.github.io/terra/reference/zonal.html): R function that computes summary statistics per zone (label) of a raster.
 
 <details>
 <summary>Current work</summary>
