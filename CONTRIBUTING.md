@@ -86,7 +86,7 @@ CI will check for all these before it can be merged into the main branch.
 
 The project is actively developing in these areas:
 
-1. **Speed improvements**: JIT compilation and optional GPU support
+1. **Speed improvements**: JIT compilation (optional Numba backend)
 2. **Numerical validation**: Comprehensive tests comparing cp_measure to CellProfiler outputs
 3. **Interface formalization**: Standardizing input/output formats for 2D/3D images and masks
 4. **Documentation**: Improving examples and API documentation
@@ -110,7 +110,7 @@ cp_measure focuses specifically on reimplementing CellProfiler's measurement mod
 - Minimal dependencies
 - Transparent, self-contained measurement implementations
 - Unified interface for ML/computational biology workflows
-- Performance optimizations (GPU support, JIT compilation)
+- Performance optimizations (JIT compilation)
 
 ## Questions?
 
