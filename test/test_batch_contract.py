@@ -31,7 +31,7 @@ CORE = [
 CORRELATION = ["pearson", "manders_fold", "rwc", "costes", "overlap"]
 # Measurements whose batches run on the map_images thread pool. Add each one as
 # its batch path adopts map_images; the threaded test checks this both ways.
-THREADED = {"intensity"}
+THREADED = {"intensity", "texture"}
 CASES = [(name, {}) for name in CORE + CORRELATION] + [
     ("intensity", dict(legacy=legacy, edge_measurements=edge))
     for legacy in (False, True)
