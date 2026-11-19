@@ -4,6 +4,8 @@
 Subcommands:
   run --out FILE                 generate seeded synthetic inputs, time every cp_measure get_*  -> JSON
   compare --base F --head F [--md F]   diff two run JSONs into a head-vs-main timing table
+  run-batch --out FILE           time each batch-capable get_* on a batch vs a loop of single calls
+  compare-batch --base F --head F [--md F]   report batch timings (head, with main's for reference)
 
 Run once per environment (PR head, main) on the SAME seeded inputs (pure-numpy generation is
 deterministic), then compare. The driver installs each env; this script only needs cp_measure
@@ -12,6 +14,9 @@ importable plus numpy.
 
 import os
 
+# Pinned to one thread so single-image timings reflect algorithmic cost. The batch pass
+# is the exception: the driver sets NUMBA_NUM_THREADS to the runner's CPUs, which sizes
+# the map_images thread pool (setdefault leaves an explicit value alone).
 for _v in (
     "OMP_NUM_THREADS",
     "OPENBLAS_NUM_THREADS",
@@ -37,6 +42,8 @@ import numpy  # noqa: E402
 MATRIX = {"sizes": (256, 512, 1024), "counts": (16, 64, 128, 256), "seeds": (0, 1, 2)}
 BLOBS_PER_CHANNEL = 5
 WARMUP, REPS, TIMEOUT = 1, 3, 120.0
+# Batch pass: one batch of distinct same-size images, as a plate site would give.
+BATCH = {"images": 8, "size": 512, "count": 64}
 AFFECTED = 1.05  # report a function if any cell moves by this factor either way (faster or slower)
 
 
@@ -151,6 +158,101 @@ def run(out_path: str, accelerator: str | None = None):
     )
 
 
+def _threads() -> int:
+    try:
+        from cp_measure.primitives.parallel import _usable_cpus
+    except ImportError:  # older releases have no batch thread pool
+        return 1
+    return _usable_cpus()
+
+
+def run_batch(out_path: str, accelerator: str | None = None):
+    """Time each batch-capable function on one batch vs a loop of single-image calls.
+
+    Batch support is probed on a two-image batch; functions that reject a list are
+    recorded as unsupported and skipped. Results are reported, never asserted.
+    """
+    if accelerator:
+        import cp_measure
+
+        cp_measure.set_accelerator(accelerator)
+    items = []
+    for seed in range(BATCH["images"]):
+        labels, channels = generate(BATCH["size"], BATCH["count"], seed)
+        items.append((labels, _norm01(channels[0]), _norm01(channels[1])))
+    results = {}
+    for name, fn, arity in _functions():
+
+        def args(batch, arity=arity):
+            masks, first, second = (list(group) for group in zip(*batch))
+            return (masks, first) if arity == 1 else (first, second, masks)
+
+        probe = _time(fn, args(items[:2]))
+        if probe["status"] != "ok":
+            results[name] = {"status": "unsupported", "error": probe.get("error")}
+            continue
+        singles = [
+            (labels, a) if arity == 1 else (a, b, labels) for labels, a, b in items
+        ]
+        results[name] = {
+            "status": "ok",
+            "loop": _time(lambda: [fn(*one) for one in singles], ()),
+            "batch": _time(fn, args(items)),
+        }
+    Path(out_path).write_text(
+        json.dumps(
+            {"batch": BATCH, "threads": _threads(), "results": results}, indent=2
+        )
+    )
+
+
+def compare_batch(base: dict, head: dict, commit: str = "") -> str:
+    """Head's batch vs its own loop of single calls (the thread gain), and head's
+    batch vs main's batch (the PR's change). Every supported function is listed."""
+
+    def ms(record, mode):
+        timing = record.get(mode, {}) if record.get("status") == "ok" else {}
+        reps = timing.get("reps") if timing.get("status") == "ok" else None
+        return statistics.median(reps) * 1e3 if reps else None
+
+    def ratio(a, b):
+        return f"{a / b:.2f}×" if a and b else "—"
+
+    b = head["batch"]
+    ref = f"`{commit[:7]}`" if commit else "PR head"
+    out = [
+        f"### Batch — {ref}: {b['images']} images of {b['size']}² px, "
+        f"{b['count']} objects each, {head['threads']} threads",
+        "",
+        "`thread gain = loop of single calls / one batch call` (head) · "
+        "`vs main = main batch / head batch` (>1 faster) · median of reps · "
+        "reported only, not a CI check",
+        "",
+        "| function | loop (ms) | batch (ms) | thread gain | vs main |",
+        "|---|--:|--:|--:|--:|",
+    ]
+    unsupported = []
+    for name in sorted(head["results"]):
+        record = head["results"][name]
+        if record.get("status") != "ok":
+            unsupported.append(name)
+            continue
+        loop, batch = ms(record, "loop"), ms(record, "batch")
+        main = ms(base.get("results", {}).get(name, {}), "batch")
+        cells = [f"{loop:.0f}" if loop else "—", f"{batch:.0f}" if batch else "—"]
+        out.append(
+            f"| `{name}` | "
+            + " | ".join(cells + [ratio(loop, batch), ratio(main, batch)])
+            + " |"
+        )
+    if unsupported:
+        out += [
+            "",
+            "_No batch input: " + ", ".join(f"`{n}`" for n in unsupported) + "._",
+        ]
+    return "\n".join(out)
+
+
 # --- compare ------------------------------------------------------------------------------------
 def _median_ms(results_for_fn: dict, keys: list[str]):
     """Median (ms) over all ok rep times in a cell's seeds, or None."""
@@ -260,9 +362,26 @@ def main(argv=None) -> int:
     c.add_argument("--head-name", default="head")
     c.add_argument("--filter-base", default=None)
     c.add_argument("--md")
+    rb = sub.add_parser("run-batch")
+    rb.add_argument("--out", required=True)
+    rb.add_argument("--accelerator", default=None)
+    cb = sub.add_parser("compare-batch")
+    cb.add_argument("--base", required=True)
+    cb.add_argument("--head", required=True)
+    cb.add_argument("--commit", default="")
+    cb.add_argument("--md")
     a = p.parse_args(argv)
     if a.cmd == "run":
         run(a.out, a.accelerator)
+    elif a.cmd == "run-batch":
+        run_batch(a.out, a.accelerator)
+    elif a.cmd == "compare-batch":
+        md = compare_batch(
+            json.loads(Path(a.base).read_text()),
+            json.loads(Path(a.head).read_text()),
+            a.commit,
+        )
+        (Path(a.md).write_text(md) if a.md else print(md))
     else:
         md = compare(
             json.loads(Path(a.base).read_text()),
