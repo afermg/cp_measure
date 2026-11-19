@@ -191,3 +191,59 @@ def each_volume(masks, pixels):
         return results if is_batch else results[0]
 
     return items, unwrap
+
+
+def memory_key(array) -> tuple:
+    """The memory an array views (address, shape, strides, dtype). Batches use it
+    to share per-mask work: the featurizer passes one view of a mask per channel."""
+    return (
+        array.__array_interface__["data"][0],
+        array.shape,
+        array.strides,
+        array.dtype.str,
+    )
+
+
+def native(array):
+    """``array`` in native byte order, which numba kernels require; no copy when it
+    already is (big-endian data comes from e.g. FITS, N5 or some zarr stores)."""
+    array = numpy.asarray(array)
+    if array.dtype.isnative:
+        return array
+    return array.astype(array.dtype.newbyteorder("="))
+
+
+def is_batch(masks) -> bool:
+    """Whether ``masks`` is a batch: a list/tuple of images or a 4D array."""
+    return isinstance(masks, (list, tuple)) or numpy.ndim(masks) == 4
+
+
+def per_image(masks, pixels) -> list[tuple]:
+    """The ``(mask, pixels)`` pairs of a batch, each at its original rank (a 2D image
+    stays 2D). ``pixels`` may be ``None`` for the shape-only measurements.
+
+    Uses :func:`each_volume`, so it shares its batch contract (matching structure,
+    no ragged batches, no broadcasting) and makes no batch copy.
+    """
+    items, _ = each_volume(masks, masks if pixels is None else pixels)
+    return [
+        (m if ndim == 3 else m[0], None if pixels is None else p if ndim == 3 else p[0])
+        for m, p, ndim in items
+    ]
+
+
+def apply_per_image(func, masks, pixels, **kwargs) -> list:
+    """Run a single-image ``func(mask, pixels, **kwargs)`` over each image of a batch
+    (see :func:`per_image`). Returns one result per image."""
+    return [func(m, p, **kwargs) for m, p in per_image(masks, pixels)]
+
+
+def apply_per_pair(func, pixels_1, pixels_2, masks, **kwargs) -> list:
+    """:func:`apply_per_image` for the two-channel colocalization functions,
+    ``func(pixels_1, pixels_2, masks, **kwargs)``. Returns one result per image."""
+    first, _ = each_volume(masks, pixels_1)
+    second, _ = each_volume(masks, pixels_2)
+    return [
+        func(*(x if ndim == 3 else x[0] for x in (p1, p2, m)), **kwargs)
+        for (m, p1, ndim), (_, p2, _) in zip(first, second)
+    ]
