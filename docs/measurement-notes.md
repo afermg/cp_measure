@@ -34,7 +34,7 @@ Both intensity backends require matching label and image shapes. The NumPy funct
 
 ## Numba granularity batches
 
-Granularity retains its `to_bzyx` normalization, which stacks batch items into arrays with a common dtype. A mixed float32/float64 list or tuple therefore uses float64 arithmetic even with `precision="input"`. The `precision="float64"` option widens any remaining float16/float32 data before arithmetic. To preserve each input dtype independently, measure the images in separate calls.
+Batch images should share one dtype. A same-dtype batch (including any `(B, Z, Y, X)` array) gives the same values as measuring each image separately. Mixed-dtype lists or tuples are the caller's responsibility: they are not checked or rejected, and their results are not guaranteed. Currently granularity measures such a batch at its common dtype, so a mixed float32/float64 list uses float64 arithmetic even with `precision="input"`. The `precision="float64"` option widens any remaining float16/float32 data before arithmetic. To preserve each input dtype, measure the images in separate calls.
 
 ## Granularity intermediate precision
 

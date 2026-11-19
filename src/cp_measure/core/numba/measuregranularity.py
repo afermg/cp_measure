@@ -59,6 +59,9 @@ def get_granularity(
     Returns a single ``{Granularity_k: array}`` dict for a lone 2D image or 3D
     volume, or a list of such dicts for a batch (4D ``(B,Z,Y,X)`` array or a list
     of same-shaped images). Ragged batches are rejected by the shared normalizer.
+    Batch images should share one dtype: a same-dtype batch gives the same values
+    as measuring each image separately. Mixed-dtype lists are not checked and their
+    results are not guaranteed (they are currently measured at the common dtype).
     These raw/bulk shapes are distinct from the featurizer's explicit batch and
     channel axes. Output arrays are indexed densely by label ``1..max(mask)``.
     ``precision="input"`` retains the pre-policy mixed-precision path;
