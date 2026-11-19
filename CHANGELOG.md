@@ -4,6 +4,11 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
+  object-set ranks. The default remains independent per-object ranking (#121).
+
 ### Fixed
 
 - 3D size/shape with `calculate_advanced=True` and `new_features=True` now
