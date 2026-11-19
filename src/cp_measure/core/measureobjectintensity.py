@@ -2,6 +2,7 @@ import numpy
 import scipy.ndimage
 import skimage.segmentation
 from numpy.typing import NDArray
+from cp_measure.primitives.shapes import apply_per_image, is_batch
 
 __doc__ = """
 MeasureObjectIntensity
@@ -141,7 +142,7 @@ def get_intensity(
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
     legacy: bool = False,
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object intensity features.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
@@ -162,6 +163,14 @@ def get_intensity(
         quartiles at ``n*q`` and MAD as the ``(1/ndim)``-quantile of
         ``|x - median(x)|``. All other features are unaffected.
     """
+    if is_batch(masks):  # list/tuple or 4D: one result per image
+        return apply_per_image(
+            get_intensity,
+            masks,
+            pixels,
+            edge_measurements=edge_measurements,
+            legacy=legacy,
+        )
     # Labels and pixels must match in shape and rank; no implicit mask
     # broadcasting over a 3D stack (mirrors the numba backend and the to_bzyx
     # contract, which also refuses to broadcast a lower-rank mask).

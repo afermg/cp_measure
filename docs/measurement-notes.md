@@ -12,7 +12,7 @@ The featurizer supports both single- and multichannel volumes with `is_3d=True`.
 
 To use a 2D mask through a volume, the caller must explicitly repeat it before calling `featurize`, for example `masks_3d = np.repeat(masks_2d[:, :, None], image.shape[2], axis=2)`. Each repeated label becomes one 3D object, so intensity and shape measurements use the entire volume rather than separate 2D measurements per slice. The featurizer does not perform this conversion or modify its inputs.
 
-For `Z=1`, size/shape measures the sole plane in both backends, including through the bulk wrappers and featurizer. It returns 2D feature names and pixel-based values: 78 default features, not the 212-feature 3D schema. All-background raw masks use the same 2D schema with zero-length arrays. This replaces the previous nonempty-input error and changes the previous empty singleton-Z schema. As for explicit 2D inputs, `spacing` does not scale these measurements.
+For `Z=1`, size/shape measures the sole plane in both backends, including through the bulk wrappers and featurizer. It returns 2D feature names and pixel-based values: 78 default features, not the 224-feature 3D schema. All-background raw masks use the same 2D schema with zero-length arrays. This replaces the previous nonempty-input error and changes the previous empty singleton-Z schema. As for explicit 2D inputs, `spacing` does not scale these measurements.
 
 For `Z>1`, size/shape retains its 3D implementation and spacing convention. Its surface-area calculation still requires at least two voxels along each spatial axis; singleton X/Y axes are not squeezed. Raw size/shape calls remain per-image, not batch APIs.
 
@@ -28,7 +28,7 @@ Both raw functions require contiguous labels. The featurizer and default bulk wr
 
 The direct Numba `get_intensity` function accepts matching 2D or 3D images and returns one feature dictionary. Matching `(B, Z, Y, X)` arrays or lists/tuples of equally shaped 2D/3D images return a list of dictionaries. A 3D array is one image, never an implicit batch. Empty or ragged batches and mismatched input ranks/shapes are rejected; masks are not broadcast or repeated.
 
-`legacy` and `edge_measurements` apply to every image. Legacy MAD depends on the original spatial rank: a 2D list item uses the 2D convention, while a `(B, 1, Y, X)` batch contains singleton-Z volumes and retains the 3D convention. Batch items are processed sequentially using the existing kernels and per-item views. The NumPy direct function remains a single-image API, and featurizer input conventions are unchanged.
+`legacy` and `edge_measurements` apply to every image. Legacy MAD depends on the original spatial rank: a 2D list item uses the 2D convention, while a `(B, 1, Y, X)` batch contains singleton-Z volumes and retains the 3D convention. Batch items run on a thread pool, each with the existing kernels and per-item views. The NumPy direct function accepts the same batch forms and measures each item in turn; featurizer input conventions are unchanged.
 
 Both intensity backends require matching label and image shapes. The NumPy function previously broadcast a 2D mask across a 3D image; callers who want that measurement can now pass `np.broadcast_to(mask_2d, pixels_3d.shape)` explicitly. Each repeated label is measured as one object across the volume.
 
@@ -40,6 +40,16 @@ Granularity retains its `to_bzyx` normalization, which stacks batch items into a
 
 Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim variation can disappear, and pairs containing zero are excluded. See the [#100 explanation](https://github.com/afermg/cp_measure/issues/100#issuecomment-5939719548) and [`get_texture` Notes](../src/cp_measure/core/measuretexture.py) for CellProfiler compatibility and zero/NaN behavior.
 
+## RWC ranking scope
+
+`get_correlation_rwc` defaults to `rank_scope="object"`: each object's channel intensities are ranked independently. This preserves existing results and keeps an object's RWC independent of other objects in the image.
+
+Use `rank_scope="object_set"` for CellProfiler 4.2.8's ranking definition: compute zero-based dense ranks over all foreground pixels of the supplied object set, excluding background, then reduce the weighted intensities per object. The maximum rank count is shared across the object set, so changing other objects can change an object's coefficient. This is **not** image-wide ranking that includes background, nor a change to the default.
+
+The option is available through the bulk function and `make_featurizer_config(..., correlation_rwc_params={"rank_scope": "object_set"})`. Each supplied mask type/image is its own object set. The binary single-mask API has only one object and needs no scope selection. Raw multi-label calls expect contiguous IDs; the bulk/featurizer sanitization handles noncontiguous labels.
+
+Object-set mode requires finite foreground intensities (nonfinite background is ignored). Existing CPM conventions remain: absent objects or objects with no jointly above-threshold pixels return zero; a zero total signal with qualifying pixels yields NaN. This mode reproduces CP's ranking definition for ordinary finite inputs, not all of its image-mask or degenerate-export policies. The existing object-local threshold path is unchanged by this option; the precision policy described below applies to both scopes.
+
 ## Legacy percentile convention
 
 `legacy=True` restores the original intensity quantile conventions; the default uses NumPy's linear quartiles and the usual median absolute deviation. See the [`get_intensity` docstring](../src/cp_measure/core/measureobjectintensity.py#L139-L163) for formulas, including the different legacy MAD convention in 3D.
@@ -50,7 +60,7 @@ For integer images, Costes divides by `scale_max`; normalized floats require the
 
 Both public Costes functions recognize **exact** reciprocal-multiply encodings of integer acquisition-grid levels, as produced by `img_as_float`, and map them to the existing division encoding before fitting thresholds and computing coefficients. This is performed per object, without modifying caller inputs. Other float values are left unchanged: there is no blanket quantization or epsilon-based snapping of nearby values. Explicit lower-bit-depth scales, such as `4095` for 12-bit images in `uint16`, use the same rule.
 
-This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes. Existing threshold comparisons and undefined-result/NaN rules are unchanged.
+This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes.
 
 ## Singleton-Z measurement eligibility
 
@@ -145,13 +155,15 @@ checked against the historical boundary behavior. The original CellProfiler
 fixture remains unchanged; the float64 expectation is a separate oracle, not a
 rewritten reference. No separate JIT threshold policy is introduced.
 
-Object-set RWC remains an independent follow-up:
+Both backends accept `rank_scope="object_set"`. The Numba wrapper delegates this
+opt-in scope to the NumPy reference per image, including in explicit batches;
+it does not rank across batch items. The default `rank_scope="object"` retains
+its accelerated object-local calculation. Bulk and featurizer calls forward
+the explicit scope without changing the default.
 
-- [#126](https://github.com/afermg/cp_measure/pull/126) adds an opt-in
-  `rank_scope="object_set"`. This backend retains the current signature and
-  ordinary object-local default; that follow-up will also need to add keyword
-  forwarding to the Numba wrapper (with a reference path for the new scope, or
-  a separately validated implementation). It must not silently change the default.
+Both scopes accept `precision="input"` (default) or `precision="float64"`.
+Object-set float64 mode widens stored float16/float32 values before ranking,
+thresholding and reduction; it does not promise CellProfiler float32 parity.
 
 ### Costes
 
@@ -166,7 +178,7 @@ search. This preserves threshold inclusion: even last-bit changes in the fitted
 line can change the result substantially. Constant/nonfinite or insufficient
 signals retain NaN results and standard `RuntimeWarning` diagnostics. Missing
 raw Costes labels likewise yield NaN and warnings, unlike the zero-valued slots
-of the other colocalization metrics. Undefined searches are replayed per object
+of the other colocalization metrics. Exceptional searches are replayed per object
 by the reference to preserve precise diagnostics. Near-constant subsets and
 correlations within a reduction-error bound of a search decision also use this
 compatibility path; no correlation is rounded or search cutoff moved.

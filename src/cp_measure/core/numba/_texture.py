@@ -30,8 +30,8 @@ The reduction then sums in first-touch (raster) order instead of (i, j) order,
 which moves the float features by ~1e-11 relative, far inside the ~1e-5
 agreement with mahotas; see ``haralick_object``.
 
-``img_as_ubyte`` / ``regionprops`` stay host-side (scipy/skimage). Serial; no
-``prange``/``nogil``.
+``img_as_ubyte`` stays host-side (skimage). The kernels release the GIL
+(``nogil``), so batch images can run on threads; there is no ``prange``.
 """
 
 import numpy as np
