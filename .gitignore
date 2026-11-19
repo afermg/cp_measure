@@ -4,3 +4,6 @@ __pycache__/
 
 # local benchmark output
 bench-out/
+
+# hatch-vcs generated version file
+src/cp_measure/_version.py
