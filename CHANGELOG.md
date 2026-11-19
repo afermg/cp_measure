@@ -4,6 +4,14 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- 3D size/shape with `calculate_advanced=True` and `new_features=True` now
+  exports the 12 missing `(0, 3, r)` moments (`SpatialMoment_0_3_r`,
+  `CentralMoment_0_3_r`, `NormalizedMoment_0_3_r` for `r` in 0–3). The 3D schema
+  grows from 212 to 224 features. Existing columns keep their names and values;
+  the new columns appear in index order after the `0_2_3` moments.
+
 ## [0.4.0] - 2026-11-19
 
 ### Performance

@@ -6,6 +6,7 @@ dimensionality. These tests use only the public API.
 
 import gzip
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -51,6 +52,10 @@ def test_batch_equals_stacked_individual(image_2d_2ch, mask_2d):
     )
 
 
+# Columns added after featurizer_pre_batch.json.gz was recorded.
+_ADDED_AFTER_SNAPSHOT = re.compile(r"(Spatial|Central|Normalized)Moment_0_3_[0-3]")
+
+
 @pytest.mark.parametrize("is_3d", [False, True], ids=["2d", "3d"])
 @pytest.mark.parametrize("legacy", [False, True], ids=["modern", "legacy"])
 def test_varied_batch_matches_singletons_and_pre_refactor_reference(is_3d, legacy):
@@ -93,6 +98,9 @@ def test_varied_batch_matches_singletons_and_pre_refactor_reference(is_3d, legac
         reference = json.load(saved)
     key = f"{'3d' if is_3d else '2d'}-{'legacy' if legacy else 'modern'}"
     expected = reference["cases"][key]
+    # The snapshot predates the 3D (0, 3, r) moments; compare the columns it has.
+    kept = [i for i, c in enumerate(columns) if not _ADDED_AFTER_SNAPSHOT.search(c)]
+    columns, data = [columns[i] for i in kept], data[:, kept]
     assert columns == expected["columns"]
     assert rows == [tuple(row) for row in expected["rows"]]
     expected_data = np.asarray(expected["data"], dtype=float)  # JSON null -> NaN

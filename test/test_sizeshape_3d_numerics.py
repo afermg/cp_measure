@@ -139,9 +139,8 @@ def test_moments_against_exact_voxel_sums(measure):
     for index, label in enumerate((7, 91)):
         n, raw, central = _exact_moments(masks == label)
         np.testing.assert_array_equal(got["Volume"][index], n)
-        # Freeze the current exported set, including its omission of (0,3,r).
-        # Adding those columns is a separate schema change, not acceleration.
-        powers_exported = [p for p in product(range(4), repeat=3) if p[:2] != (0, 3)]
+        # The full 4x4x4 set of orders is exported for each moment family.
+        powers_exported = list(product(range(4), repeat=3))
         assert {key for key in got if "Moment_" in key} == {
             f"{prefix}Moment_{p}_{q}_{r}"
             for prefix in ("Spatial", "Central", "Normalized")
@@ -247,7 +246,7 @@ def test_surface_area_spacing_convention(measure, lengths):
 
 @pytest.mark.parametrize(
     "advanced,new,count",
-    [(False, False, 17), (False, True, 19), (True, False, 18), (True, True, 212)],
+    [(False, False, 17), (False, True, 19), (True, False, 18), (True, True, 224)],
 )
 def test_empty_and_option_schemas(measure, advanced, new, count):
     masks = _objects()
