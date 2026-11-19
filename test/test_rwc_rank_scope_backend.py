@@ -14,8 +14,9 @@ pytestmark = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("scope", ["object", "object_set"])
+@pytest.mark.parametrize("precision", ["input", "float64"])
 @pytest.mark.parametrize("shape", ["2d", "singleton", "volume", "strided"])
-def test_scope_parity_and_immutability(dtype, scope, shape):
+def test_scope_parity_and_immutability(dtype, scope, precision, shape):
     from cp_measure.core.numba.measurecolocalization import get_correlation_rwc
 
     a, b, labels = scene()
@@ -29,8 +30,12 @@ def test_scope_parity_and_immutability(dtype, scope, shape):
     originals = [v.copy() for v in (a, b, labels)]
     for v in (a, b, labels):
         v.setflags(write=False)
-    expected = ref.get_correlation_rwc(a, b, labels, thr=42, rank_scope=scope)
-    actual = get_correlation_rwc(a, b, labels, thr=42, rank_scope=scope)
+    expected = ref.get_correlation_rwc(
+        a, b, labels, thr=42, rank_scope=scope, precision=precision
+    )
+    actual = get_correlation_rwc(
+        a, b, labels, thr=42, rank_scope=scope, precision=precision
+    )
     assert list(actual) == list(expected)
     for key in expected:
         assert isinstance(actual[key], list)
@@ -40,7 +45,8 @@ def test_scope_parity_and_immutability(dtype, scope, shape):
 
 
 @pytest.mark.parametrize("as_list", [False, True])
-def test_object_set_batches_rank_each_image_separately(as_list):
+@pytest.mark.parametrize("precision", ["input", "float64"])
+def test_object_set_batches_rank_each_image_separately(as_list, precision):
     from cp_measure.core.numba.measurecolocalization import get_correlation_rwc
 
     a, b, labels = scene()
@@ -49,14 +55,19 @@ def test_object_set_batches_rank_each_image_separately(as_list):
     masks = np.stack([labels[None], labels[None]])
     if as_list:
         first, second, masks = list(first), list(second), list(masks)
-    actual = get_correlation_rwc(first, second, masks, rank_scope="object_set")
+    actual = get_correlation_rwc(
+        first, second, masks, rank_scope="object_set", precision=precision
+    )
     assert len(actual) == 2
     for got, x, y, m in zip(actual, first, second, masks):
-        assert got == ref.get_correlation_rwc(x, y, m, rank_scope="object_set")
+        assert got == ref.get_correlation_rwc(
+            x, y, m, rank_scope="object_set", precision=precision
+        )
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_object_set_bulk_and_featurizer_forwarding(dtype):
+@pytest.mark.parametrize("precision", ["input", "float64"])
+def test_object_set_bulk_and_featurizer_forwarding(dtype, precision):
     from cp_measure.featurizer import featurize, make_featurizer_config
     from conftest import ALL_OFF
 
@@ -65,7 +76,7 @@ def test_object_set_bulk_and_featurizer_forwarding(dtype):
     config = make_featurizer_config(
         ["A", "B"],
         **{**ALL_OFF, "correlation_rwc": True},
-        correlation_rwc_params={"rank_scope": "object_set"},
+        correlation_rwc_params={"rank_scope": "object_set", "precision": precision},
     )
     images, masks = np.stack([a, b])[None], labels[None, None]
     try:
@@ -75,8 +86,10 @@ def test_object_set_bulk_and_featurizer_forwarding(dtype):
         raw = bulk.get_correlation_measurements(sanitize=False)["rwc"]
         assert "numba" in raw.__module__
         assert bulk.get_correlation_measurements()["rwc"](
-            a, b, labels, rank_scope="object_set"
-        ) == ref.get_correlation_rwc(a, b, labels, rank_scope="object_set")
+            a, b, labels, rank_scope="object_set", precision=precision
+        ) == ref.get_correlation_rwc(
+            a, b, labels, rank_scope="object_set", precision=precision
+        )
         actual = featurize(images, masks, config)
         assert actual[1:] == expected[1:]
         np.testing.assert_array_equal(actual[0], expected[0])

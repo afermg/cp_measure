@@ -87,6 +87,8 @@ from numpy.typing import NDArray
 import scipy.ndimage
 import scipy.stats
 
+from cp_measure._precision import Precision, promote_float_pixels, validate_precision
+
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
 M_IMAGES_AND_OBJECTS = "Both"
@@ -161,11 +163,26 @@ def _pearson_pair(
     return float(corr), float(slope)
 
 
+def _percentage_threshold(
+    values: NDArray[numpy.floating], thr: float, precision: Precision = "input"
+) -> NDArray[numpy.floating]:
+    # Keep the pre-policy scalar rules in input mode. Explicit scalar conversion
+    # and promoted pixels make float64 mode independent of weak-scalar rules.
+    if precision == "float64":
+        thr = float(thr)
+    return (thr / 100) * values.max(keepdims=True)
+
+
 def _manders_pair(
-    fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    thr: float,
+    *,
+    precision: Precision = "input",
 ) -> tuple[float, float]:
-    tff = (thr / 100) * fi.max()
-    tss = (thr / 100) * si.max()
+    fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
+    tff = _percentage_threshold(fi, thr, precision)
+    tss = _percentage_threshold(si, thr, precision)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0
@@ -179,10 +196,15 @@ def _manders_pair(
 
 
 def _overlap_pair(
-    fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    thr: float,
+    *,
+    precision: Precision = "input",
 ) -> tuple[float, float, float]:
-    tff = (thr / 100) * fi.max()
-    tss = (thr / 100) * si.max()
+    fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
+    tff = _percentage_threshold(fi, thr, precision)
+    tss = _percentage_threshold(si, thr, precision)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0, 0.0
@@ -200,8 +222,13 @@ def _overlap_pair(
 
 
 def _rwc_pair(
-    fi: NDArray[numpy.floating], si: NDArray[numpy.floating], thr: float
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    thr: float,
+    *,
+    precision: Precision = "input",
 ) -> tuple[float, float]:
+    fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
     Rank1 = numpy.lexsort([fi])
     Rank2 = numpy.lexsort([si])
     Rank1_U = numpy.hstack([[False], fi[Rank1[:-1]] != fi[Rank1[1:]]])
@@ -217,8 +244,8 @@ def _rwc_pair(
     Di = abs(Rank_im1 - Rank_im2)
     weight = (R - Di) * 1.0 / R
 
-    tff = (thr / 100) * fi.max()
-    tss = (thr / 100) * si.max()
+    tff = _percentage_threshold(fi, thr, precision)
+    tss = _percentage_threshold(si, thr, precision)
     combined = (fi >= tff) & (si >= tss)
     if not combined.any():
         return 0.0, 0.0
@@ -248,6 +275,25 @@ def _validate_costes_scale(scale_max: int) -> int:
     ):
         raise ValueError("scale_max must be an integer between 2 and 2**32 - 1")
     return int(scale_max)
+
+
+def _canonical_costes_pixels(values, scale):
+    """Use division encoding for exact reciprocal-normalized integer grid levels.
+
+    Recognize the encoding used by img_as_float without tolerance-snapping other
+    floats. Apply per object to bound scratch memory and ignore background pixels.
+    """
+    # Only probe the nonzero grid range, avoiding nonfinite/overflow and subnormal
+    # arithmetic on invalid or unrelated values. Zero is already canonical.
+    eligible = (values >= 1.0 / scale) & (values <= 1)
+    original = values[eligible]
+    levels = numpy.rint(original * scale)
+    canonical = levels / scale
+    encoded = original == levels * (1.0 / scale)
+    if numpy.any(encoded & (original != canonical)):
+        values = values.copy()
+        values[eligible] = numpy.where(encoded, canonical, original)
+    return values
 
 
 def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
@@ -295,19 +341,13 @@ def _valid_costes_pixels(fi, si) -> bool:
 
 
 def _costes_background_correlation(fi, si, selected) -> float:
-    if numpy.count_nonzero(selected) < 3:
+    # Linear search permits two pairs; bisection skips them before calling here.
+    if numpy.count_nonzero(selected) < 2:
         return numpy.nan
     first, second = fi[selected], si[selected]
     if numpy.ptp(first) == 0 or numpy.ptp(second) == 0:
         return numpy.nan
     return float(scipy.stats.pearsonr(first, second)[0])
-
-
-def _finish_costes_thresholds(fi, si, first_threshold, second_threshold):
-    selected = (fi < first_threshold) | (si < second_threshold)
-    if not numpy.isfinite(_costes_background_correlation(fi, si, selected)):
-        return _undefined_costes("chosen background subset has undefined correlation")
-    return float(first_threshold), float(second_threshold)
 
 
 def _costes_pair(
@@ -316,6 +356,8 @@ def _costes_pair(
     scale: int,
     fast_costes: str,
 ) -> tuple[float, float]:
+    fi = _canonical_costes_pixels(fi, scale)
+    si = _canonical_costes_pixels(si, scale)
     search = bisection_costes if fast_costes == M_FASTER else linear_costes
     thr_fi, thr_si = search(None, None, fi, si, scale, fast_costes)
     if not (numpy.isfinite(thr_fi) and numpy.isfinite(thr_si)):
@@ -389,10 +431,12 @@ def get_correlation_manders_fold_ind(
     pixels_2: NDArray[numpy.floating],
     mask: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, float]:
     fi = pixels_1[mask]
     si = pixels_2[mask]
-    M1, M2 = _manders_pair(fi, si, thr)
+    M1, M2 = _manders_pair(fi, si, thr, precision=precision)
     return {f"{F_MANDERS_FORMAT}_1": M1, f"{F_MANDERS_FORMAT}_2": M2}
 
 
@@ -401,10 +445,12 @@ def get_correlation_rwc_ind(
     pixels_2: NDArray[numpy.floating],
     mask: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, float]:
     fi = pixels_1[mask]
     si = pixels_2[mask]
-    RWC1, RWC2 = _rwc_pair(fi, si, thr)
+    RWC1, RWC2 = _rwc_pair(fi, si, thr, precision=precision)
     return {f"{F_RWC_FORMAT}_1": RWC1, f"{F_RWC_FORMAT}_2": RWC2}
 
 
@@ -437,10 +483,12 @@ def get_correlation_overlap_ind(
     pixels_2: NDArray[numpy.floating],
     mask: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, float]:
     fi = pixels_1[mask]
     si = pixels_2[mask]
-    overlap, K1, K2 = _overlap_pair(fi, si, thr)
+    overlap, K1, K2 = _overlap_pair(fi, si, thr, precision=precision)
     return {
         F_OVERLAP_FORMAT: overlap,
         f"{F_K_FORMAT}_1": K1,
@@ -449,8 +497,8 @@ def get_correlation_overlap_ind(
 
 
 # ---------------------------------------------------------------------------
-# Costes' automated threshold (CellProfiler searches with explicit scale and
-# undefined-subset guards). first_pixels/second_pixels are compatibility args.
+# Costes' automated threshold (CellProfiler boundary policy, explicit scale).
+# first_pixels/second_pixels are compatibility args.
 # ---------------------------------------------------------------------------
 
 
@@ -475,7 +523,8 @@ def linear_costes(
     Candiate thresholds are gradually decreased until Pearson R falls below 0.
     If "Fast" mode is enabled the "steps" between tested thresholds will be increased
     when Pearson R is much greater than 0. Inputs must be normalized 1D arrays.
-    Undefined subsets return NaN thresholds with RuntimeWarning.
+    As in CellProfiler, insufficient background pixels end the search at the
+    current thresholds; no final background-validity veto is applied.
     """
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
@@ -525,14 +574,15 @@ def linear_costes(
         thr_fi_c = i
         thr_si_c = (a * i) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
-        # Only run Pearson if the input has changed.
-        if (positives := numpy.count_nonzero(combt)) != num_true:
+        # CP returns the current thresholds when Pearson has too few pairs.
+        positives = numpy.count_nonzero(combt)
+        if positives < 2:
+            break
+        # Only run Pearson if the input has changed. Constant subsets yield NaN
+        # and take the ordinary one-step descent, matching CP's comparisons.
+        if positives != num_true:
             costReg = _costes_background_correlation(fi, si, combt)
             num_true = positives
-        if not numpy.isfinite(costReg):
-            return _undefined_costes(
-                "background correlation became undefined during linear search"
-            )
         if costReg <= 0:
             break
         # Accurate mode and thresholds below ten grid steps never skip candidates.
@@ -540,7 +590,7 @@ def linear_costes(
         if fast_costes != M_ACCURATE and i >= i_step * 10:
             multiplier = _costes_step_multiplier(costReg)
         i -= i_step * multiplier
-    return _finish_costes_thresholds(fi, si, thr_fi_c, thr_si_c)
+    return float(thr_fi_c), float(thr_si_c)
 
 
 def bisection_costes(
@@ -558,8 +608,9 @@ def bisection_costes(
     We're looking for the first point below 0, and R value can become highly variable
     at lower thresholds in some samples. Therefore the candidate tested in each
     loop is 1/6th of the window size below the maximum value (as opposed to the midpoint).
-    Inputs must be normalized 1D arrays. Undefined results return NaN thresholds
-    with RuntimeWarning; constant candidates are treated as insufficient.
+    Inputs must be normalized 1D arrays. As in CellProfiler, the search retains
+    its boundary fallback when no nonnegative candidate is found and does not
+    validate the background again after choosing the final thresholds.
     """
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
@@ -596,8 +647,9 @@ def bisection_costes(
     right: float = scale_max
     mid: float = ((right - left) // (6 / 5)) + left
     lastmid: float = 0
-    # None distinguishes an undefined search from a real threshold at zero.
-    valid: float | None = None
+    # CP's boundary fallback: if no nonnegative candidate is found, use zero
+    # for the first threshold and the fitted intercept for the second.
+    valid: float = 1
     iterations = 0
     while lastmid != mid:
         iterations += 1
@@ -606,23 +658,23 @@ def bisection_costes(
         thr_fi_c = mid / scale_max
         thr_si_c = (a * thr_fi_c) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
-        costReg = _costes_background_correlation(fi, si, combt)
-        if not numpy.isfinite(costReg) or costReg < 0:
-            # Move above insufficient/constant candidates, never treat NaN as
-            # an implicit convergence event (which formerly left stale bounds).
+        if numpy.count_nonzero(combt) <= 2:
             left = mid - 1
         else:
-            right = mid + 1
-            valid = mid
+            costReg = _costes_background_correlation(fi, si, combt)
+            if costReg < 0:
+                left = mid - 1
+            elif costReg >= 0:
+                right = mid + 1
+                valid = mid
+            # NaN (constant background) leaves the bounds unchanged, as in CP.
         lastmid = mid
         divisor = 6 / 5 if right - left > 6 else 2
         mid = ((right - left) // divisor) + left
 
-    if valid is None:
-        return _undefined_costes("no finite nonnegative background correlation found")
     thr_fi_c = (valid - 1) / scale_max
     thr_si_c = (a * thr_fi_c) + b
-    return _finish_costes_thresholds(fi, si, thr_fi_c, thr_si_c)
+    return float(thr_fi_c), float(thr_si_c)
 
 
 # MODIFIED: This reproduces the behaviour of the block at
@@ -676,11 +728,16 @@ def get_correlation_manders_fold(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     """Per-object Manders fold coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    ``precision="input"`` preserves the pre-policy dtype path; ``"float64"``
+    widens float16/32 before arithmetic (see measurement notes).
     """
+    validate_precision(precision)
     m1_list: list[float] = []
     m2_list: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -688,7 +745,7 @@ def get_correlation_manders_fold(
             m1_list.append(0.0)
             m2_list.append(0.0)
             continue
-        M1, M2 = _manders_pair(fi, si, thr)
+        M1, M2 = _manders_pair(fi, si, thr, precision=precision)
         m1_list.append(M1)
         m2_list.append(M2)
     return {f"{F_MANDERS_FORMAT}_1": m1_list, f"{F_MANDERS_FORMAT}_2": m2_list}
@@ -699,6 +756,8 @@ def _rwc_object_set(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: float,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     """CP-style dense ranks across foreground, with per-object reductions."""
     nobjects = int(masks.max(initial=0))
@@ -707,6 +766,7 @@ def _rwc_object_set(
     foreground = masks > 0
     labels = masks[foreground].astype(numpy.intp, copy=False)
     fi, si = pixels_1[foreground], pixels_2[foreground]
+    fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
     if not (numpy.isfinite(fi).all() and numpy.isfinite(si).all()):
         raise ValueError("object_set ranking requires finite foreground intensities")
     _, rank1 = numpy.unique(fi, return_inverse=True)
@@ -715,6 +775,8 @@ def _rwc_object_set(
     weights = (rank_count - numpy.abs(rank1 - rank2)) * 1.0 / rank_count
 
     indices = numpy.arange(1, nobjects + 1)
+    if precision == "float64":
+        thr = float(thr)
     # Array-valued maxima retain CP's float32 threshold arithmetic, including
     # boundary pixels. This is intentionally independent of the local API.
     threshold1 = (thr / 100) * scipy.ndimage.maximum(fi, labels, indices)
@@ -752,6 +814,7 @@ def get_correlation_rwc(
     thr: int = 15,
     *,
     rank_scope: str = "object",
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     """Per-object rank-weighted colocalization coefficients between two channels.
 
@@ -763,9 +826,12 @@ def get_correlation_rwc(
     Existing empty/absent and zero-signal return conventions are retained.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    ``precision="input"`` preserves the pre-policy dtype path; ``"float64"``
+    widens float16/32 before arithmetic (see measurement notes).
     """
+    validate_precision(precision)
     if rank_scope == "object_set":
-        return _rwc_object_set(pixels_1, pixels_2, masks, thr)
+        return _rwc_object_set(pixels_1, pixels_2, masks, thr, precision=precision)
     if rank_scope != "object":
         raise ValueError("rank_scope must be 'object' or 'object_set'")
     r1: list[float] = []
@@ -775,7 +841,7 @@ def get_correlation_rwc(
             r1.append(0.0)
             r2.append(0.0)
             continue
-        RWC1, RWC2 = _rwc_pair(fi, si, thr)
+        RWC1, RWC2 = _rwc_pair(fi, si, thr, precision=precision)
         r1.append(RWC1)
         r2.append(RWC2)
     return {f"{F_RWC_FORMAT}_1": r1, f"{F_RWC_FORMAT}_2": r2}
@@ -798,10 +864,15 @@ def get_correlation_costes(
     its storage maximum is inferred when ``scale_max`` is omitted. Supply
     the acquisition maximum for lower-bit-depth data in a larger container.
     Signed or mixed-dtype inputs always require an explicit common scale.
+    Exact reciprocal-multiply encodings of integer grid levels (as produced by
+    ``img_as_float``) are mapped to the integer path's division encoding. Other
+    float values are not quantized or tolerance-snapped to the grid.
 
-    Undefined regressions/background subsets or zero signal denominators
-    return NaN and emit :class:`RuntimeWarning`, rather than plausible
-    zero/one coefficients. ``thr`` is retained but unused. Input arrays are
+    Small or constant threshold-search backgrounds do not veto the returned
+    coefficients; boundary results (including zero/one) are left for downstream
+    quality control. Invalid signals, undefined regressions and zero signal
+    denominators still return NaN with :class:`RuntimeWarning`.
+    ``thr`` is retained but unused. Input arrays are
     never modified. Labels must be contiguous ``1..N``; use the bulk API or
     :func:`cp_measure._sanitize.sanitize` for arbitrary IDs.
     """
@@ -827,11 +898,16 @@ def get_correlation_overlap(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: int = 15,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, list[float]]:
     """Per-object overlap and k1/k2 colocalization coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    ``precision="input"`` preserves the pre-policy dtype path; ``"float64"``
+    widens float16/32 before arithmetic (see measurement notes).
     """
+    validate_precision(precision)
     overlap_list: list[float] = []
     k1_list: list[float] = []
     k2_list: list[float] = []
@@ -841,7 +917,7 @@ def get_correlation_overlap(
             k1_list.append(0.0)
             k2_list.append(0.0)
             continue
-        overlap, K1, K2 = _overlap_pair(fi, si, thr)
+        overlap, K1, K2 = _overlap_pair(fi, si, thr, precision=precision)
         overlap_list.append(overlap)
         k1_list.append(K1)
         k2_list.append(K2)

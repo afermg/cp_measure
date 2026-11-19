@@ -39,7 +39,11 @@ def sanitize_masks(masks: NDArray) -> tuple[NDArray, NDArray[numpy.int64]]:
     if ids.size == mx:
         # already 1..N: no copy (cast only a bool mask up to an integer dtype)
         return (masks if masks.dtype != bool else masks.astype(numpy.intp)), ids
-    clean, _forward, _inverse = relabel_sequential(masks)
+    # skimage's Cython relabeler can require a writable source buffer even
+    # though it only reads it. Copy only sparse readonly labels; dense inputs
+    # keep the zero-copy fast path above, including readonly views and batches.
+    source = masks if masks.flags.writeable else masks.copy()
+    clean, _forward, _inverse = relabel_sequential(source)
     return clean, ids
 
 

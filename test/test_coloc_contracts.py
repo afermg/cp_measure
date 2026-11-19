@@ -59,8 +59,9 @@ def assert_parity(name, first, second, masks, **kwargs):
         "no_combined",
     ],
 )
-def test_current_main_undefined_and_missing_labels(name, case):
-    first = np.array([[0.2, 0.8, 0.4], [0.6, 1.0, 0.3]])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_current_main_undefined_and_missing_labels(name, case, dtype):
+    first = np.array([[0.2, 0.8, 0.4], [0.6, 1.0, 0.3]], dtype=dtype)
     second = first[:, ::-1].copy()
     masks = np.ones(first.shape, dtype=np.int32)
     if case == "zero":
@@ -88,7 +89,7 @@ def test_current_main_undefined_and_missing_labels(name, case):
 
 @pytest.mark.parametrize("name", NAMES)
 @pytest.mark.parametrize(
-    "dtype", [np.uint8, np.uint16, np.int16, np.float32, np.float64]
+    "dtype", [np.uint8, np.uint16, np.int16, np.float16, np.float32, np.float64]
 )
 @pytest.mark.parametrize("thr", [0, 15, 73.5])
 def test_current_main_dtype_and_threshold(name, dtype, thr):
@@ -103,7 +104,7 @@ def test_current_main_dtype_and_threshold(name, dtype, thr):
 
 @pytest.mark.parametrize("name", NAMES)
 def test_float32_threshold_boundary_keeps_current_numpy_semantics(name):
-    # Do not implicitly bundle #124's threshold promotion fix into this backend.
+    # Both backends follow the same explicitly selected intermediate precision.
     first = np.array([[3, 20], [10, 0]], dtype=np.float32) / 65535
     second = np.array([[20, 3], [10, 0]], dtype=np.float32) / 65535
     assert_parity(name, first, second, np.ones(first.shape, np.int32))

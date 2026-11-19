@@ -58,6 +58,7 @@ import numpy
 import scipy.ndimage
 import scipy.sparse
 import skimage.morphology
+from cp_measure._precision import Precision, promote_float_pixels
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 
@@ -145,6 +146,8 @@ def get_granularity(
     image_sample_size: float = 0.25,
     element_size: int = 10,
     granular_spectrum_length: int = 16,
+    *,
+    precision: Precision = "input",
 ) -> dict[str, NDArray[numpy.floating]]:
     """Per-object granularity spectrum features.
 
@@ -206,6 +209,10 @@ def get_granularity(
         spectrum range yields informative measurements. Start by using a wide
         spectrum and narrow it down to the informative range to save time.
 
+    precision : {"input", "float64"}, keyword-only
+        Preserve the pre-policy dtype path (default), or widen float16/32
+        before resampling and background arithmetic. See measurement notes.
+
     Returns
     -------
     Dictionary of 1-d arrays where each value contains the specific granularity feature for a given cells.
@@ -213,6 +220,9 @@ def get_granularity(
     Examples
 
     """
+    # Promote before every resampling/morphology/subtraction stage, not just
+    # the final reduction. Preserve the stored acquisition values exactly.
+    pixels = promote_float_pixels(pixels, precision)
     #
     # Downsample the image and mask
     #

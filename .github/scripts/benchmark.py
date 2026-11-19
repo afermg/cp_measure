@@ -34,7 +34,7 @@ from time import perf_counter  # noqa: E402
 
 import numpy  # noqa: E402
 
-MATRIX = {"sizes": (256, 512, 1024), "counts": (16, 64, 256), "seeds": (0, 1, 2)}
+MATRIX = {"sizes": (256, 512, 1024), "counts": (16, 64, 128, 256), "seeds": (0, 1, 2)}
 BLOBS_PER_CHANNEL = 5
 WARMUP, REPS, TIMEOUT = 1, 3, 120.0
 AFFECTED = 1.05  # report a function if any cell moves by this factor either way (faster or slower)

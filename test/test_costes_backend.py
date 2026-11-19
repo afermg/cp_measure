@@ -154,20 +154,22 @@ def test_costes_spatial_inputs(mode, shape):
 
 @pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("encoding", ["integer", "division", "multiply"])
-def test_costes_pending_118_matches_current_main(mode, encoding):
-    # #118 fixes equality BETWEEN encodings. Here each encoding must match main;
-    # deliberately do not assert cross-encoding equality before that PR lands.
+def test_costes_normalization_encodings_match_both_backends(mode, encoding):
+    # Exact grid encodings must agree with integers, not merely within a backend.
     a = np.array(
         [43, 85, 88, 36, 90, 36, 61, 81, 89, 88, 79, 79, 48, 54], np.uint8
     ).reshape(2, 7)
     b = np.array([8, 8, 8, 8, 9, 9, 8, 8, 9, 9, 9, 9, 9, 10], np.uint8).reshape(2, 7)
+    expected = ref.get_correlation_costes(a, b, np.ones(a.shape, int), fast_costes=mode)
     if encoding == "division":
         a, b = a / 255, b / 255
     elif encoding == "multiply":
         a, b = a * (1.0 / 255), b * (1.0 / 255)
     a.setflags(write=False)
     b.setflags(write=False)
-    parity(a, b, np.ones(a.shape, int), fast_costes=mode, scale_max=255)
+    actual = parity(a, b, np.ones(a.shape, int), fast_costes=mode, scale_max=255)
+    for key in expected:
+        np.testing.assert_array_equal(actual[key], expected[key])
 
 
 @pytest.mark.parametrize("as_list", [False, True])

@@ -40,7 +40,7 @@ def _count_combt(g1, g2, lo, hi, thr_fi, thr_si):
 
 @njit(cache=True, error_model="numpy")
 def _pearson_combt(g1, g2, lo, hi, thr_fi, thr_si):
-    """Background Pearson r; fewer than three or constant pairs are undefined."""
+    """Background Pearson r; fewer than two or constant pairs are undefined."""
     return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)[1]
 
 
@@ -61,8 +61,18 @@ def _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si):
             max1 = max(max1, g1[i])
             min2 = min(min2, g2[i])
             max2 = max(max2, g2[i])
-    if cnt < 3 or min1 == max1 or min2 == max2:
+    if cnt < 2 or min1 == max1 or min2 == max2:
         return cnt, np.nan
+    if cnt == 2:
+        # Match SciPy's exact +/-1 two-pair result used by linear search.
+        previous = -1
+        for i in range(lo, hi):
+            if g1[i] < thr_fi or g2[i] < thr_si:
+                if previous >= 0:
+                    return cnt, np.sign(g1[i] - g1[previous]) * np.sign(
+                        g2[i] - g2[previous]
+                    )
+                previous = i
     m1 = s1 / cnt
     m2 = s2 / cnt
     xmax = ymax = 0.0
@@ -110,7 +120,7 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
     right = float(scale)
     mid = ((right - left) // (6 / 5)) + left
     lastmid = 0.0
-    valid = np.nan
+    valid = 1.0  # CP boundary fallback when no nonnegative candidate is found
     iterations = 0
     while lastmid != mid:
         iterations += 1
@@ -121,11 +131,12 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
         cnt, r = _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si)
         if np.isinf(r):
             return np.nan, np.nan
-        if not np.isfinite(r) or r < 0:
+        if cnt <= 2 or r < 0:
             left = mid - 1
-        else:
+        elif r >= 0:
             right = mid + 1
             valid = mid
+        # A constant subset leaves the bounds unchanged, matching the reference.
         lastmid = mid
         if right - left > 6:
             mid = ((right - left) // (6 / 5)) + left
@@ -133,8 +144,6 @@ def _bisection(g1, g2, lo, hi, a, b, scale):
             mid = ((right - left) // 2) + left
     thr_fi_c = (valid - 1) / scale
     thr_si_c = a * thr_fi_c + b
-    if not np.isfinite(_pearson_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c)):
-        return np.nan, np.nan
     return thr_fi_c, thr_si_c
 
 
@@ -165,11 +174,13 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
         thr_fi_c = cur
         thr_si_c = a * cur + b
         cnt = _count_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c)
+        if cnt < 2:
+            break
         if cnt != num_true:
             r = _pearson_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c)
             num_true = cnt
-        if not np.isfinite(r):
-            return np.nan, np.nan
+        if np.isinf(r):
+            return np.nan, np.nan  # numerical ambiguity requests reference replay
         if r <= 0:
             break
         elif accurate or cur < i_step * 10:
@@ -182,6 +193,4 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate):
             cur -= i_step * 2
         else:
             cur -= i_step
-    if not np.isfinite(_pearson_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c)):
-        return np.nan, np.nan
     return thr_fi_c, thr_si_c

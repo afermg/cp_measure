@@ -9,16 +9,50 @@ Notable user-facing changes are documented here.
 - Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
   object-set ranks. The default remains independent per-object ranking (#121).
 
+## [0.4.0] - 2026-11-19
+
+### Performance
+
+- Expand the optional Numba backend with granularity (#56), shape and radial
+  Zernikes (#58), colocalization (#60), Costes (#62), radial distribution (#63),
+  and 2D size/shape geometry (#127). Existing intensity, texture, and Feret
+  acceleration remains available. This release contains the changes already
+  merged into `main`; it does not depend on the remaining open acceleration PRs.
+- Enable acceleration with `pip install "cp-measure[numba]"` and
+  `set_accelerator("numba")` before constructing a featurizer configuration or
+  fetching bulk functions. NumPy/SciPy remains the default, and some operations
+  retain reference paths. The first call includes JIT compilation; performance
+  depends on the workload, so this release makes no universal speedup claim.
+
+### Changed
+
+- Costes permits threshold-boundary results in NumPy and Numba; scale validation
+  and invalid-input, regression and zero-denominator checks remain.
+- Size/shape measures singleton-Z volumes as 2D in both backends, returning
+  the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
+  Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
+  output remains integer and the existing moment implementation is retained.
+- Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
+  (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
+  widening of float16/float32 before arithmetic in both backends). Opting in can
+  change threshold membership and granularity rounding; original arrays and
+  stored values are preserved. Featurizer parameter dictionaries record the
+  selected mode. Integer pixel dtypes and other measurement families are unchanged. See
+  [measurement notes](docs/measurement-notes.md#percentage-of-maximum-colocalization-thresholds).
+- **Breaking:** require Python 3.11 or newer. Remove the project's Python upper
+  bound; CI covers Python 3.11–3.14 on Ubuntu and macOS.
+
 ### Fixed
 
 - `radial_distribution` sums intensities in float64. Integer images no longer
   wrap around (uint8/uint16 results were wrong), and float32 results gain
   precision (relative changes up to ~2e-4).
-
-### Changed
-
-- **Breaking:** require Python 3.11 or newer. Remove the project's Python upper
-  bound; CI covers Python 3.11–3.14 on Ubuntu and macOS.
+- Accept read-only sparse label arrays without changing the dense-label no-copy
+  path, and normalize non-native label byte order at Numba colocalization boundaries.
+- Costes now maps exact reciprocal-normalized integer-grid values (including
+  `img_as_float` outputs) to the existing division encoding, preventing round-off
+  from changing coefficients solely because of the normalization path (#117).
+  Other float intensities, threshold-search rules and NaN handling are unchanged.
 
 ## [0.3.0]
 
@@ -51,9 +85,8 @@ Notable user-facing changes are documented here.
   reject float inputs without an explicit scale instead of silently searching a
   one-step grid. Matching unsigned integer dtypes infer their storage maximum;
   lower-bit-depth data in larger containers need an explicit override.
-- Undefined Costes regressions/background subsets and zero signal denominators
-  now warn with `RuntimeWarning` and return NaN. Constant bisection
-  candidates no longer cause silent convergence on stale bounds.
+- Undefined Costes regressions and zero signal denominators
+  warn with `RuntimeWarning` and return NaN.
 - Added integer/float, 2D/3D, bulk/featurizer and degenerate-input regressions,
   plus 18 fixtures from pinned CellProfiler threshold methods. This does not
   establish full CellProfiler pipeline equivalence.

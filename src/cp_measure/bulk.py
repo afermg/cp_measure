@@ -52,7 +52,7 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
 
     Composes the numba implementations (``intensity``, ``texture``, ``feret``,
     ``granularity``, ``zernike``, ``radial_zernikes``, ``radial_distribution``,
-    ``pearson``, ``manders_fold``, ``rwc``, ``costes``) with the numpy implementations
+    ``sizeshape``, ``pearson``, ``manders_fold``, ``rwc``, ``costes``) with the numpy implementations
     of every other feature — a
     single global "numba" selection still yields a full, working feature set,
     accelerated where a numba backend exists. This is explicit per-function
@@ -65,6 +65,7 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
         get_correlation_rwc as _numba_rwc,
     )
     from cp_measure.core.numba._feret import get_feret as _numba_feret
+    from cp_measure.core.numba._sizeshape import get_sizeshape as _numba_sizeshape
     from cp_measure.core.numba.measuregranularity import (
         get_granularity as _numba_granularity,
     )
@@ -86,6 +87,7 @@ def _numba_registries() -> dict[str, dict[str, Callable]]:
             "intensity": _numba_intensity,
             "texture": _numba_texture,
             "feret": _numba_feret,
+            "sizeshape": _numba_sizeshape,
             "granularity": _numba_granularity,
             "zernike": _numba_zernike,
             "radial_zernikes": _numba_radial_zernikes,
