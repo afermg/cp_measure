@@ -4,11 +4,20 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
-### Fixed
+## [0.4.0] - 2026-11-19
 
-- `radial_distribution` sums intensities in float64. Integer images no longer
-  wrap around (uint8/uint16 results were wrong), and float32 results gain
-  precision (relative changes up to ~2e-4).
+### Performance
+
+- Expand the optional Numba backend with granularity (#56), shape and radial
+  Zernikes (#58), colocalization (#60), Costes (#62), radial distribution (#63),
+  and 2D size/shape geometry (#127). Existing intensity, texture, and Feret
+  acceleration remains available. This release contains the changes already
+  merged into `main`; it does not depend on the remaining open acceleration PRs.
+- Enable acceleration with `pip install "cp-measure[numba]"` and
+  `set_accelerator("numba")` before constructing a featurizer configuration or
+  fetching bulk functions. NumPy/SciPy remains the default, and some operations
+  retain reference paths. The first call includes JIT compilation; performance
+  depends on the workload, so this release makes no universal speedup claim.
 
 ### Changed
 
@@ -30,6 +39,11 @@ Notable user-facing changes are documented here.
 
 ### Fixed
 
+- `radial_distribution` sums intensities in float64. Integer images no longer
+  wrap around (uint8/uint16 results were wrong), and float32 results gain
+  precision (relative changes up to ~2e-4).
+- Accept read-only sparse label arrays without changing the dense-label no-copy
+  path, and normalize non-native label byte order at Numba colocalization boundaries.
 - Costes now maps exact reciprocal-normalized integer-grid values (including
   `img_as_float` outputs) to the existing division encoding, preventing round-off
   from changing coefficients solely because of the normalization path (#117).
