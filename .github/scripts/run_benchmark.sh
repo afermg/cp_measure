@@ -79,27 +79,6 @@ if [ "$NUMBA" = 1 ]; then
       >> "$OUT/table.md"
   fi
   echo "::endgroup::"
-
-  # Batch pass: one batch vs a loop of single calls, on the runner's CPUs (the pinned single
-  # thread above would size the map_images pool to 1). Reported only; like the numba pass, a
-  # failure here must not sink the tables above.
-  echo "::group::numba batch runs"
-  NPROC="$(nproc)"
-  if (
-      NUMBA_NUM_THREADS="$NPROC" "$WORK/venv-head/bin/python" "$BENCH" run-batch \
-        --accelerator numba --out "$OUT/head-batch.json" &&
-      NUMBA_NUM_THREADS="$NPROC" "$WORK/venv-main/bin/python" "$BENCH" run-batch \
-        --accelerator numba --out "$OUT/main-batch.json" &&
-      "$WORK/venv-head/bin/python" "$BENCH" compare-batch \
-        --base "$OUT/main-batch.json" --head "$OUT/head-batch.json" \
-        --commit "$COMMIT" --md "$OUT/table-batch.md"
-    ); then
-    { printf '\n\n'; cat "$OUT/table-batch.md"; } >> "$OUT/table.md"
-  else
-    printf '\n\n_numba batch benchmark failed for this PR; the results above are unaffected._\n' \
-      >> "$OUT/table.md"
-  fi
-  echo "::endgroup::"
 fi
 
 cat "$OUT/table.md"
