@@ -30,8 +30,15 @@ volume (e.g. a 2D mask applied to a 3D stack) — per-element ndim handling is t
 caller's job (each backend dispatches its own 2D vs 3D path).
 """
 
+from collections.abc import Callable
+from functools import wraps
+from inspect import signature
+from typing import TypeVar, cast
+
 import numpy
 from numpy.typing import NDArray
+
+_Measurement = TypeVar("_Measurement", bound=Callable)
 
 
 def as_2d(masks: NDArray) -> NDArray | None:
@@ -232,10 +239,38 @@ def per_image(masks, pixels) -> list[tuple]:
     ]
 
 
-def apply_per_image(func, masks, pixels, **kwargs) -> list:
-    """Run a single-image ``func(mask, pixels, **kwargs)`` over each image of a batch
+def apply_per_image(func, masks, pixels, *args, **kwargs) -> list:
+    """Run ``func(mask, pixels, *args, **kwargs)`` over each image of a batch
     (see :func:`per_image`). Returns one result per image."""
-    return [func(m, p, **kwargs) for m, p in per_image(masks, pixels)]
+    return [func(m, p, *args, **kwargs) for m, p in per_image(masks, pixels)]
+
+
+def batch_dispatch(func: _Measurement) -> _Measurement:
+    """Add serial batch dispatch to a per-image ``func(masks, pixels, ...)``.
+
+    The first two parameters must be required positional-or-keyword inputs.
+    Single images pass through unchanged; batches use :func:`apply_per_image`
+    with its original-rank, dtype-preserving views and validation. A 3D array
+    remains one volume. Empty batches are rejected, not confused with an image
+    containing no objects. Shape-only callers may explicitly pass ``pixels=None``.
+
+    ``functools.wraps`` preserves metadata and the inspectable signature, and
+    exposes the per-image implementation as ``__wrapped__``. Keep the public
+    single-or-batch return annotation on ``func``. Bind batch calls
+    before validating images so invalid arguments still raise ``TypeError``.
+    Specialized threaded or cached batch implementations should not use this
+    decorator.
+    """
+    call_signature = signature(func)
+
+    @wraps(func)
+    def wrapped(masks, pixels, *args, **kwargs):
+        if is_batch(masks):
+            call_signature.bind(masks, pixels, *args, **kwargs)
+            return apply_per_image(func, masks, pixels, *args, **kwargs)
+        return func(masks, pixels, *args, **kwargs)
+
+    return cast(_Measurement, wrapped)
 
 
 def apply_per_pair(func, pixels_1, pixels_2, masks, **kwargs) -> list:
