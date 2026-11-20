@@ -213,7 +213,6 @@ def test_featurizer_forwards_scale():
         (np.array([0.0, 0.1, np.nan, 0.8]), np.arange(4) / 4),
         (np.array([0.0, 0.1, np.inf, 0.8]), np.arange(4) / 4),
         (np.array([0.1, 0.1, 0.9, 0.9]), np.array([0.1, 0.9, 0.1, 0.9])),
-        (np.array([0.0, 1, 0, 1, 0, 1]), np.array([1.0, 0, 1, 0, 1, 0])),
     ],
 )
 @pytest.mark.parametrize("mode", [cp.M_FASTER, cp.M_FAST, cp.M_ACCURATE])

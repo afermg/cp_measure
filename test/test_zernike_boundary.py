@@ -9,6 +9,7 @@ from test_radial_zernike import _reference as radial_reference
 from test_zernike import _reference as shape_reference
 
 import cp_measure
+from cp_measure._sanitize import sanitize
 from cp_measure.featurizer import featurize, make_featurizer_config
 
 
@@ -72,6 +73,41 @@ def assert_features_equal(actual, expected, *, exact=False):
                 np.exp(1j * (actual_values[defined] - expected_values[defined]))
             )
             np.testing.assert_allclose(difference, 0, atol=1e-7, err_msg=name)
+
+
+@pytest.mark.parametrize("container", ["single", "shared", "stacked"])
+@pytest.mark.parametrize("legacy_boundary", [False, True])
+def test_float16_radial_inputs(container, legacy_boundary, scene):
+    pytest.importorskip("numba")
+    from cp_measure.core.measureobjectintensitydistribution import (
+        get_radial_zernikes as numpy_radial,
+    )
+    from cp_measure.core.numba.measureobjectintensitydistribution import (
+        get_radial_zernikes as numba_radial,
+    )
+
+    masks, pixels = scene
+    masks = masks[:, ::2]
+    pixels = pixels.astype(np.float16)[:, ::2]
+    masks.setflags(write=False)
+    pixels.setflags(write=False)
+    original = pixels.copy()
+    options = dict(zernike_degree=5, legacy_boundary=legacy_boundary)
+    expected = numpy_radial(masks, pixels, **options)
+    if container == "single":
+        results = [sanitize(numba_radial)(masks, pixels, **options)]
+    elif container == "shared":
+        results = sanitize(numba_radial)([masks, masks], [pixels, pixels], **options)
+    else:
+        results = sanitize(numba_radial)(
+            np.stack([masks[None], masks[None]]),
+            np.stack([pixels[None], pixels[None]]),
+            **options,
+        )
+    assert len(results) == (1 if container == "single" else 2)
+    for result in results:
+        assert_features_equal(result, expected)
+    np.testing.assert_array_equal(pixels, original)
 
 
 @pytest.mark.parametrize("degree", [0, 5, 9])

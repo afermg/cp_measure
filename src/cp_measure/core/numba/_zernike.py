@@ -267,8 +267,10 @@ def _weighted_coords(labels, pixels):
 def _pixel_tuple(pixels):
     """The images as a tuple numba can index with a loop variable: all of one array type,
     so they are passed as views; otherwise as float64 copies (the weights are float64).
-    Non-native byte orders, which numba cannot type, are converted first."""
+    Non-native byte orders are converted first. Float16 is widened to float64
+    because numba cannot lower float16 arrays."""
     pixels = [native(p) for p in pixels]
+    pixels = [p.astype(np.float64) if p.dtype == np.float16 else p for p in pixels]
     if len({numba.typeof(p) for p in pixels}) == 1:
         return tuple(pixels)
     return tuple(np.ascontiguousarray(p, dtype=np.float64) for p in pixels)

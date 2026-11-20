@@ -6,6 +6,7 @@ Shape-only APIs ignore pixels; empty-batch and shape-validation policies are
 not uniform, so the rejection checks below name the applicable capabilities.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from importlib import import_module
 from inspect import Parameter, signature
@@ -16,9 +17,11 @@ import pytest
 from cp_measure._detect import HAS_NUMBA
 from cp_measure._sanitize import sanitize
 from cp_measure.bulk import _numba_registries
+from cp_measure.primitives import parallel
 
 pytestmark = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 CORE = [
+    "sizeshape",
     "radial_distribution",
     "radial_zernikes",
     "zernike",
@@ -27,6 +30,10 @@ CORE = [
     "granularity",
 ]
 CORRELATION = ["pearson", "manders_fold", "rwc", "costes", "overlap"]
+# Measurements whose batches run on the map_images thread pool. Add each one as
+# its batch path adopts map_images; the threaded test checks this both ways.
+THREADED = {"intensity", "texture", "sizeshape", "feret"}
+THREADED_2D = {"radial_distribution", "radial_zernikes", "zernike"}
 CASES = [(name, {}) for name in CORE + CORRELATION] + [
     ("intensity", dict(legacy=legacy, edge_measurements=edge))
     for legacy in (False, True)
@@ -101,6 +108,24 @@ def scenes(depth):
     return masks, first, second
 
 
+@pytest.fixture(params=["serial", "threaded"])
+def pool_tasks(request, monkeypatch):
+    """Serial: the default, which runs these small batches on the caller's thread.
+    Threaded: one worker per pixel on a fresh 4-thread pool, so even a tiny batch
+    uses threads. Yields the tasks submitted to that pool (None when serial)."""
+    if request.param == "serial":
+        yield None
+        return
+    pool = ThreadPoolExecutor(4, thread_name_prefix=parallel._THREAD_PREFIX)
+    tasks, submit = [], pool.submit
+    pool.submit = lambda fn, *a, **k: tasks.append(fn) or submit(fn, *a, **k)
+    monkeypatch.setattr(parallel, "PIXELS_PER_WORKER", 1)
+    monkeypatch.setattr(parallel, "_usable_cpus", lambda: 4)
+    monkeypatch.setattr(parallel, "_pool", lambda pid: pool)
+    yield tasks
+    pool.shutdown()
+
+
 def assert_same(actual, expected):
     assert isinstance(actual, dict) and list(actual) == list(expected)
     for key in expected:
@@ -114,7 +139,10 @@ def assert_same(actual, expected):
     "container", [list, tuple, np.stack], ids=["list", "tuple", "stacked"]
 )
 @pytest.mark.parametrize("labels", ["readonly", "gapped"])
-def test_batch_matches_independent_items(measurement, depth, container, labels):
+def test_batch_matches_independent_items(
+    measurement, depth, container, labels, pool_tasks
+):
+    """Each batch item equals an independent call, serially and on threads."""
     name, call, reference = measurement
     inputs = scenes(depth)
     if labels == "gapped":
@@ -136,7 +164,12 @@ def test_batch_matches_independent_items(measurement, depth, container, labels):
         for array in [group] if isinstance(group, np.ndarray) else group:
             array.setflags(write=False)
     expected = [call(*item) for item in zip(*inputs)]
+    if pool_tasks is not None:
+        pool_tasks.clear()  # count only the batch call's tasks
     actual = call(*inputs)
+    if pool_tasks is not None:
+        expected_threaded = name in THREADED or (depth <= 1 and name in THREADED_2D)
+        assert bool(pool_tasks) == expected_threaded, "update threaded capabilities"
     assert isinstance(actual, list) and len(actual) == len(expected)
     for got, ref, item in zip(actual, expected, zip(*inputs)):
         assert_same(got, ref)

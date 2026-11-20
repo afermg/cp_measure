@@ -463,7 +463,6 @@ toml = [
 
 [[package]]
 name = "cp-measure"
-version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "centrosome" },
@@ -512,7 +511,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.9.1" },
     { name = "tifffile", marker = "extra == 'benchmark'", specifier = ">=2025.5.10" },
 ]
-provides-extras = ["numba", "test", "benchmark"]
+provides-extras = ["benchmark", "numba", "test"]
 
 [package.metadata.requires-dev]
 dev = [
