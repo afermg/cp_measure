@@ -30,12 +30,10 @@ volume (e.g. a 2D mask applied to a 3D stack) — per-element ndim handling is t
 caller's job (each backend dispatches its own 2D vs 3D path).
 """
 
-from collections.abc import Callable
-from functools import wraps
-from inspect import signature
-from typing import TypeVar, cast
 import functools
 import inspect
+from collections.abc import Callable
+from typing import TypeVar, cast
 
 import numpy
 from numpy.typing import NDArray
@@ -219,37 +217,9 @@ def per_image(masks, pixels) -> list[tuple]:
 
 
 def apply_per_image(func, masks, pixels, *args, **kwargs) -> list:
-    """Run ``func(mask, pixels, *args, **kwargs)`` over each image of a batch
-    (see :func:`per_image`). Returns one result per image."""
+    """Run a single-image ``func(mask, pixels, *args, **kwargs)`` over each image of a
+    batch (see :func:`per_image`). Returns one result per image."""
     return [func(m, p, *args, **kwargs) for m, p in per_image(masks, pixels)]
-
-
-def batch_dispatch(func: _Measurement) -> _Measurement:
-    """Add serial batch dispatch to a per-image ``func(masks, pixels, ...)``.
-
-    The first two parameters must be required positional-or-keyword inputs.
-    Single images pass through unchanged; batches use :func:`apply_per_image`
-    with its original-rank, dtype-preserving views and validation. A 3D array
-    remains one volume. Empty batches are rejected, not confused with an image
-    containing no objects. Shape-only callers may explicitly pass ``pixels=None``.
-
-    ``functools.wraps`` preserves metadata and the inspectable signature, and
-    exposes the per-image implementation as ``__wrapped__``. Keep the public
-    single-or-batch return annotation on ``func``. Bind batch calls
-    before validating images so invalid arguments still raise ``TypeError``.
-    Specialized threaded or cached batch implementations should not use this
-    decorator.
-    """
-    call_signature = signature(func)
-
-    @wraps(func)
-    def wrapped(masks, pixels, *args, **kwargs):
-        if is_batch(masks):
-            call_signature.bind(masks, pixels, *args, **kwargs)
-            return apply_per_image(func, masks, pixels, *args, **kwargs)
-        return func(masks, pixels, *args, **kwargs)
-
-    return cast(_Measurement, wrapped)
 
 
 def apply_per_pair(func, pixels_1, pixels_2, masks, *args, **kwargs) -> list:
@@ -263,37 +233,47 @@ def apply_per_pair(func, pixels_1, pixels_2, masks, *args, **kwargs) -> list:
     ]
 
 
-def per_image_batch(func):
-    """Decorator: make a single-image measurement accept a batch.
+def batch_dispatch(func: _Measurement) -> _Measurement:
+    """Add serial batch dispatch to a per-image ``func(masks, pixels, ...)``.
 
-    A batch (list/tuple or 4D array in the first parameter) returns one result per
-    image via :func:`apply_per_image`; a single image calls ``func`` unchanged. The
-    first parameter is the labels and the second the pixels, whatever they are named
-    (``masks``/``mask``/``labels``, ``pixels``), so ``func``'s own signature and
-    keyword names are preserved for callers and for the :mod:`cp_measure._sanitize`
-    wrapper. Replaces the ``if is_batch(...): return apply_per_image(...)`` guard
-    repeated at each public measurement, so the dispatch rule lives in one place.
+    The first two parameters are labels and pixels, using their declared names.
+    Pixels may default to None for shape-only measurements. Single images pass
+    through unchanged; batches use :func:`apply_per_image` with its original-rank,
+    dtype-preserving views and validation. A 3D array remains one volume. Empty
+    batches are rejected, not confused with an image containing no objects.
+
+    ``functools.wraps`` preserves metadata and the inspectable signature, and
+    exposes the per-image implementation as ``__wrapped__``. Keep the public
+    single-or-batch return annotation on ``func``. Bind batch calls before image
+    validation so invalid arguments still raise ``TypeError``. Positional,
+    keyword-only and variadic options retain their original calling convention.
+    Specialized threaded or cached batch implementations should not use this
+    decorator.
     """
-    sig = inspect.signature(func)
-    mask_name, pixel_name = list(sig.parameters)[:2]
+    call_signature = inspect.signature(func)
+    mask_name, pixel_name = list(call_signature.parameters)[:2]
 
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        bound = sig.bind(*args, **kwargs)
-        masks = bound.arguments[mask_name]
+    def wrapped(*args, **kwargs):
+        masks = args[0] if args else kwargs.get(mask_name)
         if not is_batch(masks):
             return func(*args, **kwargs)
-        pixels = bound.arguments.get(pixel_name)
-        extra = {
-            k: v for k, v in bound.arguments.items() if k not in (mask_name, pixel_name)
-        }
-        return [func(m, p, **extra) for m, p in per_image(masks, pixels)]
+        bound = call_signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        pixels = bound.arguments[pixel_name]
 
-    return wrapper
+        def one(mask, image):
+            bound.arguments[mask_name] = mask
+            bound.arguments[pixel_name] = image
+            return func(*bound.args, **bound.kwargs)
+
+        return apply_per_image(one, masks, pixels)
+
+    return cast(_Measurement, wrapped)
 
 
 def per_image_pair_batch(func):
-    """Decorator: the two-channel analogue of :func:`per_image_batch` for a
+    """Decorator: the two-channel analogue of :func:`batch_dispatch` for a
     colocalization measurement whose first three parameters are the two pixel channels
     then the labels, dispatching a batch through :func:`apply_per_pair`."""
     sig = inspect.signature(func)

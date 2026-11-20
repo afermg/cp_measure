@@ -13,7 +13,7 @@ from cp_measure.primitives._moments import (
     moment_feature_dict,
     spatial_moments_2d,
 )
-from cp_measure.primitives.shapes import as_2d, per_image_batch
+from cp_measure.primitives.shapes import as_2d, batch_dispatch
 from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
@@ -599,7 +599,7 @@ def _single_slice_inputs(
     return masks, pixels
 
 
-@per_image_batch
+@batch_dispatch
 def get_sizeshape(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
@@ -1021,7 +1021,7 @@ def _get_sizeshape(
     return results
 
 
-@per_image_batch
+@batch_dispatch
 def get_zernike(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
@@ -1063,7 +1063,7 @@ def _zernike_features(
     return {f"Zernike_{n}_{m}": score[:, i] for i, (n, m) in enumerate(zernike_indexes)}
 
 
-@per_image_batch
+@batch_dispatch
 def get_feret(
     masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:

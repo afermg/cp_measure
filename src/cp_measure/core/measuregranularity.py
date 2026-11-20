@@ -61,7 +61,7 @@ import skimage.morphology
 from cp_measure._precision import Precision, promote_float_pixels
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
-from cp_measure.primitives.shapes import per_image_batch
+from cp_measure.primitives.shapes import batch_dispatch
 
 
 def _make_fused_upsample_mean(
@@ -140,7 +140,7 @@ def _fused_upsample_mean(operator, objects, counts, rec):
     return (operator @ rec.ravel())[objects] / counts
 
 
-@per_image_batch
+@batch_dispatch
 def get_granularity(
     mask: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],

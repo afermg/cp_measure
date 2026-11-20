@@ -4,7 +4,7 @@ import numpy
 import numpy.ma
 import scipy.sparse
 from centrosome import zernike
-from cp_measure.primitives.shapes import as_2d_pair, per_image_batch
+from cp_measure.primitives.shapes import as_2d_pair, batch_dispatch
 from cp_measure.utils import _zernike_scores
 from numpy.typing import NDArray
 
@@ -118,7 +118,7 @@ def _maximum_position_of_labels(
     return positions[0], positions[1]
 
 
-@per_image_batch
+@batch_dispatch
 def get_radial_distribution(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
@@ -336,7 +336,7 @@ def get_radial_distribution(
     return results
 
 
-@per_image_batch
+@batch_dispatch
 def get_radial_zernikes(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
