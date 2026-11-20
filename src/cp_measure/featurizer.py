@@ -38,6 +38,20 @@ _Feature = tuple[_Measurement, dict]  # measurement function, keyword arguments
 _CorrelationFeature = tuple[_Measurement, dict, bool]  # plus symmetric-pair flag
 
 
+def _batch_results(
+    results: list[dict[str, np.ndarray]], size: int, *, expected_rows: int | None = None
+) -> list[tuple[dict[str, np.ndarray], ...]]:
+    """Group results without copying their arrays; reject incomplete rows on Python 3.11+."""
+    if size < 1:
+        raise ValueError("batch size must be positive")
+    if expected_rows is not None and len(results) != size * expected_rows:
+        raise RuntimeError(
+            f"measurement returned {len(results)} results, expected "
+            f"{size * expected_rows} — this is a bug in cp_measure"
+        )
+    return list(zip(*[iter(results)] * size, strict=True))
+
+
 def make_featurizer_config(
     channels: list[str] | None = None,
     *,
@@ -240,7 +254,7 @@ def _featurize_batch(
         # per feature over the whole batch.
         for func, params in shape_feats:
             outputs = func([clean for _, clean, _ in items], None, **params)
-            for result, output in zip(results, outputs):
+            for result, output in zip(results, outputs, strict=True):
                 result.update(output)
 
         # One call per channel feature, returned channel-major (image i, channel c).
@@ -248,23 +262,21 @@ def _featurize_batch(
         # indexes [i][c] explicitly instead of computing i * n_ch + c; strict=True
         # fails if the backend returned the wrong count. Columns stay channel-major.
         per_feature = [
-            list(
-                itertools.batched(
-                    func(
-                        [clean for _, clean, _ in items for _ in range(n_ch)],
-                        [image[b, c] for b, _, _ in items for c in range(n_ch)],
-                        **params,
-                    ),
-                    n_ch,
-                    strict=True,
-                )
+            _batch_results(
+                func(
+                    [clean for _, clean, _ in items for _ in range(n_ch)],
+                    [image[b, c] for b, _, _ in items for c in range(n_ch)],
+                    **params,
+                ),
+                n_ch,
+                expected_rows=len(items),
             )
             for func, params in (channel_feats if n_ch else [])
         ]
         for i, result in enumerate(results):
             for c, ch_name in enumerate(channels):
-                for rows in per_feature:
-                    for key, values in rows[i][c].items():
+                for channel_rows in per_feature:
+                    for key, values in channel_rows[i][c].items():
                         result[f"{key}__{ch_name}"] = values
 
         # One call per correlation feature, returned pair-major (image i, pair p);
@@ -274,21 +286,19 @@ def _featurize_batch(
             pairs = list(iter_fn(range(n_ch), 2))
             if not pairs:
                 continue
-            rows = list(
-                itertools.batched(
-                    func(
-                        pixels_1=[image[b, c] for b, _, _ in items for c, _ in pairs],
-                        pixels_2=[image[b, c] for b, _, _ in items for _, c in pairs],
-                        masks=[clean for _, clean, _ in items for _ in pairs],
-                        **params,
-                    ),
-                    len(pairs),
-                    strict=True,
-                )
+            pair_rows = _batch_results(
+                func(
+                    pixels_1=[image[b, c] for b, _, _ in items for c, _ in pairs],
+                    pixels_2=[image[b, c] for b, _, _ in items for _, c in pairs],
+                    masks=[clean for _, clean, _ in items for _ in pairs],
+                    **params,
+                ),
+                len(pairs),
+                expected_rows=len(items),
             )
             for i, result in enumerate(results):
                 for p, (ch_i, ch_j) in enumerate(pairs):
-                    for key, values in rows[i][p].items():
+                    for key, values in pair_rows[i][p].items():
                         result[f"{key}__{channels[ch_i]}__{channels[ch_j]}"] = values
 
         # Every item uses the same feature lists, and all measurement functions
@@ -418,6 +428,8 @@ def featurize(
     labelled = [bool(masks[b].any()) for b in range(batch_size)]
     skipped = [b for b in range(batch_size) if not labelled[b]]
     batch_idx = [b for b in range(batch_size) if labelled[b]]
+    if not batch_idx:
+        raise ValueError("no images had labelled objects (all batch items were empty)")
     ids = image_ids if image_ids is not None else list(range(batch_size))
     measured, columns = _featurize_batch(
         image,

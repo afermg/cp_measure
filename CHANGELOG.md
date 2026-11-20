@@ -28,6 +28,13 @@ Notable user-facing changes are documented here.
 
 ### Changed
 
+- NumPy granularity widens integer inputs before background subtraction, matching
+  Numba and preventing unsigned wraparound. NumPy intensity now resolves tied
+  maximum locations to the last raster pixel, matching Numba; only tied-location
+  coordinates change.
+- Numba Pearson, Manders and RWC keep kernel NaNs for degenerate objects instead
+  of replaying entire images. Incidental NumPy warnings are no longer guaranteed;
+  Overlap/K still replays nonfinite objects to preserve its denominator errors.
 - NumPy size/shape, Feret, radial distribution and radial Zernike accept a batch
   (a list/tuple of images or a 4D `(B, Z, Y, X)` array) and return one result per
   image. The numba backend measures these batches on threads and shares per-mask
@@ -45,9 +52,8 @@ Notable user-facing changes are documented here.
   still return scalars.
 - `featurize` measures each feature once over the whole batch (every FOV,
   channel and channel pair of a mask), so the numba backend runs them on threads
-  and shares per-mask work. On 4 FOVs x 5 channels (1024 x 1024, 32 cores) the
-  numba featurizer takes 1.9 s (cells) and 1.4 s (mitosis) instead of 80 s and
-  167 s. Shape-only runs (no channels) skip the channel features.
+  and shares per-mask work. Shape-only runs (no channels) skip the channel
+  features. Output rows retain image, mask-type and label order.
 - Numba Pearson, Manders, overlap/K and RWC accelerate float32 inputs in the
   default `precision="input"` mode instead of falling back to the NumPy
   reference (1.3 to 5 times faster). Percentage thresholds keep NumPy's float32

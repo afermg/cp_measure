@@ -131,7 +131,7 @@ def test_numba_granularity_matches_numpy(sub):
 @requires_numba
 def test_intensity_max_location_tie_keeps_last_raster_pixel():
     """On tied maxima both backends return the LAST pixel in raster (C) order
-    (CellProfiler / scipy.ndimage.maximum_position), not numpy.argmax's first."""
+    rather than numpy.argmax's first."""
     from cp_measure.core.measureobjectintensity import get_intensity as intensity_numpy
     from cp_measure.core.numba.measureobjectintensity import (
         get_intensity as intensity_numba,

@@ -644,6 +644,14 @@ def test_scipy_ties_two_pair_background_keeps_scipy_warnings(mode):
         np.testing.assert_array_equal(got[key], expected[key])
 
 
+@pytest.mark.parametrize("container", [list, tuple])
+def test_costes_empty_batch_without_scale_reports_validation_error(container):
+    from cp_measure.core.numba.measurecolocalization import get_correlation_costes
+
+    with pytest.raises(ValueError, match="at least one image"):
+        get_correlation_costes(container(), container(), container())
+
+
 def test_costes_float_batch_without_scale_max_fails_fast_at_entry():
     """A float batch without scale_max raises at the entry (calling thread), before
     any map_images worker runs, so the error is not wrapped in a threaded traceback.

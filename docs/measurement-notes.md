@@ -24,6 +24,12 @@ With `set_accelerator("numba")`, size/shape accelerates convex-hull construction
 
 Both raw functions require contiguous labels. The featurizer and default bulk wrappers sanitize arbitrary positive IDs without modifying inputs. Multi-slice volumes use the NumPy fallback. Warmed gains depend on object size and density; first calls also pay compilation cost.
 
+## Featurizer batch execution
+
+`featurize` calls each enabled measurement once per mask type over the supplied FOVs and channels or channel pairs. Numba can schedule these items together and reuse per-mask preparation; NumPy measures them serially through the shared batch wrappers. Shape-only calls with no image channels skip channel measurements. Output remains a C-contiguous float64 matrix, with rows ordered by image, mask type and original label.
+
+Larger batches expose more parallel work but retain more intermediate results and worker scratch, especially with many channel pairs. Split large workloads into smaller calls to limit peak memory, passing explicit `image_ids` to preserve provenance. The batch layout alone does not establish a speedup over the current `main` implementation; the original PR's whole-stack timings used an older baseline.
+
 ## Numba intensity batches
 
 The direct Numba `get_intensity` function accepts matching 2D or 3D images and returns one feature dictionary. Matching `(B, Z, Y, X)` arrays or lists/tuples of equally shaped 2D/3D images return a list of dictionaries. A 3D array is one image, never an implicit batch. Empty or ragged batches and mismatched input ranks/shapes are rejected; masks are not broadcast or repeated.
@@ -31,6 +37,8 @@ The direct Numba `get_intensity` function accepts matching 2D or 3D images and r
 `legacy` and `edge_measurements` apply to every image. Legacy MAD depends on the original spatial rank: a 2D list item uses the 2D convention, while a `(B, 1, Y, X)` batch contains singleton-Z volumes and retains the 3D convention. Batch items run on a thread pool, each with the existing kernels and per-item views. The NumPy direct function accepts the same batch forms and measures each item in turn; featurizer input conventions are unchanged.
 
 Both intensity backends require matching label and image shapes. The NumPy function previously broadcast a 2D mask across a 3D image; callers who want that measurement can now pass `np.broadcast_to(mask_2d, pixels_3d.shape)` explicitly. Each repeated label is measured as one object across the volume.
+
+For tied maximum intensities, both backends report the last maximum pixel in raster (C) order. NumPy previously selected the first one, so `Location_MaxIntensity_X/Y/Z` can change on tied inputs; the intensity value itself does not change.
 
 ## Numba granularity batches
 
@@ -288,9 +296,13 @@ change with the NumPy version for objects above 8192 pixels (NumPy 2.3 dropped t
 8192-element chunking), so input-mode float32 values are not bit-stable across NumPy
 versions in either backend.
 
-Float16, integer and wider-float inputs retain the reference path. Undefined outputs also use the reference to preserve warnings and errors
-(including the existing true zero-denominator Overlap/K error). Reference fallbacks
-are not advertised as accelerated.
+Float16, integer and wider-float inputs retain the reference path. For accelerated
+float32/float64 Pearson, Manders and RWC, undefined objects keep the kernel's NaN
+results without replaying the whole image through NumPy. Incidental NumPy runtime
+warnings from those calculations are therefore no longer guaranteed. Overlap/K
+replays only nonfinite objects through the single-object reference, preserving
+the existing true zero-denominator error. Reference fallbacks are not advertised
+as accelerated. These changes do not alter the separate Costes warning policy.
 
 All three inputs must have matching spatial ranks and extents. A 2D mask is not
 broadcast over Z, nor is the first intensity plane selected implicitly. Matching
