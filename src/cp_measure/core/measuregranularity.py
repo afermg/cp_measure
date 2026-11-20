@@ -150,6 +150,7 @@ def get_granularity(
     granular_spectrum_length: int = 16,
     *,
     precision: Precision = "input",
+    legacy_zero_signal: bool = False,
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object granularity spectrum features.
 
@@ -215,9 +216,14 @@ def get_granularity(
         Preserve the pre-policy dtype path (default), or widen float16/32
         before resampling and background arithmetic. See measurement notes.
 
+    legacy_zero_signal : bool, keyword-only
+        Floor the start mean at float64 eps as CellProfiler's MeasureGranularity
+        does, instead of returning NaN for objects without signal (#132).
+
     Returns
     -------
     Dictionary of 1-d arrays where each value contains the specific granularity feature for a given cells.
+    Objects without signal (raw mean intensity <= float64 eps) get NaN.
 
     Examples
 
@@ -370,7 +376,14 @@ def get_granularity(
     range_ = numpy.arange(1, numpy.max(orig_mask) + 1)
 
     current_mean = fix(scipy.ndimage.mean(orig_pixels, orig_mask, range_))
-    start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
+    # Granularity is a percentage of the object's signal, so an object without
+    # signal gets NaN. CellProfiler floors the mean at eps instead, which turns the
+    # signal a bright neighbour leaks in through upsampling into ~1e15 (#132).
+    eps = numpy.finfo(float).eps
+    if legacy_zero_signal:
+        start_mean = numpy.maximum(current_mean, eps)
+    else:
+        start_mean = numpy.where(current_mean > eps, current_mean, numpy.nan)
 
     # The per-step "restore to original scale + per-object mean" is linear in the
     # reconstruction and uses fixed geometry, so precompute it once as a sparse operator

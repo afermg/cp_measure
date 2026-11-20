@@ -53,6 +53,7 @@ def get_granularity(
     *,
     precision: Precision = "input",
     max_workers: int | None = None,
+    legacy_zero_signal: bool = False,
 ):
     """Granularity spectrum per object; accepts a single image/volume or a batch.
 
@@ -68,6 +69,8 @@ def get_granularity(
     ``"float64"`` widens float16/32 before resampling/background operations.
     A batch runs on a thread pool; ``max_workers`` caps it (default
     ``os.cpu_count()``), e.g. when nesting under an outer parallel map.
+    Objects without signal (raw mean intensity <= float64 eps) get NaN;
+    ``legacy_zero_signal=True`` restores CellProfiler's eps floor (#132).
     """
     validate_precision(precision)
     is_sequence = isinstance(masks, (list, tuple))
@@ -111,6 +114,7 @@ def get_granularity(
             precision=precision,
             spatial_ndim=ndim,
             readback=readbacks[keys[i]],
+            legacy_zero_signal=legacy_zero_signal,
         )
 
     # Images are independent; map_images runs a batch on a thread pool (the
@@ -133,6 +137,7 @@ def _granularity_one(
     spatial_ndim,
     precision: Precision = "input",
     readback=None,
+    legacy_zero_signal: bool = False,
 ):
     """Preserve original spatial rank, including singleton-Z volumes (NumPy 3D)."""
     # Per image, before interpolation and background operations; no batch-wide
@@ -152,6 +157,7 @@ def _granularity_one(
             element_size,
             ng,
             readback,
+            legacy_zero_signal,
         )
     return _granularity_3d(
         mask_zyx,
@@ -161,6 +167,7 @@ def _granularity_one(
         element_size,
         ng,
         readback,
+        legacy_zero_signal,
     )
 
 
@@ -172,6 +179,7 @@ def _granularity_2d(
     element_size: int,
     ng: int,
     readback=None,
+    legacy_zero_signal: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
     # Shapes as Python numbers: under a batch, every small NumPy call on the
     # calling thread waits for the GIL.
@@ -233,7 +241,9 @@ def _granularity_2d(
     # 3. Spectrum: disk(1) erosion + cascaded reconstruction and the per-object
     # readback (dense labels 1..max, like the baseline), all in one kernel call
     mask, counts, tables = readback
-    spectrum = granularity_spectrum_2d(pixels, ng, mask, orig_pixels, counts, *tables)
+    spectrum = granularity_spectrum_2d(
+        pixels, ng, mask, orig_pixels, counts, *tables, legacy_zero_signal
+    )
     return {f"Granularity_{g}": spectrum[g - 1] for g in range(1, ng + 1)}
 
 
@@ -245,6 +255,7 @@ def _granularity_3d(
     element_size: int,
     ng: int,
     readback=None,
+    legacy_zero_signal: bool = False,
 ) -> dict[str, NDArray[numpy.floating]]:
     """:func:`_granularity_2d` for a ``(Z, Y, X)`` volume, following the baseline's
     3D path step by step. That includes its background resample, which reuses the
@@ -303,7 +314,14 @@ def _granularity_3d(
     # The baseline's upsample keeps the reconstruction's dtype (that of ``pixels``),
     # so a float32 volume's samples are rounded to float32 before the mean.
     spectrum = granularity_spectrum_3d(
-        pixels, ng, mask, orig_pixels, counts, scales, pixels.dtype == numpy.float32
+        pixels,
+        ng,
+        mask,
+        orig_pixels,
+        counts,
+        scales,
+        pixels.dtype == numpy.float32,
+        legacy_zero_signal,
     )
     return {f"Granularity_{g}": spectrum[g - 1] for g in range(1, ng + 1)}
 
