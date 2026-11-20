@@ -8,9 +8,28 @@ Notable user-facing changes are documented here.
 
 - Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
   object-set ranks. The default remains independent per-object ranking (#121).
+- Shape and radial Zernike values no longer depend on where an object sits in
+  the image. The minimum enclosing circle passes exactly through two or three
+  boundary pixels; a strict `r^2 > 1` cutoff let float rounding, which changes
+  with the absolute coordinates, drop them. They now always count (cutoff
+  `r^2 > 1 + 1e-9`, both backends). Values change for objects whose on-circle
+  pixels were dropped (about 40-50% of real nuclei; a few percent per moment),
+  and differ from CellProfiler only in those pixels. Pass `legacy_boundary=True`
+  to shape or radial Zernike measurements to restore the historical strict cutoff
+  and centrosome coordinate calculation; the rounding fix remains the default.
+- `radial_distribution` sums intensities in float64. Integer images no longer
+  wrap around (uint8/uint16 results were wrong), and float32 results gain
+  precision (relative changes up to ~2e-4).
 
 ### Changed
 
+- NumPy size/shape, Feret, radial distribution and radial Zernike accept a batch
+  (a list/tuple of images or a 4D `(B, Z, Y, X)` array) and return one result per
+  image. The numba backend measures these batches on threads and shares per-mask
+  work (Zernike coordinates and basis, radial crops and distance transforms)
+  between images that use the same mask.
+- Numba Feret computes the convex hull and diameters in Numba instead of
+  centrosome, so batch images run fully in parallel. Results are bit-identical.
 - NumPy `intensity` accepts a batch (a list/tuple of images or a 4D
   `(B, Z, Y, X)` array) and returns one result per image.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
@@ -25,6 +44,8 @@ Notable user-facing changes are documented here.
 
 ### Fixed
 
+- Numba radial Zernike accepts float16 intensity images in single-image and
+  batch calls, widening them before compiled coordinate extraction.
 - Numba `intensity` skips non-finite pixels as NumPy does: an object without a
   finite pixel gets zeros (not NaN or +-inf), and edge features use only finite
   edge pixels. Values change only for images with NaN/inf pixels.
@@ -56,7 +77,11 @@ Notable user-facing changes are documented here.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
-  output remains integer and the existing moment implementation is retained.
+  output remains integer.
+- Numba size/shape computes the 2D spatial moments in one GIL-free kernel, so
+  batch images scale across threads. Raw moments are unchanged; the
+  inertia-derived features (inertia tensor, eigenvalues, axis lengths,
+  eccentricity) match NumPy within 1e-12.
 - Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
   (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
   widening of float16/float32 before arithmetic in both backends). Opting in can

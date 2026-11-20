@@ -303,3 +303,62 @@ def test_featurizer_preserves_columns_ids_and_values(feature):
     assert list(got_columns) == list(ref_columns)
     assert list(got_ids) == list(ref_ids)
     np.testing.assert_allclose(got, ref, rtol=1e-6, atol=1e-8, equal_nan=True)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+def test_zernike_values_do_not_depend_on_object_position(backend):
+    """The enclosing circle passes exactly through 2-3 boundary pixels (r^2 == 1), so
+    whether they count must not depend on how rounding falls at the object's absolute
+    coordinates: the same irregular objects near the origin and far from it must give
+    identical shape and radial Zernike values."""
+    import scipy.ndimage
+    from skimage.measure import label
+
+    if backend == "numba":
+        pytest.importorskip("numba")
+        from cp_measure.core.numba.measureobjectintensitydistribution import (
+            get_radial_zernikes,
+        )
+        from cp_measure.core.numba.measureobjectsizeshape import get_zernike
+    else:
+        from cp_measure.core.measureobjectintensitydistribution import (
+            get_radial_zernikes,
+        )
+        from cp_measure.core.measureobjectsizeshape import get_zernike
+
+    rng = np.random.default_rng(7)
+    side, n_blobs = 40, 24
+    blobs = scipy.ndimage.gaussian_filter(rng.random((n_blobs * side, side)), 2) > 0.5
+    objects = label(blobs).astype(np.int32)  # irregular shapes stacked vertically
+    pixels = rng.random(objects.shape)
+
+    def placed(row, col):
+        labels = np.zeros((row + objects.shape[0] + 1, col + side + 1), np.int32)
+        image = np.zeros(labels.shape)
+        labels[row : row + objects.shape[0], col : col + side] = objects
+        image[row : row + objects.shape[0], col : col + side] = pixels
+        return labels, image
+
+    near, far = placed(3, 5), placed(2003, 3001)
+    for result_near, result_far in (
+        (get_zernike(*near), get_zernike(*far)),
+        (get_radial_zernikes(*near), get_radial_zernikes(*far)),
+    ):
+        assert list(result_near) == list(result_far)
+        for key in result_near:
+            np.testing.assert_allclose(
+                result_near[key], result_far[key], rtol=1e-9, atol=1e-12, err_msg=key
+            )
+
+
+def test_batch_items_sharing_a_mask_get_independent_arrays():
+    """Results are the caller's to modify: items that view one mask must not
+    share arrays (the featurizer post-processes, direct callers may edit)."""
+    pytest.importorskip("numba")
+    from cp_measure.core.numba.measureobjectsizeshape import get_zernike
+
+    masks = np.zeros((32, 32), np.int32)
+    masks[4:20, 6:22] = 1
+    first, second = get_zernike([masks, masks])
+    for key in first:
+        assert not np.shares_memory(first[key], second[key]), key

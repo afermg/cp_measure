@@ -21,6 +21,7 @@ from cp_measure.primitives import parallel
 
 pytestmark = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 CORE = [
+    "sizeshape",
     "radial_distribution",
     "radial_zernikes",
     "zernike",
@@ -31,7 +32,8 @@ CORE = [
 CORRELATION = ["pearson", "manders_fold", "rwc", "costes", "overlap"]
 # Measurements whose batches run on the map_images thread pool. Add each one as
 # its batch path adopts map_images; the threaded test checks this both ways.
-THREADED = {"intensity", "texture"}
+THREADED = {"intensity", "texture", "sizeshape", "feret"}
+THREADED_2D = {"radial_distribution", "radial_zernikes", "zernike"}
 CASES = [(name, {}) for name in CORE + CORRELATION] + [
     ("intensity", dict(legacy=legacy, edge_measurements=edge))
     for legacy in (False, True)
@@ -166,7 +168,8 @@ def test_batch_matches_independent_items(
         pool_tasks.clear()  # count only the batch call's tasks
     actual = call(*inputs)
     if pool_tasks is not None:
-        assert bool(pool_tasks) == (name in THREADED), "update THREADED"
+        expected_threaded = name in THREADED or (depth <= 1 and name in THREADED_2D)
+        assert bool(pool_tasks) == expected_threaded, "update threaded capabilities"
     assert isinstance(actual, list) and len(actual) == len(expected)
     for got, ref, item in zip(actual, expected, zip(*inputs)):
         assert_same(got, ref)
