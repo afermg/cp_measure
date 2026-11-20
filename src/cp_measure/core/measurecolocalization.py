@@ -88,6 +88,7 @@ import scipy.ndimage
 import scipy.stats
 
 from cp_measure._precision import Precision, promote_float_pixels, validate_precision
+from cp_measure.primitives.shapes import apply_per_pair, is_batch
 
 M_IMAGES = "Across entire image"
 M_OBJECTS = "Within objects"
@@ -261,8 +262,20 @@ def _rwc_pair(
 
 
 def _undefined_costes(reason: str) -> tuple[float, float]:
+    # Single-object APIs warn for their one object.
     warnings.warn(f"Undefined Costes result: {reason}", RuntimeWarning, stacklevel=3)
     return numpy.nan, numpy.nan
+
+
+def _warn_undefined_costes(counts: dict[str, int]) -> None:
+    """One warning per undefined reason, with its number of objects."""
+    for reason, count in counts.items():
+        objects = "object" if count == 1 else "objects"
+        warnings.warn(
+            f"Undefined Costes result for {count} {objects}: {reason}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
 
 def _validate_costes_scale(scale_max: int) -> int:
@@ -299,6 +312,12 @@ def _canonical_costes_pixels(values, scale):
 def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
     """Keep acquisition scale independent of the normalized array dtype."""
     first, second = numpy.asarray(pixels_1), numpy.asarray(pixels_2)
+    scale = _costes_scale(first, second, scale_max)
+    return _costes_float64(first, scale), _costes_float64(second, scale), scale
+
+
+def _costes_scale(first, second, scale_max) -> int:
+    """The acquisition scale for two Costes images, after checking them."""
     if first.shape != second.shape:
         raise ValueError("Costes images must have the same shape")
     if scale_max is None:
@@ -309,35 +328,34 @@ def _prepare_costes_inputs(pixels_1, pixels_2, scale_max):
             )
         scale_max = numpy.iinfo(first.dtype).max
     scale = _validate_costes_scale(scale_max)
-    converted = []
     for image in (first, second):
         if image.dtype.kind not in "uif":
             raise ValueError(
                 "Costes pixels must be real integer or floating-point arrays"
             )
-        values = image.astype(numpy.float64, copy=False)
-        if image.dtype.kind in "ui":
-            values = values / scale
-        converted.append(values)
-    return converted[0], converted[1], scale
+    return scale
 
 
-def _valid_costes_pixels(fi, si) -> bool:
+def _costes_float64(image, scale):
+    """Normalized float64 pixels: integer images are divided by the scale."""
+    values = image.astype(numpy.float64, copy=False)
+    return values / scale if image.dtype.kind in "ui" else values
+
+
+def _invalid_costes_reason(fi, si) -> str | None:
+    """Why the object's Costes result is undefined, or ``None`` if it is valid."""
     if fi.shape != si.shape or fi.ndim != 1:
         raise ValueError("Costes threshold helpers require equal-shape 1D pixel arrays")
     if fi.size < 3 or not (numpy.isfinite(fi).all() and numpy.isfinite(si).all()):
-        _undefined_costes("fewer than three paired pixels or non-finite signal")
-        return False
+        return "fewer than three paired pixels or non-finite signal"
     if fi.min() < 0 or si.min() < 0 or fi.max() > 1 or si.max() > 1:
         raise ValueError("Costes expects normalized pixels in [0, 1]; check scale_max")
     non_zero = (fi > 0) | (si > 0)
     if numpy.count_nonzero(non_zero) < 3:
-        _undefined_costes("fewer than three nonzero paired pixels")
-        return False
+        return "fewer than three nonzero paired pixels"
     if numpy.ptp(fi[non_zero]) == 0 or numpy.ptp(si[non_zero]) == 0:
-        _undefined_costes("constant channel in the regression subset")
-        return False
-    return True
+        return "constant channel in the regression subset"
+    return None
 
 
 def _costes_background_correlation(fi, si, selected) -> float:
@@ -355,21 +373,30 @@ def _costes_pair(
     si: NDArray[numpy.floating],
     scale: int,
     fast_costes: str,
-) -> tuple[float, float]:
+) -> tuple[float, float, str | None]:
+    """One object's coefficients, and why they are undefined (``None`` if not)."""
     fi = _canonical_costes_pixels(fi, scale)
     si = _canonical_costes_pixels(si, scale)
-    search = bisection_costes if fast_costes == M_FASTER else linear_costes
-    thr_fi, thr_si = search(None, None, fi, si, scale, fast_costes)
+    search = _bisection_search if fast_costes == M_FASTER else _linear_search
+    thr_fi, thr_si, reason = search(fi, si, scale, fast_costes)
+    if reason is not None:
+        return numpy.nan, numpy.nan, reason
+    return _costes_coefficients(fi, si, thr_fi, thr_si)
+
+
+def _costes_coefficients(fi, si, thr_fi, thr_si):
+    """Reduce one object's signals using thresholds fitted at either scope."""
     if not (numpy.isfinite(thr_fi) and numpy.isfinite(thr_si)):
-        return numpy.nan, numpy.nan
+        return numpy.nan, numpy.nan, None
     fi_above = fi > thr_fi
     si_above = si > thr_si
     combined = fi_above & si_above
     tot_fi = fi[fi >= thr_fi].sum()
     tot_si = si[si >= thr_si].sum()
     if tot_fi <= 0 or tot_si <= 0:
-        return _undefined_costes("zero above-threshold intensity denominator")
-    return float(fi[combined].sum() / tot_fi), float(si[combined].sum() / tot_si)
+        return numpy.nan, numpy.nan, "zero above-threshold intensity denominator"
+    c1 = float(fi[combined].sum() / tot_fi)
+    return c1, float(si[combined].sum() / tot_si), None
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +501,9 @@ def get_correlation_costes_ind(
         )
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
-    C1, C2 = _costes_pair(first[mask], second[mask], scale, fast_costes)
+    C1, C2, reason = _costes_pair(first[mask], second[mask], scale, fast_costes)
+    if reason is not None:
+        _undefined_costes(reason)
     return {f"{F_COSTES_FORMAT}_1": C1, f"{F_COSTES_FORMAT}_2": C2}
 
 
@@ -526,10 +555,22 @@ def linear_costes(
     As in CellProfiler, insufficient background pixels end the search at the
     current thresholds; no final background-validity veto is applied.
     """
+    thr_fi, thr_si, reason = _linear_search(fi, si, scale_max, fast_costes)
+    return (thr_fi, thr_si) if reason is None else _undefined_costes(reason)
+
+
+def _linear_search(
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    scale_max: int,
+    fast_costes: str,
+) -> tuple[float, float, str | None]:
+    """:func:`linear_costes`' thresholds, and why they are undefined (or ``None``)."""
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
-    if not _valid_costes_pixels(fi, si):
-        return numpy.nan, numpy.nan
+    reason = _invalid_costes_reason(fi, si)
+    if reason is not None:
+        return numpy.nan, numpy.nan, reason
     i_step = 1 / scale_max
     non_zero = (fi > 0) | (si > 0)
     fz = fi[non_zero]
@@ -550,11 +591,11 @@ def linear_costes(
         (yvar - xvar) * (yvar - xvar) + 4 * (covar * covar)
     )
     if abs(covar) <= 8 * numpy.finfo(float).eps * max(xvar, yvar):
-        return _undefined_costes("zero or ill-conditioned covariance")
+        return numpy.nan, numpy.nan, "zero or ill-conditioned covariance"
     a = num / denom
     b = ymean - a * xmean
     if not (numpy.isfinite(a) and numpy.isfinite(b)):
-        return _undefined_costes("non-finite regression")
+        return numpy.nan, numpy.nan, "non-finite regression"
 
     # Start at 1 step above the maximum value
     img_max = max(fi.max(), si.max())
@@ -590,7 +631,7 @@ def linear_costes(
         if fast_costes != M_ACCURATE and i >= i_step * 10:
             multiplier = _costes_step_multiplier(costReg)
         i -= i_step * multiplier
-    return float(thr_fi_c), float(thr_si_c)
+    return float(thr_fi_c), float(thr_si_c), None
 
 
 def bisection_costes(
@@ -612,10 +653,22 @@ def bisection_costes(
     its boundary fallback when no nonnegative candidate is found and does not
     validate the background again after choosing the final thresholds.
     """
+    thr_fi, thr_si, reason = _bisection_search(fi, si, scale_max, fast_costes)
+    return (thr_fi, thr_si) if reason is None else _undefined_costes(reason)
+
+
+def _bisection_search(
+    fi: NDArray[numpy.floating],
+    si: NDArray[numpy.floating],
+    scale_max: int,
+    fast_costes: str,
+) -> tuple[float, float, str | None]:
+    """:func:`bisection_costes`' thresholds, and why they are undefined (or ``None``)."""
     scale_max = _validate_costes_scale(scale_max)
     fi, si = numpy.asarray(fi, dtype=float), numpy.asarray(si, dtype=float)
-    if not _valid_costes_pixels(fi, si):
-        return numpy.nan, numpy.nan
+    reason = _invalid_costes_reason(fi, si)
+    if reason is not None:
+        return numpy.nan, numpy.nan, reason
 
     non_zero = (fi > 0) | (si > 0)
     fz = fi[non_zero]
@@ -636,11 +689,11 @@ def bisection_costes(
         (yvar - xvar) * (yvar - xvar) + 4 * (covar * covar)
     )
     if abs(covar) <= 8 * numpy.finfo(float).eps * max(xvar, yvar):
-        return _undefined_costes("zero or ill-conditioned covariance")
+        return numpy.nan, numpy.nan, "zero or ill-conditioned covariance"
     a = num / denom
     b = ymean - a * xmean
     if not (numpy.isfinite(a) and numpy.isfinite(b)):
-        return _undefined_costes("non-finite regression")
+        return numpy.nan, numpy.nan, "non-finite regression"
 
     # Initialise variables
     left: float = 1
@@ -654,7 +707,7 @@ def bisection_costes(
     while lastmid != mid:
         iterations += 1
         if iterations > 256:
-            return _undefined_costes("bisection did not converge")
+            return numpy.nan, numpy.nan, "bisection did not converge"
         thr_fi_c = mid / scale_max
         thr_si_c = (a * thr_fi_c) + b
         combt = (fi < thr_fi_c) | (si < thr_si_c)
@@ -674,7 +727,7 @@ def bisection_costes(
 
     thr_fi_c = (valid - 1) / scale_max
     thr_si_c = (a * thr_fi_c) + b
-    return float(thr_fi_c), float(thr_si_c)
+    return float(thr_fi_c), float(thr_si_c), None
 
 
 # MODIFIED: This reproduces the behaviour of the block at
@@ -701,15 +754,22 @@ def infer_scale(data: numpy.ndarray) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _values(per_object: list[float]) -> NDArray[numpy.float64]:
+    """One feature's per-object values, in label order."""
+    return numpy.array(per_object, dtype=numpy.float64)
+
+
 def get_correlation_pearson(
     pixels_1: NDArray[numpy.floating],
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object Pearson correlation and slope between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     """
+    if is_batch(masks):  # list/tuple or 4D: one result per image
+        return apply_per_pair(get_correlation_pearson, pixels_1, pixels_2, masks)
     corrs: list[float] = []
     slopes: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -720,7 +780,7 @@ def get_correlation_pearson(
         corr, slope = _pearson_pair(fi, si)
         corrs.append(corr)
         slopes.append(slope)
-    return {F_CORRELATION_FORMAT: corrs, F_SLOPE_FORMAT: slopes}
+    return {F_CORRELATION_FORMAT: _values(corrs), F_SLOPE_FORMAT: _values(slopes)}
 
 
 def get_correlation_manders_fold(
@@ -730,7 +790,7 @@ def get_correlation_manders_fold(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object Manders fold coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
@@ -738,6 +798,15 @@ def get_correlation_manders_fold(
     widens float16/32 before arithmetic (see measurement notes).
     """
     validate_precision(precision)
+    if is_batch(masks):  # list/tuple or 4D: one result per image
+        return apply_per_pair(
+            get_correlation_manders_fold,
+            pixels_1,
+            pixels_2,
+            masks,
+            thr=thr,
+            precision=precision,
+        )
     m1_list: list[float] = []
     m2_list: list[float] = []
     for fi, si in _iter_label_pixels(pixels_1, pixels_2, masks):
@@ -748,7 +817,10 @@ def get_correlation_manders_fold(
         M1, M2 = _manders_pair(fi, si, thr, precision=precision)
         m1_list.append(M1)
         m2_list.append(M2)
-    return {f"{F_MANDERS_FORMAT}_1": m1_list, f"{F_MANDERS_FORMAT}_2": m2_list}
+    return {
+        f"{F_MANDERS_FORMAT}_1": _values(m1_list),
+        f"{F_MANDERS_FORMAT}_2": _values(m2_list),
+    }
 
 
 def _rwc_object_set(
@@ -756,17 +828,17 @@ def _rwc_object_set(
     pixels_2: NDArray[numpy.floating],
     masks: NDArray[numpy.integer],
     thr: float,
-    *,
-    precision: Precision = "input",
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]]:
     """CP-style dense ranks across foreground, with per-object reductions."""
     nobjects = int(masks.max(initial=0))
     if nobjects == 0:
-        return {f"{F_RWC_FORMAT}_1": [], f"{F_RWC_FORMAT}_2": []}
+        return {
+            f"{F_RWC_FORMAT}_1": numpy.zeros(0),
+            f"{F_RWC_FORMAT}_2": numpy.zeros(0),
+        }
     foreground = masks > 0
     labels = masks[foreground].astype(numpy.intp, copy=False)
     fi, si = pixels_1[foreground], pixels_2[foreground]
-    fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
     if not (numpy.isfinite(fi).all() and numpy.isfinite(si).all()):
         raise ValueError("object_set ranking requires finite foreground intensities")
     _, rank1 = numpy.unique(fi, return_inverse=True)
@@ -775,8 +847,6 @@ def _rwc_object_set(
     weights = (rank_count - numpy.abs(rank1 - rank2)) * 1.0 / rank_count
 
     indices = numpy.arange(1, nobjects + 1)
-    if precision == "float64":
-        thr = float(thr)
     # Array-valued maxima retain CP's float32 threshold arithmetic, including
     # boundary pixels. This is intentionally independent of the local API.
     threshold1 = (thr / 100) * scipy.ndimage.maximum(fi, labels, indices)
@@ -794,7 +864,7 @@ def _rwc_object_set(
         ].astype(numpy.float64, copy=False)
 
     has_joint = numpy.bincount(labels[joint], minlength=nobjects + 1)[1:] > 0
-    results: list[list[float]] = []
+    results: list[NDArray[numpy.float64]] = []
     for pixels, above in ((fi, above1), (si, above2)):
         numerator = reduce(pixels[joint] * weights[joint], joint)
         denominator = reduce(pixels[above], above)
@@ -803,7 +873,7 @@ def _rwc_object_set(
         # an object with joint pixels but zero total signal returns NaN.
         with numpy.errstate(divide="ignore", invalid="ignore"):
             numpy.divide(numerator, denominator, out=result, where=has_joint)
-        results.append(result.tolist())
+        results.append(result)
     return {f"{F_RWC_FORMAT}_1": results[0], f"{F_RWC_FORMAT}_2": results[1]}
 
 
@@ -813,9 +883,9 @@ def get_correlation_rwc(
     masks: NDArray[numpy.integer],
     thr: int = 15,
     *,
-    rank_scope: str = "object",
     precision: Precision = "input",
-) -> dict[str, list[float]]:
+    rank_scope: str = "object",
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object rank-weighted colocalization coefficients between two channels.
 
     ``rank_scope="object"`` preserves the historical default: rank each object's
@@ -830,8 +900,23 @@ def get_correlation_rwc(
     widens float16/32 before arithmetic (see measurement notes).
     """
     validate_precision(precision)
+    if is_batch(masks):  # list/tuple or 4D: one result per image
+        return apply_per_pair(
+            get_correlation_rwc,
+            pixels_1,
+            pixels_2,
+            masks,
+            thr=thr,
+            precision=precision,
+            rank_scope=rank_scope,
+        )
     if rank_scope == "object_set":
-        return _rwc_object_set(pixels_1, pixels_2, masks, thr, precision=precision)
+        return _rwc_object_set(
+            promote_float_pixels(pixels_1, precision),
+            promote_float_pixels(pixels_2, precision),
+            masks,
+            float(thr) if precision == "float64" else thr,
+        )
     if rank_scope != "object":
         raise ValueError("rank_scope must be 'object' or 'object_set'")
     r1: list[float] = []
@@ -844,7 +929,7 @@ def get_correlation_rwc(
         RWC1, RWC2 = _rwc_pair(fi, si, thr, precision=precision)
         r1.append(RWC1)
         r2.append(RWC2)
-    return {f"{F_RWC_FORMAT}_1": r1, f"{F_RWC_FORMAT}_2": r2}
+    return {f"{F_RWC_FORMAT}_1": _values(r1), f"{F_RWC_FORMAT}_2": _values(r2)}
 
 
 def get_correlation_costes(
@@ -855,7 +940,10 @@ def get_correlation_costes(
     thr: int = 15,
     *,
     scale_max: int | None = None,
-) -> dict[str, list[float]]:
+    scipy_ties: bool = False,
+    precision: Precision = "float64",
+    scope: str = "object",
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object Costes coefficients with an explicit acquisition grid.
 
     Float pixels must already be in [0, 1] and require ``scale_max`` (e.g.
@@ -871,26 +959,187 @@ def get_correlation_costes(
     Small or constant threshold-search backgrounds do not veto the returned
     coefficients; boundary results (including zero/one) are left for downstream
     quality control. Invalid signals, undefined regressions and zero signal
-    denominators still return NaN with :class:`RuntimeWarning`.
+    denominators still return NaN. Each image warns once per undefined reason
+    (:class:`RuntimeWarning`), with the number of objects.
     ``thr`` is retained but unused. Input arrays are
     never modified. Labels must be contiguous ``1..N``; use the bulk API or
-    :func:`cp_measure._sanitize.sanitize` for arbitrary IDs.
+    :func:`cp_measure._sanitize.sanitize` for arbitrary IDs. ``scipy_ties`` only
+    affects the numba backend (this backend always decides with SciPy); it is
+    accepted here so the same parameters work with both backends.
+
+    ``scope="object"`` fits thresholds independently for each object (default).
+    ``scope="image"`` fits once over the whole image, including background.
+    Coefficients remain per-object in either scope. Image scope uses the shared
+    serial reference path on both backends, independent of ``scipy_ties``.
+
+    ``precision="input"`` independently selects input-precision regression and
+    historical NumPy 1.x / SciPy 1.9 arithmetic. It does not change fitting scope.
+    Integer images normalize to float32; float32/64 inputs retain their dtype
+    and values without grid canonicalization. Both backends use this reference
+    path, regardless of ``scipy_ties``. It is not the accelerated object path.
+    To reproduce the tested CellProfiler 4.2.8 workflow, combine ``scope="image"``
+    and ``precision="input"`` with matching normalized float32 inputs and scale.
+    Image masks/cropping and bitwise reproducibility across platforms are not
+    provided. See the measurement notes for the validated reference environment.
     """
+    validate_precision(precision)
+    if scope not in ("object", "image"):
+        raise ValueError("scope must be 'object' or 'image'")
+    if is_batch(masks):  # list/tuple or 4D: one result per image
+        return apply_per_pair(
+            get_correlation_costes,
+            pixels_1,
+            pixels_2,
+            masks,
+            fast_costes=fast_costes,
+            thr=thr,
+            scale_max=scale_max,
+            scipy_ties=scipy_ties,
+            precision=precision,
+            scope=scope,
+        )
+    if precision == "input":
+        return _input_precision_costes(
+            pixels_1, pixels_2, masks, scale_max, fast_costes, scope
+        )
     first, second, scale = _prepare_costes_inputs(pixels_1, pixels_2, scale_max)
+    masks = numpy.asarray(masks)
     if masks.shape != first.shape or not numpy.issubdtype(masks.dtype, numpy.integer):
         raise ValueError("Costes labels must be an integer array matching the images")
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
+    if scope == "image":
+        return _image_costes(first, second, masks, scale, fast_costes)
     c1: list[float] = []
     c2: list[float] = []
+    undefined: dict[str, int] = {}  # objects per reason, in first-seen order
+    reason: str | None
     for fi, si in _iter_label_pixels(first, second, masks):
         if fi is None or si is None or fi.size == 0:
-            C1, C2 = _undefined_costes("missing or empty object label")
+            C1, C2, reason = numpy.nan, numpy.nan, "missing or empty object label"
         else:
-            C1, C2 = _costes_pair(fi, si, scale, fast_costes)
+            C1, C2, reason = _costes_pair(fi, si, scale, fast_costes)
+        if reason is not None:
+            undefined[reason] = undefined.get(reason, 0) + 1
         c1.append(C1)
         c2.append(C2)
-    return {f"{F_COSTES_FORMAT}_1": c1, f"{F_COSTES_FORMAT}_2": c2}
+    _warn_undefined_costes(undefined)
+    return {f"{F_COSTES_FORMAT}_1": _values(c1), f"{F_COSTES_FORMAT}_2": _values(c2)}
+
+
+def _image_costes(first, second, masks, scale, mode):
+    """Native float64 image-wide fitting with per-object reductions."""
+    if masks.ndim not in (2, 3):
+        raise ValueError("Costes expects 2D or 3D images")
+    if numpy.any(masks < 0):
+        raise ValueError("Costes labels must be nonnegative")
+    count = int(masks.max(initial=0))
+    first_values = numpy.full(count, numpy.nan)
+    second_values = numpy.full(count, numpy.nan)
+    if count:
+        first = _canonical_costes_pixels(first, scale)
+        second = _canonical_costes_pixels(second, scale)
+        search = _bisection_search if mode == M_FASTER else _linear_search
+        first_threshold, second_threshold, fit_reason = search(
+            first.ravel(), second.ravel(), scale, mode
+        )
+        undefined: dict[str, int] = {}
+        for index, (object_first, object_second) in enumerate(
+            _iter_label_pixels(first, second, masks)
+        ):
+            if object_first is None or object_second is None:
+                reason = "missing or empty object label"
+            elif fit_reason is not None:
+                reason = fit_reason
+            else:
+                first_values[index], second_values[index], reason = (
+                    _costes_coefficients(
+                        object_first, object_second, first_threshold, second_threshold
+                    )
+                )
+            if reason is not None:
+                undefined[reason] = undefined.get(reason, 0) + 1
+        _warn_undefined_costes(undefined)
+    return {
+        f"{F_COSTES_FORMAT}_1": first_values,
+        f"{F_COSTES_FORMAT}_2": second_values,
+    }
+
+
+def _input_precision_costes(pixels_1, pixels_2, masks, scale_max, mode, scope):
+    from cp_measure.core._costes_compat import image_costes
+
+    first, second = numpy.asarray(pixels_1), numpy.asarray(pixels_2)
+    scale = _costes_scale(first, second, scale_max)
+    masks = numpy.asarray(masks)
+    if masks.shape != first.shape or masks.dtype.kind not in "iu":
+        raise ValueError("Costes labels must be an integer array matching the images")
+    if masks.ndim not in (2, 3):
+        raise ValueError("Costes expects 2D or 3D images")
+    if numpy.any(masks < 0):
+        raise ValueError("Costes labels must be nonnegative")
+    if mode not in (M_FASTER, M_FAST, M_ACCURATE):
+        raise ValueError("Unknown Costes threshold-search mode")
+    prepared = []
+    for image in (first, second):
+        if image.dtype.kind in "ui":
+            image = image.astype(numpy.float32) / numpy.float32(scale)
+        elif image.dtype.itemsize not in (4, 8):
+            raise ValueError(
+                "CellProfiler compatibility requires float32 or float64 pixels"
+            )
+        if numpy.isinf(image).any() or numpy.any((image < 0) | (image > 1)):
+            raise ValueError(
+                "Costes expects normalized pixels in [0, 1]; check scale_max"
+            )
+        prepared.append(image)
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", RuntimeWarning)
+        if scope == "image":
+            first_values, second_values = image_costes(*prepared, masks, scale, mode)
+        else:
+            count = int(masks.max(initial=0))
+            first_values = numpy.full(count, numpy.nan)
+            second_values = numpy.full(count, numpy.nan)
+            undefined: dict[str, int] = {}
+            for index, (object_first, object_second) in enumerate(
+                _iter_label_pixels(*prepared, masks)
+            ):
+                reason = None
+                if object_first is None or object_second is None:
+                    reason = "missing or empty object label"
+                elif (
+                    numpy.count_nonzero(
+                        ~numpy.isnan(object_first) & ~numpy.isnan(object_second)
+                    )
+                    < 2
+                ):
+                    reason = "fewer than two usable paired pixels"
+                else:
+                    values = image_costes(
+                        object_first,
+                        object_second,
+                        numpy.ones(object_first.shape, dtype=numpy.int32),
+                        scale,
+                        mode,
+                    )
+                    first_values[index], second_values[index] = (
+                        values[0][0],
+                        values[1][0],
+                    )
+                if reason is not None:
+                    undefined[reason] = undefined.get(reason, 0) + 1
+            _warn_undefined_costes(undefined)
+    seen = set()
+    for warning in recorded:
+        identity = warning.category, str(warning.message)
+        if identity not in seen:
+            warnings.warn(str(warning.message), warning.category, stacklevel=3)
+            seen.add(identity)
+    return {
+        f"{F_COSTES_FORMAT}_1": first_values,
+        f"{F_COSTES_FORMAT}_2": second_values,
+    }
 
 
 def get_correlation_overlap(
@@ -900,7 +1149,7 @@ def get_correlation_overlap(
     thr: int = 15,
     *,
     precision: Precision = "input",
-) -> dict[str, list[float]]:
+) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object overlap and k1/k2 colocalization coefficients between two channels.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
@@ -908,6 +1157,15 @@ def get_correlation_overlap(
     widens float16/32 before arithmetic (see measurement notes).
     """
     validate_precision(precision)
+    if is_batch(masks):  # list/tuple or 4D: one result per image
+        return apply_per_pair(
+            get_correlation_overlap,
+            pixels_1,
+            pixels_2,
+            masks,
+            thr=thr,
+            precision=precision,
+        )
     overlap_list: list[float] = []
     k1_list: list[float] = []
     k2_list: list[float] = []
@@ -922,7 +1180,7 @@ def get_correlation_overlap(
         k1_list.append(K1)
         k2_list.append(K2)
     return {
-        F_OVERLAP_FORMAT: overlap_list,
-        f"{F_K_FORMAT}_1": k1_list,
-        f"{F_K_FORMAT}_2": k2_list,
+        F_OVERLAP_FORMAT: _values(overlap_list),
+        f"{F_K_FORMAT}_1": _values(k1_list),
+        f"{F_K_FORMAT}_2": _values(k2_list),
     }

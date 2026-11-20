@@ -7,7 +7,7 @@ import cp_measure
 from cp_measure import bulk
 from cp_measure._detect import HAS_NUMBA
 from cp_measure.core import measurecolocalization as ref
-from test_rwc_rank_scope import scene
+from test_rwc_rank_scope import same, scene
 
 pytestmark = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
@@ -38,8 +38,16 @@ def test_scope_parity_and_immutability(dtype, scope, precision, shape):
     )
     assert list(actual) == list(expected)
     for key in expected:
-        assert isinstance(actual[key], list)
-        np.testing.assert_allclose(actual[key], expected[key], rtol=1e-12, atol=1e-12)
+        assert isinstance(actual[key], np.ndarray)
+        assert actual[key].dtype == np.float64
+        tolerance = (
+            1e-6
+            if dtype == np.float32 and precision == "input" and scope == "object"
+            else 1e-12
+        )
+        np.testing.assert_allclose(
+            actual[key], expected[key], rtol=tolerance, atol=1e-12
+        )
     for before, after in zip(originals, (a, b, labels)):
         np.testing.assert_array_equal(before, after)
 
@@ -60,8 +68,11 @@ def test_object_set_batches_rank_each_image_separately(as_list, precision):
     )
     assert len(actual) == 2
     for got, x, y, m in zip(actual, first, second, masks):
-        assert got == ref.get_correlation_rwc(
-            x, y, m, rank_scope="object_set", precision=precision
+        assert same(
+            got,
+            ref.get_correlation_rwc(
+                x, y, m, rank_scope="object_set", precision=precision
+            ),
         )
 
 
@@ -85,10 +96,13 @@ def test_object_set_bulk_and_featurizer_forwarding(dtype, precision):
         cp_measure.set_accelerator("numba")
         raw = bulk.get_correlation_measurements(sanitize=False)["rwc"]
         assert "numba" in raw.__module__
-        assert bulk.get_correlation_measurements()["rwc"](
-            a, b, labels, rank_scope="object_set", precision=precision
-        ) == ref.get_correlation_rwc(
-            a, b, labels, rank_scope="object_set", precision=precision
+        assert same(
+            bulk.get_correlation_measurements()["rwc"](
+                a, b, labels, rank_scope="object_set", precision=precision
+            ),
+            ref.get_correlation_rwc(
+                a, b, labels, rank_scope="object_set", precision=precision
+            ),
         )
         actual = featurize(images, masks, config)
         assert actual[1:] == expected[1:]
@@ -106,5 +120,5 @@ def test_scope_validation_and_nonfinite_foreground():
     a[labels == 1] = np.nan
     with pytest.raises(ValueError, match="finite foreground"):
         get_correlation_rwc(a, b, labels, rank_scope="object_set")
-    with pytest.raises(ValueError, match="same shape"):
+    with pytest.raises(ValueError, match="(same|matching) shape"):
         get_correlation_rwc(a, b, labels[None], rank_scope="object_set")

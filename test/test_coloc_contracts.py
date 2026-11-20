@@ -36,9 +36,13 @@ def assert_parity(name, first, second, masks, **kwargs):
             return
         actual = accelerated(first, second, masks, **kwargs)
     assert list(actual) == list(expected)
+    # Numba keeps the reference's float32 thresholds (which pixels count) but sums
+    # float32 inputs in float64, where NumPy sums in float32 (pairwise, and NumPy-
+    # version dependent above 8192 values): compare values at float32 resolution.
+    rtol = 1e-6 if np.float32 in (first.dtype, second.dtype) else 1e-12
     for key in expected:
         assert isinstance(actual[key], type(expected[key]))
-        np.testing.assert_allclose(actual[key], expected[key], rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(actual[key], expected[key], rtol=rtol, atol=1e-12)
         assert np.asarray(actual[key]).dtype == np.asarray(expected[key]).dtype
     for original, value in zip(originals, (first, second, masks)):
         np.testing.assert_array_equal(original, value)
@@ -103,11 +107,85 @@ def test_current_main_dtype_and_threshold(name, dtype, thr):
 
 
 @pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("swap", [False, True])
+def test_mixed_float32_float64_channels(name, swap):
+    # Each channel keeps its own dtype's threshold rounding, as in the reference.
+    rng = np.random.default_rng(61)
+    first = rng.random((7, 8)).astype(np.float32)
+    second = rng.random((7, 8))
+    if swap:
+        first, second = second, first
+    masks = np.ones(first.shape, np.int32)
+    masks[3:] = 2
+    assert_parity(name, first, second, masks)
+
+
+@pytest.mark.parametrize("name", NAMES)
 def test_float32_threshold_boundary_keeps_current_numpy_semantics(name):
     # Both backends follow the same explicitly selected intermediate precision.
     first = np.array([[3, 20], [10, 0]], dtype=np.float32) / 65535
     second = np.array([[20, 3], [10, 0]], dtype=np.float32) / 65535
     assert_parity(name, first, second, np.ones(first.shape, np.int32))
+
+
+@pytest.mark.parametrize("name", NAMES + ("costes",))
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+@pytest.mark.parametrize("objects", [2, 0], ids=["objects", "empty"])
+def test_values_are_float64_arrays(name, backend, objects):
+    """Every feature is a 1D float64 array with one value per label, for one image
+    and for each image of a batch, in both backends."""
+    function = functions(name)[backend == "numba"]
+    kwargs = {"scale_max": 255} if name == "costes" else {}
+    first = np.arange(1, 13, dtype=float).reshape(3, 4) / 13
+    second = first[::-1].copy()
+    masks = np.zeros(first.shape, np.int32)
+    if objects:
+        masks[:2], masks[2] = 1, 2
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        single = function(first, second, masks, **kwargs)
+        batch = function([first, first], [second, second], [masks, masks], **kwargs)
+    assert isinstance(batch, list) and len(batch) == 2
+    for result in (single, *batch):
+        for values in result.values():
+            assert isinstance(values, np.ndarray)
+            assert values.dtype == np.float64 and values.shape == (objects,)
+
+
+@pytest.mark.parametrize(
+    "thr",
+    [15, 73.5, np.float32(15), np.float64(15)],
+    ids=["int", "float", "numpy-float32", "numpy-float64"],
+)
+def test_float32_threshold_membership_is_bit_exact(thr):
+    """A float32 channel's threshold is NumPy's ``(thr / 100) * max`` on the float32
+    maximum, for every scalar type. Pixels at and next to that threshold decide
+    membership; objects of fewer than 8 pixels sum serially in both, so the
+    accelerated Manders values equal this oracle exactly."""
+    from cp_measure.core.numba.measurecolocalization import (
+        get_correlation_manders_fold,
+    )
+
+    rng = np.random.default_rng(64)
+    maxima = rng.uniform(0.2, 1.0, 40).astype(np.float32)
+    first = np.empty((40, 5), np.float32)
+    for row, top in zip(first, maxima):
+        cut = ((thr / 100) * np.array([top]))[0]
+        row[:] = [top, cut, np.nextafter(cut, 0), np.nextafter(cut, 1), top / 50]
+    second = first[:, ::-1].copy()
+    masks = np.repeat(np.arange(1, 41, dtype=np.int32), 5).reshape(40, 5)
+    expected = []
+    for fi, si in zip(first.astype(np.float64), second.astype(np.float64)):
+        cuts = [((thr / 100) * np.array([v.max()], np.float32))[0] for v in (fi, si)]
+        above1, above2 = fi >= cuts[0], si >= cuts[1]
+        joint = above1 & above2
+        expected.append(
+            (sum(fi[joint]) / sum(fi[above1]), sum(si[joint]) / sum(si[above2]))
+        )
+    result = get_correlation_manders_fold(first, second, masks, thr=thr)
+    np.testing.assert_array_equal(
+        np.column_stack(list(result.values())), np.array(expected)
+    )
 
 
 @pytest.mark.parametrize("name", NAMES)

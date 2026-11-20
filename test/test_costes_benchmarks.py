@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -15,8 +16,25 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_script(path):
     spec = importlib.util.spec_from_file_location("costes_benchmark_test", path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # The benchmark script pins NUMBA_* thread env vars for its own runs; keep
+    # that side effect out of the test process, or a later numba config reload
+    # clashes with an already-launched threadpool.
+    saved = os.environ.copy()
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
     return module
+
+
+def test_load_script_does_not_leak_numba_env():
+    """The benchmark script sets NUMBA_NUM_THREADS for its own runs; importing it
+    in-process must not leak that into the suite (it would make a later numba
+    config reload clash with an already-launched threadpool)."""
+    before = os.environ.get("NUMBA_NUM_THREADS")
+    load_script(ROOT / ".github/scripts/benchmark.py")
+    assert os.environ.get("NUMBA_NUM_THREADS") == before
 
 
 @pytest.fixture

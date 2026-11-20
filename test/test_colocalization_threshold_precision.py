@@ -82,11 +82,12 @@ def test_float32_boundary_precision_modes(metric, backend, single, precision):
             else key + "_A_B"
         )
         historical = CASE["expected"][expected_key]
-        # Pre-#129 Manders sums/division round in float32, whereas CP's stored
-        # final coefficient is double. Preserve that distinction explicitly.
+        # Pre-#129 NumPy Manders sums/division round in float32, whereas CP's stored
+        # final coefficient is double. Numba keeps the float32 thresholds but sums in
+        # float64, which reproduces CP's stored double here.
         input_expected = (
             np.asarray(historical, np.float32)
-            if metric == "manders_fold"
+            if metric == "manders_fold" and backend == "numpy"
             else historical
         )
         np.testing.assert_allclose(
