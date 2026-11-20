@@ -1,4 +1,4 @@
-"""Bit-exact validation of the numba granularity morphology kernels vs skimage."""
+"""Bit-exact kernel validation, except for NaN sign and payload encodings."""
 
 import math
 
@@ -33,11 +33,41 @@ from cp_measure.core.numba._granularity import (
 
 
 def _assert_same_bits(got, expected):
-    """Same dtype, shape and bytes (tells -0.0 from 0.0, and NaN from a value)."""
+    """Same dtype, shape, NaN locations and all non-NaN bits, including signed zero."""
     assert got.dtype == expected.dtype
     assert got.shape == expected.shape
+    is_nan = numpy.isnan(expected)
+    numpy.testing.assert_array_equal(numpy.isnan(got), is_nan)
     width = numpy.uint32 if got.dtype == numpy.float32 else numpy.uint64
-    numpy.testing.assert_array_equal(got.view(width), expected.view(width))
+    numpy.testing.assert_array_equal(
+        got.view(width)[~is_nan], expected.view(width)[~is_nan]
+    )
+
+
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+def test_same_bits_ignores_nan_encoding(dtype):
+    expected = numpy.array([numpy.nan, 0.0, -0.0, numpy.inf, -numpy.inf, 1.0], dtype)
+    got = expected.copy()
+    width = numpy.uint32 if dtype is numpy.float32 else numpy.uint64
+    got.view(width)[0] ^= width((1 << (got.itemsize * 8 - 1)) | 1)
+    assert numpy.isnan(got[0])
+    assert got.view(width)[0] != expected.view(width)[0]
+    _assert_same_bits(got, expected)
+
+
+@pytest.mark.parametrize("dtype", [numpy.float32, numpy.float64])
+@pytest.mark.parametrize("case", ["nan_location", "signed_zero", "infinity", "ulp"])
+def test_same_bits_rejects_non_nan_differences(dtype, case):
+    if case == "nan_location":
+        got, expected = [numpy.nan, 1.0], [1.0, numpy.nan]
+    elif case == "signed_zero":
+        got, expected = [-0.0], [0.0]
+    elif case == "infinity":
+        got, expected = [numpy.inf], [-numpy.inf]
+    else:
+        got, expected = [numpy.nextafter(dtype(1.0), dtype(2.0))], [1.0]
+    with pytest.raises(AssertionError):
+        _assert_same_bits(numpy.array(got, dtype), numpy.array(expected, dtype))
 
 
 def _grid_image(shape, dtype, seed, non_finite):

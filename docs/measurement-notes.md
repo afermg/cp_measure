@@ -44,6 +44,8 @@ For 2D float16 images with `subsample_size=1`, the Numba backend retains its his
 
 3D volumes use the same numba scheme as 2D (ball opening, 6-connectivity reconstruction) and follow the NumPy path's upsampling and per-object means voxel by voxel, so results are bit-identical to NumPy, including its float32 rounding of the upsampled reconstruction.
 
+Kernel bit-parity checks require identical dtype, shape, NaN locations, and all non-NaN bits (including signed zeros and infinities). NaN sign and payload encodings are excluded: CI observed different NaN signs between SciPy and Numba for the same non-finite interpolation inputs, without differences in NaN locations or non-NaN values.
+
 ## Texture quantization
 
 Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim variation can disappear, and pairs containing zero are excluded. See the [#100 explanation](https://github.com/afermg/cp_measure/issues/100#issuecomment-5939719548) and [`get_texture` Notes](../src/cp_measure/core/measuretexture.py) for CellProfiler compatibility and zero/NaN behavior.
