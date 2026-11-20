@@ -34,7 +34,17 @@ Both intensity backends require matching label and image shapes. The NumPy funct
 
 ## Numba granularity batches
 
-Granularity retains its `to_bzyx` normalization, which stacks batch items into arrays with a common dtype. A mixed float32/float64 list or tuple therefore uses float64 arithmetic even with `precision="input"`. The `precision="float64"` option widens any remaining float16/float32 data before arithmetic. To preserve each input dtype independently, measure the images in separate calls.
+Batch images should share one dtype. A same-dtype batch (including any `(B, Z, Y, X)` array) gives the same values as measuring each image separately. Mixed-dtype lists or tuples are the caller's responsibility: they are not checked or rejected, and their results are not guaranteed. Currently granularity measures such a batch at its common dtype, so a mixed float32/float64 list uses float64 arithmetic even with `precision="input"`. The `precision="float64"` option widens any remaining float16/float32 data before arithmetic. To preserve each input dtype, measure the images in separate calls.
+
+## Granularity intermediate precision
+
+The Numba granularity backend preserves the input dtype through background opening, background resampling and subtraction, matching the NumPy path (#123). The extrema kernels may compute in float64 internally, but their selected values are restored to the incoming background dtype before interpolation. Without that boundary conversion, float32 inputs could produce small but observable backend differences (approximately `6.5e-6` in the real-image pilot). Float64 behavior is unchanged; this is not arbitrary rounding of final measurements or a relaxed comparison tolerance. Integer images are measured as their exact float64 values, so the background subtraction cannot wrap around.
+
+For 2D float16 images with `subsample_size=1`, the Numba backend retains its historical float64 widening, including when the background is resampled. This exception also applies to same-dtype batches with `precision="input"`; float32 and float64 arithmetic is unchanged. Float16 image subsampling still requires `precision="float64"`.
+
+3D volumes use the same numba scheme as 2D (ball opening, 6-connectivity reconstruction) and follow the NumPy path's upsampling and per-object means voxel by voxel, so results are bit-identical to NumPy, including its float32 rounding of the upsampled reconstruction.
+
+Kernel bit-parity checks require identical dtype, shape, NaN locations, and all non-NaN bits (including signed zeros and infinities). NaN sign and payload encodings are excluded: CI observed different NaN signs between SciPy and Numba for the same non-finite interpolation inputs, without differences in NaN locations or non-NaN values.
 
 ## Texture quantization
 

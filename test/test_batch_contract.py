@@ -32,7 +32,7 @@ CORE = [
 CORRELATION = ["pearson", "manders_fold", "rwc", "costes", "overlap"]
 # Measurements whose batches run on the map_images thread pool. Add each one as
 # its batch path adopts map_images; the threaded test checks this both ways.
-THREADED = {"intensity", "texture", "sizeshape", "feret"}
+THREADED = {"intensity", "texture", "sizeshape", "feret", "granularity"}
 THREADED_2D = {"radial_distribution", "radial_zernikes", "zernike"}
 CASES = [(name, {}) for name in CORE + CORRELATION] + [
     ("intensity", dict(legacy=legacy, edge_measurements=edge))
@@ -210,8 +210,8 @@ def test_measured_image_shape_mismatch_rejected(
     measurement, shape, container, monkeypatch
 ):
     name, call, _ = measurement
-    if name in ("zernike", "feret", "granularity"):
-        pytest.skip("shape-only pixels ignored; granularity has no shared shape guard")
+    if name in ("zernike", "feret"):
+        pytest.skip("shape-only pixels ignored")
     if name == "intensity":
         from cp_measure.core.numba import measureobjectintensity
 

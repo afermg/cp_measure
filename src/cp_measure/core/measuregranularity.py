@@ -61,6 +61,7 @@ import skimage.morphology
 from cp_measure._precision import Precision, promote_float_pixels
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
+from cp_measure.primitives.shapes import apply_per_image, is_batch
 
 
 def _make_fused_upsample_mean(
@@ -148,7 +149,7 @@ def get_granularity(
     granular_spectrum_length: int = 16,
     *,
     precision: Precision = "input",
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object granularity spectrum features.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
@@ -220,6 +221,17 @@ def get_granularity(
     Examples
 
     """
+    if is_batch(mask):  # list/tuple or 4D: one result per image
+        return apply_per_image(
+            get_granularity,
+            mask,
+            pixels,
+            subsample_size=subsample_size,
+            image_sample_size=image_sample_size,
+            element_size=element_size,
+            granular_spectrum_length=granular_spectrum_length,
+            precision=precision,
+        )
     # Promote before every resampling/morphology/subtraction stage, not just
     # the final reduction. Preserve the stored acquisition values exactly.
     pixels = promote_float_pixels(pixels, precision)
@@ -302,10 +314,18 @@ def get_granularity(
         footprint = skimage.morphology.ball(radius, dtype=bool)
     back_pixels_mask = numpy.zeros_like(back_pixels)
     back_pixels_mask[back_mask == 1] = back_pixels[back_mask == 1]
-    back_pixels = skimage.morphology.erosion(back_pixels_mask, footprint=footprint)
+    # mode="nearest": the background grid can have only 2 samples along an axis
+    # (e.g. 8-11 Z slices at default sizes), where SciPy's "reflect" padding for a
+    # footprint this wide reads outside the array (nondeterministic results).
+    # Min/max over a symmetric ball is otherwise the same in either mode.
+    back_pixels = skimage.morphology.erosion(
+        back_pixels_mask, footprint=footprint, mode="nearest"
+    )
     back_pixels_mask = numpy.zeros_like(back_pixels)
     back_pixels_mask[back_mask == 1] = back_pixels[back_mask == 1]
-    back_pixels = skimage.morphology.dilation(back_pixels_mask, footprint=footprint)
+    back_pixels = skimage.morphology.dilation(
+        back_pixels_mask, footprint=footprint, mode="nearest"
+    )
     if image_sample_size < 1:
         if pixels.ndim == 2:
             i, j = numpy.mgrid[0 : new_shape[0], 0 : new_shape[1]].astype(float)
