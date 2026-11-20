@@ -4,19 +4,32 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
-### Fixed
-
-- `radial_distribution` sums intensities in float64. Integer images no longer
-  wrap around (uint8/uint16 results were wrong), and float32 results gain
-  precision (relative changes up to ~2e-4).
-
 ### Added
 
 - Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
   object-set ranks. The default remains independent per-object ranking (#121).
+- Shape and radial Zernike values no longer depend on where an object sits in
+  the image. The minimum enclosing circle passes exactly through two or three
+  boundary pixels; a strict `r^2 > 1` cutoff let float rounding, which changes
+  with the absolute coordinates, drop them. They now always count (cutoff
+  `r^2 > 1 + 1e-9`, both backends). Values change for objects whose on-circle
+  pixels were dropped (about 40-50% of real nuclei; a few percent per moment),
+  and differ from CellProfiler only in those pixels. Pass `legacy_boundary=True`
+  to shape or radial Zernike measurements to restore the historical strict cutoff
+  and centrosome coordinate calculation; the rounding fix remains the default.
+- `radial_distribution` sums intensities in float64. Integer images no longer
+  wrap around (uint8/uint16 results were wrong), and float32 results gain
+  precision (relative changes up to ~2e-4).
 
 ### Changed
 
+- NumPy size/shape, Feret, radial distribution and radial Zernike accept a batch
+  (a list/tuple of images or a 4D `(B, Z, Y, X)` array) and return one result per
+  image. The numba backend measures these batches on threads and shares per-mask
+  work (Zernike coordinates and basis, radial crops and distance transforms)
+  between images that use the same mask.
+- Numba Feret computes the convex hull and diameters in Numba instead of
+  centrosome, so batch images run fully in parallel. Results are bit-identical.
 - **Return type change:** the colocalization label APIs (`get_correlation_pearson`,
   `get_correlation_manders_fold`, `get_correlation_rwc`, `get_correlation_costes`
   and `get_correlation_overlap`, NumPy and Numba, single image and batch) return
@@ -56,16 +69,69 @@ Notable user-facing changes are documented here.
   Previously rejected searches may now yield finite coefficients (including 0/1),
   leaving quality filtering downstream. Invalid input/regression and zero
   denominator checks remain. See [boundary policy](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
+- NumPy `intensity` accepts a batch (a list/tuple of images or a 4D
+  `(B, Z, Y, X)` array) and returns one result per image.
+- Numba `granularity` measures 3D volumes with numba kernels, bit-identical to
+  NumPy (about 45 times faster on cells3d volumes), and batches on threads. NumPy
+  `granularity` accepts a batch (a list/tuple of images or a 4D `(B, Z, Y, X)`
+  array) and returns one result per image.
 - Numba intensity accepts `(B, Z, Y, X)` arrays and equal-shape lists/tuples,
   returning one dictionary per item. Intensity normalizes batch items as views
-  and processes them sequentially.
+  and measures them on a thread pool.
+- NumPy `texture` accepts a batch (a list/tuple of images or a 4D
+  `(B, Z, Y, X)` array) and returns one result per image. Numba texture builds
+  every object's crop in one kernel call and measures batches on threads.
 - **Breaking:** NumPy intensity now requires matching label/image shapes instead
   of broadcasting a 2D mask over a 3D image. To retain that measurement, pass
   `numpy.broadcast_to(mask_2d, pixels_3d.shape)` explicitly.
+
+### Fixed
+
+- NumPy `granularity` opens the background with edge padding. A background grid
+  with only 2 samples along an axis (3D volumes with 8 to 11 slices at default
+  sizes) made SciPy's reflect padding read outside the array, so results were
+  wrong and changed between identical calls. Other inputs are unchanged.
+- Numba `granularity` keeps float32 backgrounds in float32, as NumPy does (#123),
+  measures integer images as float64 (no wraparound), and rejects masks and
+  pixels of different shapes instead of reading outside the image.
+- Numba radial Zernike accepts float16 intensity images in single-image and
+  batch calls, widening them before compiled coordinate extraction.
+- Numba `intensity` skips non-finite pixels as NumPy does: an object without a
+  finite pixel gets zeros (not NaN or +-inf), and edge features use only finite
+  edge pixels. Values change only for images with NaN/inf pixels.
+- 3D size/shape with `calculate_advanced=True` and `new_features=True` now
+  exports the 12 missing `(0, 3, r)` moments (`SpatialMoment_0_3_r`,
+  `CentralMoment_0_3_r`, `NormalizedMoment_0_3_r` for `r` in 0–3). The 3D schema
+  grows from 212 to 224 features. Existing columns keep their names and values;
+  the new columns appear in index order after the `0_2_3` moments.
+
+## [0.4.0] - 2026-11-19
+
+### Performance
+
+- Expand the optional Numba backend with granularity (#56), shape and radial
+  Zernikes (#58), colocalization (#60), Costes (#62), radial distribution (#63),
+  and 2D size/shape geometry (#127). Existing intensity, texture, and Feret
+  acceleration remains available. This release contains the changes already
+  merged into `main`; it does not depend on the remaining open acceleration PRs.
+- Enable acceleration with `pip install "cp-measure[numba]"` and
+  `set_accelerator("numba")` before constructing a featurizer configuration or
+  fetching bulk functions. NumPy/SciPy remains the default, and some operations
+  retain reference paths. The first call includes JIT compilation; performance
+  depends on the workload, so this release makes no universal speedup claim.
+
+### Changed
+
+- Costes permits threshold-boundary results in NumPy and Numba; scale validation
+  and invalid-input, regression and zero-denominator checks remain.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
-  output remains integer and the existing moment implementation is retained.
+  output remains integer.
+- Numba size/shape computes the 2D spatial moments in one GIL-free kernel, so
+  batch images scale across threads. Raw moments are unchanged; the
+  inertia-derived features (inertia tensor, eigenvalues, axis lengths,
+  eccentricity) match NumPy within 1e-12.
 - Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
   (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
   widening of float16/float32 before arithmetic in both backends). Opting in can
@@ -78,6 +144,11 @@ Notable user-facing changes are documented here.
 
 ### Fixed
 
+- `radial_distribution` sums intensities in float64. Integer images no longer
+  wrap around (uint8/uint16 results were wrong), and float32 results gain
+  precision (relative changes up to ~2e-4).
+- Accept read-only sparse label arrays without changing the dense-label no-copy
+  path, and normalize non-native label byte order at Numba colocalization boundaries.
 - Costes now maps exact reciprocal-normalized integer-grid values (including
   `img_as_float` outputs) to the existing division encoding, preventing round-off
   from changing coefficients solely because of the normalization path (#117).
@@ -114,9 +185,8 @@ Notable user-facing changes are documented here.
   reject float inputs without an explicit scale instead of silently searching a
   one-step grid. Matching unsigned integer dtypes infer their storage maximum;
   lower-bit-depth data in larger containers need an explicit override.
-- Undefined Costes regressions/background subsets and zero signal denominators
-  now warn with `RuntimeWarning` and return NaN. Constant bisection
-  candidates no longer cause silent convergence on stale bounds.
+- Undefined Costes regressions and zero signal denominators
+  warn with `RuntimeWarning` and return NaN.
 - Added integer/float, 2D/3D, bulk/featurizer and degenerate-input regressions,
   plus 18 fixtures from pinned CellProfiler threshold methods. This does not
   establish full CellProfiler pipeline equivalence.

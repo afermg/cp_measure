@@ -12,7 +12,7 @@ The featurizer supports both single- and multichannel volumes with `is_3d=True`.
 
 To use a 2D mask through a volume, the caller must explicitly repeat it before calling `featurize`, for example `masks_3d = np.repeat(masks_2d[:, :, None], image.shape[2], axis=2)`. Each repeated label becomes one 3D object, so intensity and shape measurements use the entire volume rather than separate 2D measurements per slice. The featurizer does not perform this conversion or modify its inputs.
 
-For `Z=1`, size/shape measures the sole plane in both backends, including through the bulk wrappers and featurizer. It returns 2D feature names and pixel-based values: 78 default features, not the 212-feature 3D schema. All-background raw masks use the same 2D schema with zero-length arrays. This replaces the previous nonempty-input error and changes the previous empty singleton-Z schema. As for explicit 2D inputs, `spacing` does not scale these measurements.
+For `Z=1`, size/shape measures the sole plane in both backends, including through the bulk wrappers and featurizer. It returns 2D feature names and pixel-based values: 78 default features, not the 224-feature 3D schema. All-background raw masks use the same 2D schema with zero-length arrays. This replaces the previous nonempty-input error and changes the previous empty singleton-Z schema. As for explicit 2D inputs, `spacing` does not scale these measurements.
 
 For `Z>1`, size/shape retains its 3D implementation and spacing convention. Its surface-area calculation still requires at least two voxels along each spatial axis; singleton X/Y axes are not squeezed. Raw size/shape calls remain per-image, not batch APIs.
 
@@ -28,13 +28,23 @@ Both raw functions require contiguous labels. The featurizer and default bulk wr
 
 The direct Numba `get_intensity` function accepts matching 2D or 3D images and returns one feature dictionary. Matching `(B, Z, Y, X)` arrays or lists/tuples of equally shaped 2D/3D images return a list of dictionaries. A 3D array is one image, never an implicit batch. Empty or ragged batches and mismatched input ranks/shapes are rejected; masks are not broadcast or repeated.
 
-`legacy` and `edge_measurements` apply to every image. Legacy MAD depends on the original spatial rank: a 2D list item uses the 2D convention, while a `(B, 1, Y, X)` batch contains singleton-Z volumes and retains the 3D convention. Batch items are processed sequentially using the existing kernels and per-item views. The NumPy direct function remains a single-image API, and featurizer input conventions are unchanged.
+`legacy` and `edge_measurements` apply to every image. Legacy MAD depends on the original spatial rank: a 2D list item uses the 2D convention, while a `(B, 1, Y, X)` batch contains singleton-Z volumes and retains the 3D convention. Batch items run on a thread pool, each with the existing kernels and per-item views. The NumPy direct function accepts the same batch forms and measures each item in turn; featurizer input conventions are unchanged.
 
 Both intensity backends require matching label and image shapes. The NumPy function previously broadcast a 2D mask across a 3D image; callers who want that measurement can now pass `np.broadcast_to(mask_2d, pixels_3d.shape)` explicitly. Each repeated label is measured as one object across the volume.
 
 ## Numba granularity batches
 
-Granularity retains its `to_bzyx` normalization, which stacks batch items into arrays with a common dtype. A mixed float32/float64 list or tuple therefore uses float64 arithmetic even with `precision="input"`. The `precision="float64"` option widens any remaining float16/float32 data before arithmetic. To preserve each input dtype independently, measure the images in separate calls.
+Batch images should share one dtype. A same-dtype batch (including any `(B, Z, Y, X)` array) gives the same values as measuring each image separately. Mixed-dtype lists or tuples are the caller's responsibility: they are not checked or rejected, and their results are not guaranteed. Currently granularity measures such a batch at its common dtype, so a mixed float32/float64 list uses float64 arithmetic even with `precision="input"`. The `precision="float64"` option widens any remaining float16/float32 data before arithmetic. To preserve each input dtype, measure the images in separate calls.
+
+## Granularity intermediate precision
+
+The Numba granularity backend preserves the input dtype through background opening, background resampling and subtraction, matching the NumPy path (#123). The extrema kernels may compute in float64 internally, but their selected values are restored to the incoming background dtype before interpolation. Without that boundary conversion, float32 inputs could produce small but observable backend differences (approximately `6.5e-6` in the real-image pilot). Float64 behavior is unchanged; this is not arbitrary rounding of final measurements or a relaxed comparison tolerance. Integer images are measured as their exact float64 values, so the background subtraction cannot wrap around.
+
+For 2D float16 images with `subsample_size=1`, the Numba backend retains its historical float64 widening, including when the background is resampled. This exception also applies to same-dtype batches with `precision="input"`; float32 and float64 arithmetic is unchanged. Float16 image subsampling still requires `precision="float64"`.
+
+3D volumes use the same numba scheme as 2D (ball opening, 6-connectivity reconstruction) and follow the NumPy path's upsampling and per-object means voxel by voxel, so results are bit-identical to NumPy, including its float32 rounding of the upsampled reconstruction.
+
+Kernel bit-parity checks require identical dtype, shape, NaN locations, and all non-NaN bits (including signed zeros and infinities). NaN sign and payload encodings are excluded: CI observed different NaN signs between SciPy and Numba for the same non-finite interpolation inputs, without differences in NaN locations or non-NaN values.
 
 ## Texture quantization
 
@@ -53,6 +63,14 @@ Object-set mode requires finite foreground intensities (nonfinite background is 
 ## Legacy percentile convention
 
 `legacy=True` restores the original intensity quantile conventions; the default uses NumPy's linear quartiles and the usual median absolute deviation. See the [`get_intensity` docstring](../src/cp_measure/core/measureobjectintensity.py#L139-L163) for formulas, including the different legacy MAD convention in 3D.
+
+## Zernike boundary compatibility
+
+Shape `get_zernike` and intensity-weighted `get_radial_zernikes` include pixels on the enclosing circle by default, allowing a squared normalized radius up to `1 + 1e-9`. This avoids dropping boundary pixels solely because of floating-point rounding when an unchanged object moves in the image. It changes some historical measurements, not the feature names or normalization.
+
+Pass `legacy_boundary=True` to either function to restore the previous strict `r² > 1` exclusion. In the Numba backend this also restores the historical centrosome coordinate calculation: changing only the cutoff while using a different circle algorithm would not reproduce the same boundary membership. Legacy mode retains compiled moment evaluation and batch support, but its coordinate preparation is not the new GIL-free kernel. The flag applies to single images, singleton-Z volumes, and every item in a batch. It is independent of intensity's `legacy` percentile option.
+
+For the featurizer, use `zernike_params={"legacy_boundary": True}` and/or `radial_zernikes_params={"legacy_boundary": True}`. Omitting the flag, or setting it to `False`, keeps the boundary-rounding fix. Legacy compatibility is to the previous numerical convention, not a promise of bit-identical floating-point results across backends, library versions, or ill-defined near-zero Zernike phases.
 
 ## Costes integer-to-float normalization
 
@@ -205,13 +223,15 @@ checked against the historical boundary behavior. The original CellProfiler
 fixture remains unchanged; the float64 expectation is a separate oracle, not a
 rewritten reference. No separate JIT threshold policy is introduced.
 
-Object-set RWC remains an independent follow-up:
+Both backends accept `rank_scope="object_set"`. The Numba wrapper delegates this
+opt-in scope to the NumPy reference per image, including in explicit batches;
+it does not rank across batch items. The default `rank_scope="object"` retains
+its accelerated object-local calculation. Bulk and featurizer calls forward
+the explicit scope without changing the default.
 
-- [#126](https://github.com/afermg/cp_measure/pull/126) adds an opt-in
-  `rank_scope="object_set"`. This backend retains the current signature and
-  ordinary object-local default; that follow-up will also need to add keyword
-  forwarding to the Numba wrapper (with a reference path for the new scope, or
-  a separately validated implementation). It must not silently change the default.
+Both scopes accept `precision="input"` (default) or `precision="float64"`.
+Object-set float64 mode widens stored float16/float32 values before ranking,
+thresholding and reduction; it does not promise CellProfiler float32 parity.
 
 ### Costes
 

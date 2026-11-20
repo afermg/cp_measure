@@ -2,6 +2,7 @@ import numpy
 import scipy.ndimage
 import skimage.segmentation
 from numpy.typing import NDArray
+from cp_measure.primitives.shapes import batch_dispatch
 
 __doc__ = """
 MeasureObjectIntensity
@@ -136,12 +137,13 @@ def _interp(sorted_arr: numpy.ndarray, n: int, frac: float, legacy: bool) -> flo
     return float(sorted_arr[lo] * (1.0 - f) + sorted_arr[hi] * f)
 
 
+@batch_dispatch
 def get_intensity(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     edge_measurements: bool = True,
     legacy: bool = False,
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object intensity features.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).

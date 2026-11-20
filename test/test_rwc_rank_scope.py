@@ -160,3 +160,53 @@ def test_invalid_scope_and_nonfinite_foreground_are_rejected():
     first[labels == 1] = np.nan
     with pytest.raises(ValueError, match="finite foreground"):
         get_correlation_rwc(first, second, labels, rank_scope="object_set")
+
+
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+@pytest.mark.parametrize("threshold", [15, np.float32(15)])
+def test_object_set_float64_matches_explicit_widening(backend, threshold):
+    measure = get_correlation_rwc
+    if backend == "numba":
+        pytest.importorskip("numba")
+        from cp_measure.core.numba import measurecolocalization
+
+        measure = measurecolocalization.get_correlation_rwc
+    first, second, labels = scene(0)
+    expected = get_correlation_rwc(
+        first.astype(np.float64),
+        second.astype(np.float64),
+        labels,
+        thr=float(threshold),
+        rank_scope="object_set",
+    )
+    actual = measure(
+        first,
+        second,
+        labels,
+        thr=threshold,
+        rank_scope="object_set",
+        precision="float64",
+    )
+    assert same(actual, expected)
+    assert not same(
+        actual,
+        get_correlation_rwc(
+            first, second, labels, thr=threshold, rank_scope="object_set"
+        ),
+    )
+
+
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_object_set_rejects_invalid_precision(backend, empty):
+    measure = get_correlation_rwc
+    if backend == "numba":
+        pytest.importorskip("numba")
+        from cp_measure.core.numba import measurecolocalization
+
+        measure = measurecolocalization.get_correlation_rwc
+    first, second, labels = scene()
+    if empty:
+        labels = np.zeros_like(labels)
+    with pytest.raises(ValueError, match="precision"):
+        measure(first, second, labels, rank_scope="object_set", precision="float32")

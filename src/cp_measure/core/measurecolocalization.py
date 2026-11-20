@@ -910,7 +910,7 @@ def get_correlation_rwc(
             promote_float_pixels(pixels_1, precision),
             promote_float_pixels(pixels_2, precision),
             masks,
-            thr,
+            float(thr) if precision == "float64" else thr,
         )
     if rank_scope != "object":
         raise ValueError("rank_scope must be 'object' or 'object_set'")

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Callable, Optional
 
 from numpy.typing import NDArray
 
@@ -13,7 +13,7 @@ from cp_measure.primitives._moments import (
     moment_feature_dict,
     spatial_moments_2d,
 )
-from cp_measure.primitives.shapes import as_2d
+from cp_measure.primitives.shapes import apply_per_image, as_2d, is_batch
 from cp_measure.utils import _zernike_scores, masks_to_ijv
 
 __doc__ = """\
@@ -347,6 +347,10 @@ F_NORMALIZED_MOMENT_0_2_0 = "NormalizedMoment_0_2_0"
 F_NORMALIZED_MOMENT_0_2_1 = "NormalizedMoment_0_2_1"
 F_NORMALIZED_MOMENT_0_2_2 = "NormalizedMoment_0_2_2"
 F_NORMALIZED_MOMENT_0_2_3 = "NormalizedMoment_0_2_3"
+F_NORMALIZED_MOMENT_0_3_0 = "NormalizedMoment_0_3_0"
+F_NORMALIZED_MOMENT_0_3_1 = "NormalizedMoment_0_3_1"
+F_NORMALIZED_MOMENT_0_3_2 = "NormalizedMoment_0_3_2"
+F_NORMALIZED_MOMENT_0_3_3 = "NormalizedMoment_0_3_3"
 F_NORMALIZED_MOMENT_1_0_0 = "NormalizedMoment_1_0_0"
 F_NORMALIZED_MOMENT_1_0_1 = "NormalizedMoment_1_0_1"
 F_NORMALIZED_MOMENT_1_0_2 = "NormalizedMoment_1_0_2"
@@ -408,6 +412,10 @@ F_CENTRAL_MOMENT_0_2_0 = "CentralMoment_0_2_0"
 F_CENTRAL_MOMENT_0_2_1 = "CentralMoment_0_2_1"
 F_CENTRAL_MOMENT_0_2_2 = "CentralMoment_0_2_2"
 F_CENTRAL_MOMENT_0_2_3 = "CentralMoment_0_2_3"
+F_CENTRAL_MOMENT_0_3_0 = "CentralMoment_0_3_0"
+F_CENTRAL_MOMENT_0_3_1 = "CentralMoment_0_3_1"
+F_CENTRAL_MOMENT_0_3_2 = "CentralMoment_0_3_2"
+F_CENTRAL_MOMENT_0_3_3 = "CentralMoment_0_3_3"
 F_CENTRAL_MOMENT_1_0_0 = "CentralMoment_1_0_0"
 F_CENTRAL_MOMENT_1_0_1 = "CentralMoment_1_0_1"
 F_CENTRAL_MOMENT_1_0_2 = "CentralMoment_1_0_2"
@@ -597,14 +605,37 @@ def get_sizeshape(
     calculate_advanced: bool = True,
     new_features: bool = True,
     spacing: Optional[tuple[float, ...]] = None,
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Compute the size/shape measurements for multiple object masks.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     Singleton-Z inputs use 2D measurements, including the empty-mask schema.
     As for explicit 2D inputs, measurements are in pixels; ``spacing`` applies
-    only to the 3D surface-area calculation.
+    only to the 3D surface-area calculation. A batch (list/tuple or 4D array)
+    returns one dict per image.
     """
+    if is_batch(masks):
+        return apply_per_image(
+            get_sizeshape,
+            masks,
+            pixels,
+            calculate_advanced=calculate_advanced,
+            new_features=new_features,
+            spacing=spacing,
+        )
+    return _get_sizeshape(masks, pixels, calculate_advanced, new_features, spacing)
+
+
+def _get_sizeshape(
+    masks: NDArray[numpy.integer],
+    pixels: NDArray[numpy.floating] | None,
+    calculate_advanced: bool,
+    new_features: bool,
+    spacing: Optional[tuple[float, ...]],
+    convex_volume: Optional[Callable[[NDArray], NDArray[numpy.floating]]] = None,
+) -> dict[str, NDArray[numpy.floating]]:
+    """:func:`get_sizeshape` for one image. ``convex_volume(labels)``, when given,
+    replaces regionprops' 3D ``area_convex`` (and the ``solidity`` derived from it)."""
     masks, pixels = _single_slice_inputs(masks, pixels)
     # Properties available for both 2d and 3d
     desired_properties = [
@@ -725,9 +756,16 @@ def get_sizeshape(
             }
 
     else:
+        replaced = ("area_convex", "solidity") if convex_volume is not None else ()
         props = skimage.measure.regionprops_table(
-            labels, pixels, properties=desired_properties
+            labels,
+            pixels,
+            properties=[p for p in desired_properties if p not in replaced],
         )
+        if convex_volume is not None:
+            props["area_convex"] = convex_volume(labels)
+            if "solidity" in desired_properties:
+                props["solidity"] = props["area"] / props["area_convex"]
 
         # SurfaceArea
         distinct_labels = numpy.unique(labels[labels > 0])
@@ -789,6 +827,10 @@ def get_sizeshape(
                     F_SPATIAL_MOMENT_0_2_1: props["moments-0-2-1"],
                     F_SPATIAL_MOMENT_0_2_2: props["moments-0-2-2"],
                     F_SPATIAL_MOMENT_0_2_3: props["moments-0-2-3"],
+                    F_SPATIAL_MOMENT_0_3_0: props["moments-0-3-0"],
+                    F_SPATIAL_MOMENT_0_3_1: props["moments-0-3-1"],
+                    F_SPATIAL_MOMENT_0_3_2: props["moments-0-3-2"],
+                    F_SPATIAL_MOMENT_0_3_3: props["moments-0-3-3"],
                     F_SPATIAL_MOMENT_1_0_0: props["moments-1-0-0"],
                     F_SPATIAL_MOMENT_1_0_1: props["moments-1-0-1"],
                     F_SPATIAL_MOMENT_1_0_2: props["moments-1-0-2"],
@@ -849,6 +891,10 @@ def get_sizeshape(
                     F_CENTRAL_MOMENT_0_2_1: props["moments_central-0-2-1"],
                     F_CENTRAL_MOMENT_0_2_2: props["moments_central-0-2-2"],
                     F_CENTRAL_MOMENT_0_2_3: props["moments_central-0-2-3"],
+                    F_CENTRAL_MOMENT_0_3_0: props["moments_central-0-3-0"],
+                    F_CENTRAL_MOMENT_0_3_1: props["moments_central-0-3-1"],
+                    F_CENTRAL_MOMENT_0_3_2: props["moments_central-0-3-2"],
+                    F_CENTRAL_MOMENT_0_3_3: props["moments_central-0-3-3"],
                     F_CENTRAL_MOMENT_1_0_0: props["moments_central-1-0-0"],
                     F_CENTRAL_MOMENT_1_0_1: props["moments_central-1-0-1"],
                     F_CENTRAL_MOMENT_1_0_2: props["moments_central-1-0-2"],
@@ -909,6 +955,10 @@ def get_sizeshape(
                     F_NORMALIZED_MOMENT_0_2_1: props["moments_normalized-0-2-1"],
                     F_NORMALIZED_MOMENT_0_2_2: props["moments_normalized-0-2-2"],
                     F_NORMALIZED_MOMENT_0_2_3: props["moments_normalized-0-2-3"],
+                    F_NORMALIZED_MOMENT_0_3_0: props["moments_normalized-0-3-0"],
+                    F_NORMALIZED_MOMENT_0_3_1: props["moments_normalized-0-3-1"],
+                    F_NORMALIZED_MOMENT_0_3_2: props["moments_normalized-0-3-2"],
+                    F_NORMALIZED_MOMENT_0_3_3: props["moments_normalized-0-3-3"],
                     F_NORMALIZED_MOMENT_1_0_0: props["moments_normalized-1-0-0"],
                     F_NORMALIZED_MOMENT_1_0_1: props["moments_normalized-1-0-1"],
                     F_NORMALIZED_MOMENT_1_0_2: props["moments_normalized-1-0-2"],
@@ -983,18 +1033,34 @@ def get_zernike(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
     zernike_numbers: int = 9,
-) -> dict[str, NDArray[numpy.floating]]:
+    *,
+    legacy_boundary: bool = False,
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Zernike shape features (including singleton-Z volumes); pixels are unused.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    A batch (list/tuple or 4D array) returns one dict per image.
+    ``legacy_boundary=True`` restores the previous strict unit-disk cutoff,
+    including its position-dependent exclusion of rounded boundary pixels.
+    The default includes boundary pixels within a squared-radius tolerance of 1e-9.
     """
+    if is_batch(masks):
+        return apply_per_image(
+            get_zernike,
+            masks,
+            pixels,
+            zernike_numbers=zernike_numbers,
+            legacy_boundary=legacy_boundary,
+        )
     measured_masks = as_2d(masks)
     if measured_masks is None:
         return {}
     masks = measured_masks
     zernike_indexes = zernike.get_zernike_indexes(zernike_numbers + 1)
 
-    real_sums, imag_sums, radii, _counts = _zernike_scores(masks, zernike_indexes)
+    real_sums, imag_sums, radii, _counts = _zernike_scores(
+        masks, zernike_indexes, legacy_boundary=legacy_boundary
+    )
     return _zernike_features(real_sums, imag_sums, radii, zernike_indexes)
 
 
@@ -1014,11 +1080,14 @@ def _zernike_features(
 
 def get_feret(
     masks: NDArray[numpy.integer], pixels: NDArray[numpy.floating] | None
-) -> dict[str, NDArray[numpy.floating]]:
+) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Feret diameters (2D calculations, including singleton-Z volumes).
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    A batch (list/tuple or 4D array) returns one dict per image.
     """
+    if is_batch(masks):
+        return apply_per_image(get_feret, masks, pixels)
     measured_masks = as_2d(masks)
     if measured_masks is None:
         return {}

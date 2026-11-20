@@ -34,6 +34,25 @@ Requires **Python 3.11 or newer**.
 pip install cp-measure
 ```
 
+For optional Numba acceleration:
+
+```bash
+pip install "cp-measure[numba]"
+```
+
+Select the backend before creating a featurizer configuration or fetching bulk
+measurement functions:
+
+```python
+from cp_measure import set_accelerator
+
+set_accelerator("numba")
+```
+
+The first call compiles kernels; subsequent calls benefit from the compiled code.
+NumPy/SciPy remains the default (`set_accelerator(None)`). Direct imports from
+`cp_measure.core` retain their NumPy implementations.
+
 ## Usage
 
 We provide three entry points: (Featurizer) We orchestrate the images x combinations, (Bulk API) we give you all features and you orchestrate, and (Low-level) you directly import the functions.
@@ -227,7 +246,7 @@ measurecolocalization.get_correlation_overlap
 - **Fidelity**: Use float intensities in `[0, 1]` to match CellProfiler's input convention (e.g. divide uint16 values by `65535`). Matching the original intensity quantile measurements also requires `legacy=True`; see the [legacy percentile convention](docs/measurement-notes.md#legacy-percentile-convention).
 - **Costes scale (breaking correction)**: Float inputs to `get_correlation_costes` and `get_correlation_costes_ind` must be normalized to `[0, 1]` **and** specify `scale_max` (e.g. `65535` for normalized 16-bit data). It controls the threshold grid; it is not the observed image maximum. Both matching unsigned-integer dtypes infer their storage maximum and are normalized internally. For 12-bit data stored in `uint16`, pass `scale_max=4095` explicitly; signed or mixed-dtype arrays also require a scale. Through the featurizer, use `correlation_costes_params={"scale_max": 65535}` or disable Costes. cp_measure fits thresholds per object, whereas CellProfiler's object workflow fits across the image.
 - **Costes boundary policy**: Small/constant threshold-search backgrounds no longer veto coefficients. Both backends retain permissive boundary results for downstream quality filtering; a finite score is not a quality guarantee. Invalid input/regression and zero-denominator checks remain. See [details](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
-- **Speed**: v0.2.0 speeds up the default NumPy/SciPy implementation without adding required runtime dependencies; see the [performance report](benchmarks/releases/v0.2.0.md). Optional Numba and JAX backends remain under development and are not yet supported.
+- **Speed**: v0.4.0 expands optional Numba acceleration to granularity, shape/radial Zernikes, radial distribution, colocalization, and 2D size/shape geometry, alongside the existing intensity, texture, and Feret backends. Install the `numba` extra and select it explicitly as shown above. The default NumPy/SciPy improvements are described in the [v0.2.0 performance report](benchmarks/releases/v0.2.0.md).
 
 See [Measurement notes](docs/measurement-notes.md) for texture quantization, percentile formulas, radial-distribution centers, and floating-point caveats.
 
@@ -238,6 +257,8 @@ See [Measurement notes](docs/measurement-notes.md) for texture quantization, per
 - [CharmFeatures](https://gitlab.com/iggman/charm-features): Library, Python module, and command-line utility for extracting Wnd-Charm image features from large TIFF collections.
 - [thyme](https://github.com/tomouellette/thyme): Rust library to extract a subset of CellProfiler's features efficiently (independent implementation).
 - [CellProfiler Library](https://github.com/CellProfiler/CellProfiler/tree/main/src/subpackages/library): WIP library that isolates CellProfiler image-processing functions from its frontend.
+- [MorphoLibJ](https://imagej.net/plugins/morpholibj): ImageJ/Fiji plugin that measures shape and intensity per label in 2D and 3D label images.
+- [terra `zonal`](https://rspatial.github.io/terra/reference/zonal.html): R function that computes summary statistics per zone (label) of a raster.
 
 <details>
 <summary>Current work</summary>

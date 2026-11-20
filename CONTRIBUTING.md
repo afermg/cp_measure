@@ -86,16 +86,16 @@ CI will check for all these before it can be merged into the main branch.
 
 The project is actively developing in these areas:
 
-1. **Speed improvements**: JIT compilation and optional GPU support
+1. **Speed improvements**: JIT compilation (optional Numba backend)
 2. **Numerical validation**: Comprehensive tests comparing cp_measure to CellProfiler outputs
 3. **Interface formalization**: Standardizing input/output formats for 2D/3D images and masks
 4. **Documentation**: Improving examples and API documentation
 
 ### Notes on the current design
 
-- cp_measure is not optimised for efficiency (yet). We aim to reproduce the 'vanilla' results of CellProfiler with minimal code changes. Optimisations will be implemented once we come up with a standard interface for functionally-focused CellProfiler components.
+- We aim to reproduce the 'vanilla' results of CellProfiler. The NumPy implementation is the reference; the optional Numba backend is tested against it.
 - The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
-- The functions do not include guardrails (e.g., checks of type or value). They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
+- `featurize` validates input shapes and dtypes, skips images with no objects, and rejects an all-empty batch. Raw measurement functions check less, and empty masks have no uniform contract: some return empty results, others raise. See [measurement support](docs/measurement-support.md).
 
 ## Communication
 
@@ -110,7 +110,7 @@ cp_measure focuses specifically on reimplementing CellProfiler's measurement mod
 - Minimal dependencies
 - Transparent, self-contained measurement implementations
 - Unified interface for ML/computational biology workflows
-- Performance optimizations (GPU support, JIT compilation)
+- Performance optimizations (JIT compilation)
 
 ## Questions?
 

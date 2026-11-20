@@ -567,7 +567,7 @@ def test_costes_resumed_bisection_matches_reference():
 def test_costes_image_kernel_returns_pixels_only_for_replays():
     """The per-image kernel hands its grouped pixels back only when an object
     needs the reference, and matches grouping then searching separately."""
-    from cp_measure.core.numba._costes import costes_faster, costes_faster_image
+    from cp_measure.core.numba._costes import RESUME, costes_faster, costes_faster_image
     from cp_measure.primitives._segment_numba import group_pairs, numpy_sum_chunk
 
     tie = np.array([[[2, 2, 4, 4, 0, 7, 5, 6, 0, 5], [4, 2, 6, 3, 1, 6, 8, 8, 8, 0]]])
@@ -578,8 +578,10 @@ def test_costes_image_kernel_returns_pixels_only_for_replays():
         got = costes_faster_image(masks, a, b, 255.0, defer, chunk)
         g1, g2, offsets = group_pairs(masks, a, b)
         expected = costes_faster(g1, g2, offsets, 255.0, defer, chunk)
-        for value, want in zip(got[:4], expected):
+        for value, want in zip(got[:3], expected[:3]):
             np.testing.assert_array_equal(value, want)
+        resumed = got[2] == RESUME
+        np.testing.assert_array_equal(got[3][resumed], expected[3][resumed])
         np.testing.assert_array_equal(got[6], offsets)
         assert got[4].size == got[5].size == (10 if replayed else 0)
         if replayed:  # canonicalized in place, as costes_faster leaves them
