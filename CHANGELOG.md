@@ -6,7 +6,7 @@ Notable user-facing changes are documented here.
 
 ### Added
 
-- Costes accepts independent `scope="image"` and `cellprofiler=True` options.
+- Costes accepts independent `scope="image"` and `precision="input"` options.
   Defaults remain per-object fitting and native float64 arithmetic. The tested
   CellProfiler 4.2.8 workflow requires both options, matching normalized float32
   images and acquisition scale. NumPy and Numba share the serial reference for

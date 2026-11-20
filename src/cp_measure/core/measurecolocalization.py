@@ -941,7 +941,7 @@ def get_correlation_costes(
     *,
     scale_max: int | None = None,
     scipy_ties: bool = False,
-    cellprofiler: bool = False,
+    precision: Precision = "float64",
     scope: str = "object",
 ) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object Costes coefficients with an explicit acquisition grid.
@@ -972,18 +972,17 @@ def get_correlation_costes(
     Coefficients remain per-object in either scope. Image scope uses the shared
     serial reference path on both backends, independent of ``scipy_ties``.
 
-    ``cellprofiler=True`` independently selects input-precision regression and
+    ``precision="input"`` independently selects input-precision regression and
     historical NumPy 1.x / SciPy 1.9 arithmetic. It does not change fitting scope.
     Integer images normalize to float32; float32/64 inputs retain their dtype
     and values without grid canonicalization. Both backends use this reference
     path, regardless of ``scipy_ties``. It is not the accelerated object path.
     To reproduce the tested CellProfiler 4.2.8 workflow, combine ``scope="image"``
-    and ``cellprofiler=True`` with matching normalized float32 inputs and scale.
+    and ``precision="input"`` with matching normalized float32 inputs and scale.
     Image masks/cropping and bitwise reproducibility across platforms are not
     provided. See the measurement notes for the validated reference environment.
     """
-    if not isinstance(cellprofiler, (bool, numpy.bool_)):
-        raise TypeError("cellprofiler must be a boolean")
+    validate_precision(precision)
     if scope not in ("object", "image"):
         raise ValueError("scope must be 'object' or 'image'")
     if is_batch(masks):  # list/tuple or 4D: one result per image
@@ -996,11 +995,11 @@ def get_correlation_costes(
             thr=thr,
             scale_max=scale_max,
             scipy_ties=scipy_ties,
-            cellprofiler=cellprofiler,
+            precision=precision,
             scope=scope,
         )
-    if cellprofiler:
-        return _cellprofiler_costes(
+    if precision == "input":
+        return _input_precision_costes(
             pixels_1, pixels_2, masks, scale_max, fast_costes, scope
         )
     first, second, scale = _prepare_costes_inputs(pixels_1, pixels_2, scale_max)
@@ -1067,7 +1066,7 @@ def _image_costes(first, second, masks, scale, mode):
     }
 
 
-def _cellprofiler_costes(pixels_1, pixels_2, masks, scale_max, mode, scope):
+def _input_precision_costes(pixels_1, pixels_2, masks, scale_max, mode, scope):
     from cp_measure.core._costes_compat import image_costes
 
     first, second = numpy.asarray(pixels_1), numpy.asarray(pixels_2)

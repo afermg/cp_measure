@@ -1,4 +1,4 @@
-"""Compatibility flag contracts; live CellProfiler comparisons live in cpm_benchmark."""
+"""Costes precision contracts; live CellProfiler comparisons live in cpm_benchmark."""
 
 import warnings
 
@@ -59,7 +59,7 @@ def test_image_fit_preserves_values_and_includes_background(
 
     monkeypatch.setattr(compat, "_thresholds", thresholds)
     result = measure(
-        first, second, labels, scale_max=255, cellprofiler=True, scope="image"
+        first, second, labels, scale_max=255, precision="input", scope="image"
     )
     assert calls == [(255, "Faster")]
     combined = (expected[0] > 0.5) & (expected[1] > 0.5)
@@ -79,14 +79,12 @@ def test_image_fit_preserves_values_and_includes_background(
 @pytest.mark.parametrize("mode", ["Faster", "Fast", "Accurate"])
 @pytest.mark.parametrize("container", ["list", "stack", "volume"])
 @pytest.mark.parametrize("scope", ["object", "image"])
-@pytest.mark.parametrize("cellprofiler", [False, True])
-def test_batch_and_volume_forward_flag(
-    measure, images, mode, container, scope, cellprofiler
+@pytest.mark.parametrize("precision", ["float64", "input"])
+def test_batch_and_volume_forward_precision(
+    measure, images, mode, container, scope, precision
 ):
     first, second, labels = images
-    kwargs = dict(
-        scale_max=255, cellprofiler=cellprofiler, fast_costes=mode, scope=scope
-    )
+    kwargs = dict(scale_max=255, precision=precision, fast_costes=mode, scope=scope)
     single = measure(first, second, labels, **kwargs)
     if container == "list":
         inputs = [[array, array] for array in images]
@@ -108,26 +106,31 @@ def test_default_path_is_unchanged(measure, images, monkeypatch):
     monkeypatch.setattr(compat, "image_costes", forbidden)
     expected = measure(*images, scale_max=255)
     actual = measure(
-        *images, scale_max=255, cellprofiler=False, scope="object", scipy_ties=False
+        *images, scale_max=255, precision="float64", scope="object", scipy_ties=False
     )
     for key in expected:
         np.testing.assert_array_equal(actual[key], expected[key])
 
 
-@pytest.mark.parametrize("bad", ["true", 1, None])
-def test_flag_requires_boolean(measure, images, bad):
-    with pytest.raises(TypeError, match="boolean"):
-        measure(*images, scale_max=255, cellprofiler=bad)
+@pytest.mark.parametrize("bad", ["float32", "invalid", True, 1, None])
+def test_precision_requires_supported_mode(measure, images, bad):
+    with pytest.raises(ValueError, match="precision"):
+        measure(*images, scale_max=255, precision=bad)
+
+
+def test_replaced_compatibility_keyword_is_not_accepted(measure, images):
+    with pytest.raises(TypeError, match="cellprofiler"):
+        measure(*images, scale_max=255, cellprofiler=True)
 
 
 @pytest.mark.parametrize("scope", ["object", "image"])
 def test_compatibility_uses_reference_regardless_of_tie_flag(measure, images, scope):
     expected = reference.get_correlation_costes(
-        *images, scale_max=255, cellprofiler=True, scope=scope
+        *images, scale_max=255, precision="input", scope=scope
     )
     for ties in (False, True):
         actual = measure(
-            *images, scale_max=255, cellprofiler=True, scipy_ties=ties, scope=scope
+            *images, scale_max=255, precision="input", scipy_ties=ties, scope=scope
         )
         for key in expected:
             np.testing.assert_array_equal(actual[key], expected[key])
@@ -148,7 +151,7 @@ def test_boundary_outputs_and_arrays(measure, images, case, monkeypatch):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         result = measure(
-            first, second, labels, scale_max=255, cellprofiler=True, scope="image"
+            first, second, labels, scale_max=255, precision="input", scope="image"
         )
     for values in result.values():
         assert values.dtype == np.float64
@@ -172,36 +175,34 @@ def test_legacy_threshold_rounding():
 @pytest.mark.parametrize("scope", ["object", "image"])
 def test_non_native_byte_order(measure, images, scope):
     first, second, labels = images
-    expected = measure(*images, scale_max=255, cellprofiler=True, scope=scope)
+    expected = measure(*images, scale_max=255, precision="input", scope=scope)
     actual = measure(
         first.astype(first.dtype.newbyteorder("S")),
         second.astype(second.dtype.newbyteorder("S")),
         labels,
         scale_max=255,
-        cellprofiler=True,
+        precision="input",
         scope=scope,
     )
     for key in expected:
         np.testing.assert_array_equal(actual[key], expected[key])
 
 
-@pytest.mark.parametrize("cellprofiler", [False, True])
-def test_background_changes_only_image_scope(measure, images, cellprofiler):
+@pytest.mark.parametrize("precision", ["float64", "input"])
+def test_background_changes_only_image_scope(measure, images, precision):
     first, second, labels = images
     changed = first.copy()
     changed[labels == 0] = 0
     for scope in ("object", "image"):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
-            before = measure(
-                *images, scale_max=255, cellprofiler=cellprofiler, scope=scope
-            )
+            before = measure(*images, scale_max=255, precision=precision, scope=scope)
             after = measure(
                 changed,
                 second,
                 labels,
                 scale_max=255,
-                cellprofiler=cellprofiler,
+                precision=precision,
                 scope=scope,
             )
         equal = [
@@ -222,7 +223,7 @@ def test_warnings_are_deduplicated_per_image(measure, images, monkeypatch, scope
         measure(
             *[[array, array] for array in images],
             scale_max=255,
-            cellprofiler=True,
+            precision="input",
             scope=scope,
         )
     assert len(recorded) == 2
@@ -233,7 +234,7 @@ def test_warnings_are_deduplicated_per_image(measure, images, monkeypatch, scope
 )
 def test_validation(measure, images, case):
     first, second, labels = images
-    kwargs = dict(scale_max=255, cellprofiler=True)
+    kwargs = dict(scale_max=255, precision="input")
     if case == "shape":
         second = second[:, :-1]
     elif case == "labels":
@@ -254,31 +255,33 @@ def test_validation(measure, images, case):
         measure(first, second, labels, **kwargs)
 
 
-@pytest.mark.parametrize("cellprofiler", [False, True])
+@pytest.mark.parametrize("precision", ["float64", "input"])
 @pytest.mark.parametrize("scope", ["invalid", "", None])
-def test_invalid_scope(measure, images, cellprofiler, scope):
+def test_invalid_scope(measure, images, precision, scope):
     with pytest.raises(ValueError, match="scope must be"):
-        measure(*images, scale_max=255, cellprofiler=cellprofiler, scope=scope)
+        measure(*images, scale_max=255, precision=precision, scope=scope)
 
 
-@pytest.mark.parametrize("cellprofiler", [False, True])
+@pytest.mark.parametrize("precision", ["float64", "input"])
 @pytest.mark.parametrize("scope", ["object", "image"])
 def test_scope_and_arithmetic_are_independent(
-    measure, images, monkeypatch, cellprofiler, scope
+    measure, images, monkeypatch, precision, scope
 ):
     first, second, labels = images
     calls = []
 
     def thresholds(actual_first, actual_second, scale, mode):
-        assert actual_first.dtype == (np.float32 if cellprofiler else np.float64)
+        assert actual_first.dtype == (
+            np.float32 if precision == "input" else np.float64
+        )
         assert actual_second.dtype == actual_first.dtype
         calls.append(actual_first.size)
-        return (0.5, 0.5) if cellprofiler else (0.5, 0.5, None)
+        return (0.5, 0.5) if precision == "input" else (0.5, 0.5, None)
 
     monkeypatch.setattr(compat, "_thresholds", thresholds)
     monkeypatch.setattr(reference, "_bisection_search", thresholds)
     result = reference.get_correlation_costes(
-        *images, scale_max=255, cellprofiler=cellprofiler, scope=scope
+        *images, scale_max=255, precision=precision, scope=scope
     )
     expected_sizes = (
         [first.size]
@@ -286,8 +289,8 @@ def test_scope_and_arithmetic_are_independent(
         else [np.count_nonzero(labels == label) for label in (1, 2)]
     )
     assert calls == expected_sizes
-    if cellprofiler or scope == "image":
-        actual = measure(*images, scale_max=255, cellprofiler=cellprofiler, scope=scope)
+    if precision == "input" or scope == "image":
+        actual = measure(*images, scale_max=255, precision=precision, scope=scope)
         for key in result:
             np.testing.assert_array_equal(actual[key], result[key])
     for direction, pixels in enumerate((first, second), 1):
@@ -309,7 +312,7 @@ def test_legacy_object_missing_and_single_pixel_labels(measure, images, mode):
     labels[0, 0] = 4
     with pytest.warns(RuntimeWarning) as recorded:
         result = measure(
-            first, second, labels, scale_max=255, cellprofiler=True, fast_costes=mode
+            first, second, labels, scale_max=255, precision="input", fast_costes=mode
         )
     assert any("missing or empty" in str(warning.message) for warning in recorded)
     assert any("fewer than two" in str(warning.message) for warning in recorded)

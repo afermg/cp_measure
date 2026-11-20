@@ -260,9 +260,9 @@ def test_costes_normalization_encodings_match_both_backends(mode, encoding):
 
 
 @pytest.mark.parametrize("is_3d", [False, True])
-@pytest.mark.parametrize("cellprofiler", [False, True])
+@pytest.mark.parametrize("precision", ["float64", "input"])
 @pytest.mark.parametrize("scope", ["object", "image"])
-def test_costes_bulk_and_featurizer_forwarding(is_3d, cellprofiler, scope):
+def test_costes_bulk_and_featurizer_forwarding(is_3d, precision, scope):
     from cp_measure.featurizer import featurize, make_featurizer_config
     from conftest import ALL_OFF
 
@@ -283,7 +283,7 @@ def test_costes_bulk_and_featurizer_forwarding(is_3d, cellprofiler, scope):
             "scale_max": 255,
             "fast_costes": ref.M_FAST,
             "thr": 42,
-            "cellprofiler": cellprofiler,
+            "precision": precision,
             "scope": scope,
         },
     )

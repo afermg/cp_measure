@@ -122,16 +122,20 @@ of this new policy.
 ## Explicit CellProfiler Costes compatibility
 
 The defaults are **per-object threshold fitting and float64 arithmetic** on both
-backends. Fitting scope and historical arithmetic are independent controls:
+backends. Fitting scope and arithmetic precision are independent controls:
 
 - `scope="object"` (default) fits each object independently. `scope="image"`
   fits once over the whole image, including label-zero background. Coefficients
   remain per-object; changing background or other objects can affect them only
   with image-wide fitting.
-- `cellprofiler=False` (default) keeps the native float64, normalization and
-  undefined-result policies. `cellprofiler=True` selects the historical
+- `precision="float64"` (default) keeps the native float64, normalization and
+  undefined-result policies. `precision="input"` selects the historical
   arithmetic described below **without changing scope**. Using it with object
   scope does not reproduce CellProfiler's image-wide measurement definition.
+  Input precision does not mean every intermediate uses that dtype: Pearson
+  still uses float64, and integer inputs normalize to float32. This uses the
+  same option names as other colocalization APIs, but Costes defaults to
+  `"float64"` rather than `"input"`.
 
 To reproduce the tested **CellProfiler 4.2.8 normalized-float32 workflow**, use
 image scope, float32 input images and the compatibility arithmetic together:
@@ -143,14 +147,14 @@ get_correlation_costes(
     labels,
     scale_max=65535,
     scope="image",
-    cellprofiler=True,
+    precision="input",
 )
 ```
 
 Here `first` and `second` are already normalized to [0, 1]; casting raw integers
 to float32 does not normalize them. Alternatively, pass integer images directly
 with the correct acquisition scale. Through the featurizer, use
-`correlation_costes_params={"scale_max": 65535, "scope": "image", "cellprofiler": True}`
+`correlation_costes_params={"scale_max": 65535, "scope": "image", "precision": "input"}`
 with matching input images. Image scope alone, or float32 input alone on the
 native path, is insufficient for compatibility. Casting previously rounded
 float64 data cannot reconstruct the original loader's float32 values.

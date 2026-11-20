@@ -394,7 +394,7 @@ def get_correlation_costes(
     *,
     scale_max: int | None = None,
     scipy_ties: bool = False,
-    cellprofiler: bool = False,
+    precision: Precision = "float64",
     scope: str = "object",
 ) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Costes coefficients using the current NumPy scale and warning contracts.
@@ -415,15 +415,14 @@ def get_correlation_costes(
 
     ``scope="object"`` and float64 arithmetic remain the defaults.
     ``scope="image"`` fits thresholds over the whole image, including background.
-    Independently, ``cellprofiler=True`` selects historical input-precision
+    Independently, ``precision="input"`` selects historical input-precision
     arithmetic. Either option uses the shared serial reference path instead of
     this kernel, regardless of ``scipy_ties``. See the NumPy API for its contract.
     """
-    if not isinstance(cellprofiler, (bool, numpy.bool_)):
-        raise TypeError("cellprofiler must be a boolean")
+    validate_precision(precision)
     if scope not in ("object", "image"):
         raise ValueError("scope must be 'object' or 'image'")
-    if cellprofiler or scope == "image":
+    if precision == "input" or scope == "image":
         return reference.get_correlation_costes(
             pixels_1,
             pixels_2,
@@ -432,7 +431,7 @@ def get_correlation_costes(
             thr,
             scale_max=scale_max,
             scipy_ties=scipy_ties,
-            cellprofiler=cellprofiler,
+            precision=precision,
             scope=scope,
         )
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
