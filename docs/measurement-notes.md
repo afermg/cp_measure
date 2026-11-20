@@ -156,6 +156,7 @@ native path, is insufficient for compatibility. Casting previously rounded
 float64 data cannot reconstruct the original loader's float32 values.
 
 The compatibility arithmetic has these rules:
+
 - Target **CellProfiler 4.2.8 with NumPy 1.x / SciPy 1.9** arithmetic. Preserve
   float32/float64 regression reductions, historical scalar promotions and
   threshold comparisons, and the SciPy 1.9 Pearson coefficient calculation.
