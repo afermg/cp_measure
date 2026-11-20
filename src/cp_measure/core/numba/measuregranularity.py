@@ -189,6 +189,8 @@ def _granularity_2d(
             f"Granularity_{i}": numpy.full(n_objects, numpy.nan)
             for i in range(1, ng + 1)
         }
+    if orig_pixels.dtype == numpy.float16 and subsample_size >= 1:
+        orig_pixels = orig_pixels.astype(numpy.float64)
     resample = subsample_size < 1 or image_sample_size < 1
     if resample and orig_pixels.dtype not in (numpy.float32, numpy.float64):
         # scipy's map_coordinates error, which the baseline raises here (float16)
@@ -203,7 +205,12 @@ def _granularity_2d(
     # loop uses orig_mask), so we skip that dead order-0 resample.
     if subsample_size < 1:
         pixels = bilinear_resample_2d(
-            orig_pixels, *new_shape, subsample_size, subsample_size, True
+            orig_pixels,
+            new_shape[0],
+            new_shape[1],
+            subsample_size,
+            subsample_size,
+            True,
         )
     else:
         pixels = orig_pixels
@@ -267,7 +274,14 @@ def _granularity_3d(
     # 1. Subsample (the baseline's mask resample is never read, so it is skipped)
     if subsample_size < 1:
         pixels = trilinear_resample_3d(
-            orig_pixels, *new_shape, *(subsample_size,) * 3, True
+            orig_pixels,
+            new_shape[0],
+            new_shape[1],
+            new_shape[2],
+            subsample_size,
+            subsample_size,
+            subsample_size,
+            True,
         )
     else:
         pixels = orig_pixels

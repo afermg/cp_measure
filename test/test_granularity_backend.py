@@ -54,6 +54,47 @@ def test_2d_matches_baseline(sub, img, dtype):
     _assert_same(gran_numba(mask, pixels, **params), expected)
 
 
+@pytest.mark.parametrize("image_sample_size", [1.0, 0.5])
+@pytest.mark.parametrize("container", ["single", "list", "tuple"])
+def test_2d_float16_input_precision(image_sample_size, container):
+    mask, pixels = _scene()
+    mask = mask[::2, ::2]
+    images = [pixels.astype(numpy.float16)[::2, ::2]]
+    if container != "single":
+        images.append((pixels * 0.75).astype(numpy.float16)[::2, ::2])
+    mask.setflags(write=False)
+    for image in images:
+        image.setflags(write=False)
+    original_mask = mask.copy()
+    original_images = [image.copy() for image in images]
+    params = dict(
+        subsample_size=1.0,
+        image_sample_size=image_sample_size,
+        element_size=1,
+        granular_spectrum_length=3,
+        precision="input",
+    )
+    expected = [
+        gran_numpy(mask, image.astype(numpy.float64), **params) for image in images
+    ]
+    if container == "single":
+        actual = [gran_numba(mask, images[0], **params)]
+    else:
+        factory = list if container == "list" else tuple
+        actual = gran_numba(factory([mask] * len(images)), factory(images), **params)
+    for result, reference in zip(actual, expected, strict=True):
+        _assert_same(result, reference)
+    numpy.testing.assert_array_equal(mask, original_mask)
+    for image, original in zip(images, original_images, strict=True):
+        numpy.testing.assert_array_equal(image, original)
+
+
+def test_2d_float16_input_subsampling_remains_unsupported():
+    mask, pixels = _scene()
+    with pytest.raises(RuntimeError, match="data type not supported"):
+        gran_numba(mask, pixels.astype(numpy.float16), subsample_size=0.5)
+
+
 @pytest.mark.parametrize("shape", [(0, 17), (1, 17), (3, 17), (7, 17), (17, 7)])
 @pytest.mark.parametrize("sub", [0.25, 1.0])
 @pytest.mark.parametrize("has_objects", [False, True])
@@ -296,10 +337,7 @@ def _volume(Z=9, H=48, W=40, seed=0):
 @pytest.mark.parametrize("precision", ["input", "float64"])
 def test_3d_matches_baseline(sub, img, dtype, precision):
     if dtype is numpy.float16 and precision == "input" and sub == img == 1.0:
-        pytest.skip(
-            "scipy rejects float16; without a resample numba measures it anyway, "
-            "as in 2D"
-        )
+        pytest.skip("float16 volumes are unsupported with backend-specific errors")
     mask, pixels = _volume(Z=12 if sub < 0.5 else 9)
     pixels = pixels.astype(dtype)
     pixels.setflags(write=False)
