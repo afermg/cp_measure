@@ -95,7 +95,7 @@ The project is actively developing in these areas:
 
 - We aim to reproduce the 'vanilla' results of CellProfiler. The NumPy implementation is the reference; the optional Numba backend is tested against it.
 - The Image-wide functions will not be implemented directly, they were originally implemented independently to the Object (mask) functions. We will adjust the existing functions assume that an image-wide measurement is the same as measuring an object with the same size as the intensity image.
-- The functions do not include guardrails (e.g., checks of type or value). They will fail if provided with empty masks. Not all functions will fail if provided with masks only.
+- `featurize` validates input shapes and dtypes, skips images with no objects, and rejects an all-empty batch. Raw measurement functions check less, and empty masks have no uniform contract: some return empty results, others raise. See [measurement support](docs/measurement-support.md).
 
 ## Communication
 
