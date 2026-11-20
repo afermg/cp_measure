@@ -58,7 +58,7 @@ Use `rank_scope="object_set"` for CellProfiler 4.2.8's ranking definition: compu
 
 The option is available through the bulk function and `make_featurizer_config(..., correlation_rwc_params={"rank_scope": "object_set"})`. Each supplied mask type/image is its own object set. The binary single-mask API has only one object and needs no scope selection. Raw multi-label calls expect contiguous IDs; the bulk/featurizer sanitization handles noncontiguous labels.
 
-Object-set mode requires finite foreground intensities (nonfinite background is ignored). Existing CPM conventions remain: absent objects or objects with no jointly above-threshold pixels return zero; a zero total signal with qualifying pixels yields NaN. This mode reproduces CP's ranking definition for ordinary finite inputs, not all of its image-mask or degenerate-export policies. The existing object-local threshold path is unchanged by this option; the precision policy described below applies to both scopes.
+Object-set mode requires finite foreground intensities (nonfinite background is ignored). Existing CPM conventions remain: absent objects or objects with no jointly above-threshold pixels return zero; a zero total signal with qualifying pixels yields NaN. This mode reproduces CP's ranking definition for ordinary finite inputs, not all of its image-mask or degenerate-export policies. The existing object-local threshold path is unchanged by this option; #122 separately addresses float32 threshold precision.
 
 ## Legacy percentile convention
 
@@ -76,9 +76,129 @@ For the featurizer, use `zernike_params={"legacy_boundary": True}` and/or `radia
 
 For integer images, Costes divides by `scale_max`; normalized floats require the same scale explicitly. Equivalent floating-point expressions such as `level / scale_max` and `level * (1 / scale_max)` can differ at round-off, which can otherwise change threshold decisions substantially (see [#117](https://github.com/afermg/cp_measure/issues/117)).
 
-Both public Costes functions recognize **exact** reciprocal-multiply encodings of integer acquisition-grid levels, as produced by `img_as_float`, and map them to the existing division encoding before fitting thresholds and computing coefficients. This is performed per object, without modifying caller inputs. Other float values are left unchanged: there is no blanket quantization or epsilon-based snapping of nearby values. Explicit lower-bit-depth scales, such as `4095` for 12-bit images in `uint16`, use the same rule.
+By default, both public Costes functions recognize **exact** reciprocal-multiply encodings of integer acquisition-grid levels, as produced by `img_as_float`, and map them to the existing division encoding before fitting thresholds and computing coefficients. This is performed per object, without modifying caller inputs. Other float values are left unchanged: there is no blanket quantization or epsilon-based snapping of nearby values. Explicit lower-bit-depth scales, such as `4095` for 12-bit images in `uint16`, use the same rule. The explicit compatibility path below does not apply this canonicalization.
 
-This resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes.
+This normalization correction resolves conversion-path differences for these grid encodings; it does not promise continuity for genuinely different pixel values, identical results across floating-point precisions, or equivalence between different Costes search modes. It does not itself change threshold comparisons or NaN rules. The separate boundary-policy rollback is described below.
+
+## Costes boundary results and downstream quality control
+
+NumPy and Numba retain CellProfiler-style numerical boundary results instead of
+vetoing them based on the final background subset. This selectively reverses the
+background-search safeguards added in #110, not its acquisition-scale correction:
+
+- Neither search rechecks final background size, variation or correlation before
+  returning its thresholds. A final background with 0–2 pixels or a constant
+  channel can therefore produce finite coefficients, including zero or one.
+- Faster/bisection retains the `valid=1` fallback: if no nonnegative candidate is
+  found, the thresholds are `(0, fitted_intercept)`. During the search, subsets
+  with at most two pixels still move the lower bound; a constant subset leaves
+  the bounds unchanged, matching CP's numerical comparisons.
+- Fast/Accurate linear searches accept two-pixel correlations. Fewer than two
+  pixels end the search at the current thresholds; constant subsets follow the
+  ordinary one-step descent rather than causing an explicit NaN veto.
+
+Finite results are **not** a confidence or quality flag; filtering belongs to the
+caller. This does not promise the absence of NaNs: empty/missing labels,
+nonfinite/constant/insufficient input signals (including fewer than three usable
+input pairs), undefined or ill-conditioned regressions, nonconvergence, and zero
+coefficient denominators retain their existing diagnostics. Constant background
+subsets are handled without calling SciPy, so CP's incidental constant-input
+warnings are not reproduced. No NaNs are imputed or replaced after calculation.
+
+The label APIs of both backends emit one `RuntimeWarning` per undefined reason
+for each image, with the number of objects, e.g. `Undefined Costes result for 412
+objects: constant channel in the regression subset`. The reasons come in the
+order of the first object that has them, and a batch warns for each image. If a
+call raises, for example for pixels outside [0, 1], it emits no such summary. The
+single-object functions (`get_correlation_costes_ind`, `linear_costes` and
+`bisection_costes`) still warn with `Undefined Costes result: <reason>`.
+
+Per-object threshold fitting, scale validation, normalization, coefficient
+formulas and input immutability are unchanged. CP's object workflow still fits
+thresholds image-wide, so this rollback does not establish full CP/CPM pipeline
+equivalence. Historical NaN rates and timings must not be reused as measurements
+of this new policy.
+
+## Explicit CellProfiler Costes compatibility
+
+The defaults are **per-object threshold fitting and float64 arithmetic** on both
+backends. Fitting scope and arithmetic precision are independent controls:
+
+- `scope="object"` (default) fits each object independently. `scope="image"`
+  fits once over the whole image, including label-zero background. Coefficients
+  remain per-object; changing background or other objects can affect them only
+  with image-wide fitting.
+- `precision="float64"` (default) keeps the native float64, normalization and
+  undefined-result policies. `precision="input"` selects the historical
+  arithmetic described below **without changing scope**. Using it with object
+  scope does not reproduce CellProfiler's image-wide measurement definition.
+  Input precision does not mean every intermediate uses that dtype: Pearson
+  still uses float64, and integer inputs normalize to float32. This uses the
+  same option names as other colocalization APIs, but Costes defaults to
+  `"float64"` rather than `"input"`.
+
+To reproduce the tested **CellProfiler 4.2.8 normalized-float32 workflow**, use
+image scope, float32 input images and the compatibility arithmetic together:
+
+```python
+get_correlation_costes(
+    first.astype(numpy.float32),
+    second.astype(numpy.float32),
+    labels,
+    scale_max=65535,
+    scope="image",
+    precision="input",
+)
+```
+
+Here `first` and `second` are already normalized to [0, 1]; casting raw integers
+to float32 does not normalize them. Alternatively, pass integer images directly
+with the correct acquisition scale. Through the featurizer, use
+`correlation_costes_params={"scale_max": 65535, "scope": "image", "precision": "input"}`
+with matching input images. Image scope alone, or float32 input alone on the
+native path, is insufficient for compatibility. Casting previously rounded
+float64 data cannot reconstruct the original loader's float32 values.
+
+The compatibility arithmetic has these rules:
+
+- Target **CellProfiler 4.2.8 with NumPy 1.x / SciPy 1.9** arithmetic. Preserve
+  float32/float64 regression reductions, historical scalar promotions and
+  threshold comparisons, and the SciPy 1.9 Pearson coefficient calculation.
+  These rules are explicit so NumPy 2 does not silently change the policy.
+- Normalize integer inputs to float32 using the acquisition scale. Already
+  normalized float32/float64 arrays retain their values and dtype; no grid
+  canonicalization, epsilon snapping or output rounding is applied. Other float
+  precisions are rejected rather than silently treated as a reference format.
+- Use the same serial reference implementation from NumPy and Numba, including
+  for batches and volumes. `scipy_ties` has no effect in this mode: the
+  compatibility search always uses the historical Pearson calculation.
+- Keep the current feature keys and float64 output arrays. Reference boundary
+  outcomes can include zeros for undefined regressions or an empty joint
+  threshold mask, and NaNs for individual zero denominators. Do not interpret
+  finite values as quality guarantees. Repeated identical warnings are emitted
+  once per image; CellProfiler's warning counts/text are not an API promise.
+
+Both scopes work with either arithmetic policy. Native image scope also uses
+the shared serial reference, always with float64 and current SciPy decisions;
+it is not the fused Numba object kernel. Native image-wide fits retain the
+native invalid-signal guards, so a nonfinite background pixel can invalidate
+the fit for all objects. Compatibility fitting excludes NaN pairs instead.
+Compatibility object scope leaves missing labels and objects with fewer than
+two usable paired pixels as NaN and aggregates their warnings per image.
+
+Matching acquisition scale and normalized input values is necessary. This is
+not a CellProfiler pipeline or image-loader emulator: caller inputs must have
+matching shapes, labels must be nonnegative, and CellProfiler's separate image
+masks and cropping are not modeled. NaNs are excluded from threshold fitting;
+infinities and out-of-range signals are rejected. Array dtype alone does not
+identify an acquisition scale for normalized floats, so `scale_max` remains
+required. Compatibility does not imply bit-identical results on every BLAS,
+platform or dependency version, nor a speedup over the ordinary path.
+
+Live CellProfiler comparisons and their input/environment provenance belong in
+`cpm_benchmark` (`benchmarks/extract_costes_compatibility.py` and
+`benchmarks/compare_costes_compatibility.py`), not a CellProfiler dependency or
+fixture generator in this package's tests.
 
 ## Singleton-Z measurement eligibility
 
@@ -151,15 +271,26 @@ NumPy. Overlap/K remains available through the direct module API only. RWC ranks
 pixels independently within each object; changing another object's signal does
 not change these ranks.
 
-The accelerated float64 path groups paired pixels once per measurement and uses
-a fused kernel. Pearson retains NumPy's mean reductions, including their behavior
+The accelerated path groups paired pixels once per measurement and uses a fused
+float64 kernel. Pearson retains NumPy's mean reductions, including their behavior
 for constant signals. With `precision="float64"`, percentage-threshold metrics
-promote float16/float32 inputs per image and use the same float64 kernel. With
-`precision="input"`, they keep their existing dtype-based reference fallbacks.
-Pearson's non-float64 inputs and integer or wider-float inputs retain the reference path. Undefined outputs also use
-the reference to preserve warnings and errors (including the existing true
-zero-denominator Overlap/K error). Reference fallbacks are not advertised as
-accelerated.
+promote float16/float32 inputs per image and use the same float64 kernel.
+
+Float32 inputs, including one float32 channel paired with a float64 one, are also
+accelerated with `precision="input"`. A float32 channel's percentage threshold is
+computed with the reference's own expression on float32 maxima, so
+the same pixels pass each threshold as in NumPy. The sums are float64, whereas the
+NumPy reference sums float32 pixels in float32, so values differ by float32 rounding
+(about `1e-7` relative). The float64 sums are the more accurate of the two. On the
+#129 boundary fixture they reproduce CellProfiler's stored Manders value exactly,
+where NumPy's input mode returns it rounded to float32. NumPy's own float32 sums also
+change with the NumPy version for objects above 8192 pixels (NumPy 2.3 dropped the
+8192-element chunking), so input-mode float32 values are not bit-stable across NumPy
+versions in either backend.
+
+Float16, integer and wider-float inputs retain the reference path. Undefined outputs also use the reference to preserve warnings and errors
+(including the existing true zero-denominator Overlap/K error). Reference fallbacks
+are not advertised as accelerated.
 
 All three inputs must have matching spatial ranks and extents. A 2D mask is not
 broadcast over Z, nor is the first intensity plane selected implicitly. Matching
@@ -191,17 +322,56 @@ maximum; same-dtype unsigned integers infer their storage maximum. Integer
 normalization uses the shared NumPy preparation, not the old dtype-derived
 `scale=1` float shortcut. All three search modes are supported.
 
-NumPy regression and coefficient reductions surround the compiled threshold
-search. This preserves threshold inclusion: even last-bit changes in the fitted
-line can change the result substantially. Constant/nonfinite or insufficient
-signals retain NaN results and standard `RuntimeWarning` diagnostics. Missing
-raw Costes labels likewise yield NaN and warnings, unlike the zero-valued slots
-of the other colocalization metrics. Exceptional searches are replayed per object
-by the reference to preserve precise diagnostics. Near-constant subsets and
-correlations within a reduction-error bound of a search decision also use this
-compatibility path; no correlation is rounded or search cutoff moved.
+One compiled pass measures every object: canonicalization, validation, the
+regression line, the threshold search and the coefficients. The regression and
+coefficient sums reproduce NumPy's pairwise summation exactly (including the
+buffer-sized chunks NumPy used before 2.3), because even last-bit changes in the
+fitted line can change which pixels count and so the result. Constant/nonfinite
+or insufficient signals retain NaN results and standard `RuntimeWarning`
+diagnostics, emitted by the wrapper with the reference's messages. Missing raw
+Costes labels likewise yield NaN and warnings, unlike the zero-valued slots of
+the other colocalization metrics. Small/constant search backgrounds use the
+permissive boundary policy above, not an output veto. Near-constant subsets and
+correlations within a reduction-error bound of a search decision are
+replayed per object by the reference when `scipy_ties=True` to preserve its
+diagnostics. Ill-conditioned regressions retain their reference fallback
+independently of this flag; no correlation is rounded or search cutoff moved.
 
-Both backends call the same per-object normalization canonicalization before
+Some search steps are ties: the background correlation is within rounding of
+a decision point (r = 0, or Fast mode's 0.25/0.35/0.45), which on small
+integer-grid objects is often exactly 0, or the subset is nearly constant. The
+NumPy backend's answer there follows SciPy's last bits (its sums and dot
+product), not the data. By default the numba backend decides these steps with
+its own arithmetic, so the backends can differ on such objects (8 of 6000
+randomized test images), and it does not emit SciPy's
+`NearConstantInputWarning`. With `scipy_ties=True` the numba backend asks SciPy
+for exactly those steps and resumes its own search, so results and warnings
+are bit-identical to the NumPy backend.
+
+The default remains `scipy_ties=False` to avoid SciPy callbacks for ambiguous
+steps in the compiled search, not because an overall speedup was established.
+The tested real-image workload showed no meaningful timing advantage. Use
+`True` when agreement with the NumPy backend matters. Revisit the default if
+further workloads show large numerical discrepancies, a speed penalty, or no
+useful speedup from keeping these steps in Numba. This setting neither removes
+SciPy as a dependency nor disables unrelated exceptional-case reference fallbacks.
+
+The fused searches share #167's exact positive-slope entry calculation: a
+pixel joins the sorted background at the first representable threshold that
+satisfies the original strict comparisons. Bisection uses bounded grid buckets
+for objects with at least 32768 pixels when the acquisition scale is small
+enough relative to the object's size, otherwise its one-pass moment scan.
+Sorting ordinary objects slowed Faster mode relative to the fused scan in
+matched tests, so that #167 dispatch is deliberately not carried over.
+Long linear searches retain
+their delayed sort and guarded negative-slope sweep. All paths use the same
+rounding guard, mode-specific cutoffs and `scipy_ties` replay policy; acceleration
+does not change the policy or introduce image-wide thresholds. Sorted scratch
+is capped at 2^22 pixels and grid scratch at scale 2^20; larger inputs scan when
+neither bounded path is eligible. Dispatch constants are frozen in Numba's
+compiled kernels, not runtime tuning parameters.
+
+Both backends apply the same per-object normalization canonicalization before
 validation, regression and threshold search. Exact reciprocal-multiply
 acquisition-grid encodings therefore follow the same division encoding in the
 NumPy and Numba paths; arbitrary off-grid floats are unchanged. This is the

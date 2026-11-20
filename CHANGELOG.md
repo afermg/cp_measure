@@ -6,6 +6,11 @@ Notable user-facing changes are documented here.
 
 ### Added
 
+- Costes accepts independent `scope="image"` and `precision="input"` options.
+  Defaults remain per-object fitting and native float64 arithmetic. The tested
+  CellProfiler 4.2.8 workflow requires both options, matching normalized float32
+  images and acquisition scale. NumPy and Numba share the serial reference for
+  these opt-in paths; coefficient outputs remain per-object float64 arrays.
 - Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
   object-set ranks. The default remains independent per-object ranking (#121).
 - Shape and radial Zernike values no longer depend on where an object sits in
@@ -30,6 +35,48 @@ Notable user-facing changes are documented here.
   between images that use the same mask.
 - Numba Feret computes the convex hull and diameters in Numba instead of
   centrosome, so batch images run fully in parallel. Results are bit-identical.
+- **Return type change:** the colocalization label APIs (`get_correlation_pearson`,
+  `get_correlation_manders_fold`, `get_correlation_rwc`, `get_correlation_costes`
+  and `get_correlation_overlap`, NumPy and Numba, single image and batch) return
+  each feature as a 1D float64 NumPy array, one value per label, instead of a
+  Python list. The values are unchanged. Every other family already returns
+  arrays. Code that compares results with `==` or checks for `list` needs
+  `numpy.array_equal` or `numpy.ndarray`. The single-object `_ind` functions
+  still return scalars.
+- Numba Pearson, Manders, overlap/K and RWC accelerate float32 inputs in the
+  default `precision="input"` mode instead of falling back to the NumPy
+  reference (1.3 to 5 times faster). Percentage thresholds keep NumPy's float32
+  rounding, so the same pixels count; sums are float64, so values differ from
+  the NumPy backend's float32 sums by about 1e-7 relative. See the measurement
+  notes.
+- NumPy colocalization functions accept a batch and return one result per
+  image; the numba backend measures batches on threads, with Costes in one
+  compiled pass per image.
+- Fused Numba Costes reuses exact positive-slope entry thresholds and bounded
+  grid buckets from #167, while retaining mode-specific tie handling, SciPy
+  replay and the delayed negative-slope linear sweep.
+- The numba backend's Costes decides every threshold-search step itself. When a
+  step's background correlation is within rounding of a decision point (often
+  exactly 0 on small integer-grid objects) or the subset is nearly constant, the
+  NumPy backend's result depends on SciPy's last bits, so the two backends can
+  differ on those objects, and the numba backend does not emit SciPy's
+  `NearConstantInputWarning`. In randomized tests 8 of 6000 images had a
+  differing value. `scipy_ties=True` (accepted by both backends; no effect in
+  the NumPy backend) restores SciPy decisions and bit-identical results. See
+  [measurement notes](docs/measurement-notes.md#costes).
+- Costes label APIs (NumPy and Numba) emit one `RuntimeWarning` per undefined
+  reason for each image, with the number of objects, e.g. `Undefined Costes
+  result for 412 objects: <reason>`, instead of one warning per object. The
+  category and the `Undefined Costes result` prefix are unchanged, so existing
+  warning filters still match. See the
+  [measurement notes](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
+- Costes (NumPy and Numba) restores permissive CellProfiler-style threshold
+  boundaries: remove the final-background validity veto and the no-candidate
+  bisection rejection; restore linear handling of tiny/constant backgrounds.
+  This selectively reverses #110's background-search policy, not its scale fix.
+  Previously rejected searches may now yield finite coefficients (including 0/1),
+  leaving quality filtering downstream. Invalid input/regression and zero
+  denominator checks remain. See [boundary policy](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
 - NumPy `intensity` accepts a batch (a list/tuple of images or a 4D
   `(B, Z, Y, X)` array) and returns one result per image.
 - Numba `granularity` measures 3D volumes with numba kernels, bit-identical to
