@@ -33,7 +33,7 @@ from numpy.typing import NDArray
 
 from cp_measure.primitives.parallel import map_images
 from cp_measure.primitives.shapes import each_volume, memory_key, native
-from cp_measure.utils import _UNIT_DISK_EDGE
+from cp_measure.utils import _UNIT_DISK_EDGE, _zernike_coords
 
 
 def zernike_coeffs(
@@ -61,7 +61,18 @@ def zernike_coeffs(
 # and reads lut/nterms/m_arr (and the hoisted coeffs/zernike_indexes) read-only.
 # A future shared scratch/output buffer would make batches race — keep it per-call.
 @njit(cache=True, nogil=True)
-def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
+def zernike_moments(
+    weights,
+    xm,
+    ym,
+    seg0,
+    lut,
+    nterms,
+    m_arr,
+    n,
+    powers=None,
+    unit_disk_edge=_UNIT_DISK_EDGE,
+):
     """Fused per-object weighted-complex Zernike sum (single pass, no (M,K) buffer).
 
     For each pixel: evaluate every polynomial's ``V_nm`` from ``lut``/``m_arr``
@@ -70,6 +81,7 @@ def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
     0-based object index of pixel ``i`` (``< 0`` ⇒ skip). Returns ``(vr, vi)``.
     Optional ``powers[m, i]`` supplies NumPy-computed azimuthal powers ``z^m``;
     otherwise the scalar recurrence is evaluated in the kernel.
+    ``unit_disk_edge=1.0`` restores the historical strict boundary cutoff.
     """
     K = lut.shape[0]
     M = xm.shape[0]
@@ -104,7 +116,7 @@ def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
             nt = nterms[k]
             for t in range(nt):  # Horner: R_nm(r)/r^m
                 s = s * r2 + lut[k, t]
-            if r2 > _UNIT_DISK_EDGE:
+            if r2 > unit_disk_edge:
                 s = 0.0  # cutoff, before weighting (including NaN/Inf)
             m = m_arr[k]
             s *= w
@@ -119,7 +131,18 @@ def zernike_moments(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
 
 
 @njit(cache=True, nogil=True)
-def zernike_moments_channels(weights, xm, ym, seg0, lut, nterms, m_arr, n, powers=None):
+def zernike_moments_channels(
+    weights,
+    xm,
+    ym,
+    seg0,
+    lut,
+    nterms,
+    m_arr,
+    n,
+    powers=None,
+    unit_disk_edge=_UNIT_DISK_EDGE,
+):
     """:func:`zernike_moments` for several images measured with one mask: the basis
     is evaluated once per pixel and accumulated for every row of ``weights``
     ``(C, M)``, each with :func:`zernike_moments`' arithmetic (bit-identical per row).
@@ -162,7 +185,7 @@ def zernike_moments_channels(weights, xm, ym, seg0, lut, nterms, m_arr, n, power
             nt = nterms[k]
             for t in range(nt):  # Horner: R_nm(r)/r^m
                 s = s * r2 + lut[k, t]
-            if r2 > _UNIT_DISK_EDGE:
+            if r2 > unit_disk_edge:
                 s = 0.0  # cutoff, before weighting (including NaN/Inf)
             m = m_arr[k]
             for c in range(C):
@@ -251,7 +274,7 @@ def _pixel_tuple(pixels):
     return tuple(np.ascontiguousarray(p, dtype=np.float64) for p in pixels)
 
 
-def zernike_moments_per_object(labels, pixels, coeffs):
+def zernike_moments_per_object(labels, pixels, coeffs, *, legacy_boundary=False):
     """Per-object weighted-complex Zernike sums shared by both 2D backends.
 
     Same contract as :func:`cp_measure.utils._zernike_scores` for every intensity image
@@ -259,14 +282,37 @@ def zernike_moments_per_object(labels, pixels, coeffs):
     shape case). The coordinates and the basis are computed once for all images.
     ``coeffs`` is :func:`zernike_coeffs`. Returns ``(vr, vi, radii, counts)`` with
     ``vr``/``vi`` of shape ``(C, n, K)``.
+    Legacy mode uses centrosome's coordinate setup as well as the strict cutoff:
+    a different circle calculation can change rounding and boundary membership.
     """
     lut, nterms, m_arr = coeffs
     # native-endian, contiguous intp: one compiled signature (as _enclosing_circle)
     labels = np.ascontiguousarray(labels, dtype=np.intp)
-    if pixels is None:
+    if legacy_boundary:
+        seg, keep, ym, xm, radii = _zernike_coords(labels)
+        counts = np.bincount(seg, minlength=len(radii)).astype(np.float64)
+        if pixels is None:
+            vr, vi = zernike_moments(
+                np.ones(len(seg)),
+                xm,
+                ym,
+                seg,
+                lut,
+                nterms,
+                m_arr,
+                len(radii),
+                unit_disk_edge=1.0,
+            )
+            return vr[None], vi[None], radii, counts
+        weights = np.stack([image[keep].astype(np.float64) for image in pixels])
+    elif pixels is None:
         vr, vi, radii, counts = _shape_sums(labels, lut, nterms, m_arr)
         return vr[None], vi[None], radii, counts
-    seg, ym, xm, radii, counts, weights = _weighted_coords(labels, _pixel_tuple(pixels))
+    else:
+        seg, ym, xm, radii, counts, weights = _weighted_coords(
+            labels, _pixel_tuple(pixels)
+        )
+    unit_disk_edge = 1.0 if legacy_boundary else _UNIT_DISK_EDGE
     n = len(radii)
     if n == 0:
         empty = np.zeros((len(pixels), 0, len(lut)))
@@ -283,15 +329,25 @@ def zernike_moments_per_object(labels, pixels, coeffs):
     for m in range(1, len(powers)):
         powers[m] = z if m == 1 else powers[m - 1] * z
     if len(pixels) == 1:
-        vr, vi = zernike_moments(weights[0], xm, ym, seg, lut, nterms, m_arr, n, powers)
+        vr, vi = zernike_moments(
+            weights[0], xm, ym, seg, lut, nterms, m_arr, n, powers, unit_disk_edge
+        )
         return vr[None], vi[None], radii, counts
     vr, vi = zernike_moments_channels(
-        weights, xm, ym, seg, lut, nterms, m_arr, n, powers
+        weights, xm, ym, seg, lut, nterms, m_arr, n, powers, unit_disk_edge
     )
     return vr, vi, radii, counts
 
 
-def zernike_per_image(labels, pixels, degree, features, *, max_workers=None):
+def zernike_per_image(
+    labels,
+    pixels,
+    degree,
+    features,
+    *,
+    max_workers=None,
+    legacy_boundary=False,
+):
     """Batch driver shared by the numba ``get_zernike`` and ``get_radial_zernikes``.
 
     Accepts a single 2D image or a batch (list/tuple of images, or a 4D
@@ -328,6 +384,7 @@ def zernike_per_image(labels, pixels, degree, features, *, max_workers=None):
             masks_bzyx[items[0]][0],
             [pixels_bzyx[i][0] for i in items] if weighted else None,
             coeffs,
+            legacy_boundary=legacy_boundary,
         )
         vr, vi, radii, counts = sums
         if weighted:

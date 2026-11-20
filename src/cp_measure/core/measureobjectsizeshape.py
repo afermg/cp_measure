@@ -1013,15 +1013,24 @@ def get_zernike(
     masks: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating] | None,
     zernike_numbers: int = 9,
+    *,
+    legacy_boundary: bool = False,
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Zernike shape features (including singleton-Z volumes); pixels are unused.
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
     A batch (list/tuple or 4D array) returns one dict per image.
+    ``legacy_boundary=True`` restores the previous strict unit-disk cutoff,
+    including its position-dependent exclusion of rounded boundary pixels.
+    The default includes boundary pixels within a squared-radius tolerance of 1e-9.
     """
     if is_batch(masks):
         return apply_per_image(
-            get_zernike, masks, pixels, zernike_numbers=zernike_numbers
+            get_zernike,
+            masks,
+            pixels,
+            zernike_numbers=zernike_numbers,
+            legacy_boundary=legacy_boundary,
         )
     measured_masks = as_2d(masks)
     if measured_masks is None:
@@ -1029,7 +1038,9 @@ def get_zernike(
     masks = measured_masks
     zernike_indexes = zernike.get_zernike_indexes(zernike_numbers + 1)
 
-    real_sums, imag_sums, radii, _counts = _zernike_scores(masks, zernike_indexes)
+    real_sums, imag_sums, radii, _counts = _zernike_scores(
+        masks, zernike_indexes, legacy_boundary=legacy_boundary
+    )
     return _zernike_features(real_sums, imag_sums, radii, zernike_indexes)
 
 

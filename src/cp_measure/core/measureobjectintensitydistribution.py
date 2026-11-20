@@ -349,14 +349,23 @@ def get_radial_zernikes(
     labels: NDArray[numpy.integer],
     pixels: NDArray[numpy.floating],
     zernike_degree: int = 9,
+    *,
+    legacy_boundary: bool = False,
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object radial Zernikes (2D calculations, including singleton-Z volumes).
 
     Labels must be contiguous ``1..N`` (see :func:`cp_measure._sanitize.sanitize`).
+    ``legacy_boundary=True`` restores the previous strict unit-disk cutoff,
+    including its position-dependent exclusion of rounded boundary pixels.
+    The default includes boundary pixels within a squared-radius tolerance of 1e-9.
     """
     if is_batch(labels):  # list/tuple or 4D: one result per image
         return apply_per_image(
-            get_radial_zernikes, labels, pixels, zernike_degree=zernike_degree
+            get_radial_zernikes,
+            labels,
+            pixels,
+            zernike_degree=zernike_degree,
+            legacy_boundary=legacy_boundary,
         )
     measured = as_2d_pair(labels, pixels)
     if measured is None:
@@ -366,7 +375,9 @@ def get_radial_zernikes(
 
     # Intensity-weighted moment sums via the shared helper (pixels as the per-pixel weight);
     # radial Zernikes normalise by pixel count, not the enclosing-circle area. See _zernike_scores.
-    vr, vi, _radii, counts = _zernike_scores(labels, zernike_indexes, weight=pixels)
+    vr, vi, _radii, counts = _zernike_scores(
+        labels, zernike_indexes, weight=pixels, legacy_boundary=legacy_boundary
+    )
     return _radial_zernike_features(vr, vi, counts, zernike_indexes)
 
 

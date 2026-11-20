@@ -16,13 +16,22 @@ from cp_measure.core.measureobjectsizeshape import _zernike_features
 from cp_measure.core.numba._zernike import zernike_per_image
 
 
-def get_zernike(masks, pixels=None, zernike_numbers: int = 9, *, max_workers=None):
+def get_zernike(
+    masks,
+    pixels=None,
+    zernike_numbers: int = 9,
+    *,
+    max_workers=None,
+    legacy_boundary: bool = False,
+):
     """Shape Zernike magnitudes per object; single image/volume or batch.
 
     ``pixels`` is accepted for signature parity with the numpy baseline but unused
     (shape Zernike is a binary-mask descriptor). ``max_workers`` caps the batch
     thread pool (default: the CPUs this process may use); pass it when nesting under an outer
     parallel map.
+    ``legacy_boundary=True`` restores the historical centrosome coordinates and
+    strict unit-disk cutoff. The default includes rounded boundary pixels.
     """
     return zernike_per_image(
         masks,
@@ -32,4 +41,5 @@ def get_zernike(masks, pixels=None, zernike_numbers: int = 9, *, max_workers=Non
             vr, vi, radii, indexes
         ),
         max_workers=max_workers,
+        legacy_boundary=legacy_boundary,
     )

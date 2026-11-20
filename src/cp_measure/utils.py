@@ -113,6 +113,8 @@ def _zernike_scores(
     masks: NDArray[numpy.integer],
     zernike_indexes: NDArray[numpy.integer],
     weight: NDArray[numpy.floating] | None = None,
+    *,
+    legacy_boundary: bool = False,
 ) -> tuple[
     NDArray[numpy.floating],
     NDArray[numpy.floating],
@@ -125,8 +127,9 @@ def _zernike_scores(
     scattered into a full ``(H, W, K)`` complex array, and each moment is segment-summed by
     label with one ``numpy.bincount`` instead of a whole-image ``scipy.ndimage.sum``. The Horner
     basis evaluation is copied from ``centrosome.construct_zernike_polynomials`` (same lookup
-    table, ``r**2 > 1`` cutoff, ``z = y + i*x`` convention), so results match centrosome to
-    round-off.
+    table and ``z = y + i*x`` convention). By default the cutoff includes boundary
+    pixels within a rounding tolerance. ``legacy_boundary=True`` restores the strict
+    ``r**2 > 1`` cutoff and the previous position-dependent boundary membership.
 
     Labels must be the contiguous ``1..N`` cp_measure guarantees (see
     :mod:`cp_measure._sanitize`); the segment index is ``label - 1``.
@@ -147,6 +150,7 @@ def _zernike_scores(
     counts = numpy.bincount(seg, minlength=n).astype(float)
 
     coeffs = zernike.construct_zernike_lookuptable(zernike_indexes)
+    unit_disk_edge = 1.0 if legacy_boundary else _UNIT_DISK_EDGE
     r_square = xm * xm + ym * ym
     z = ym + 1j * xm
     w = None if weight is None else weight[keep].astype(float)
@@ -161,7 +165,7 @@ def _zernike_scores(
         for c in coeffs[idx, : (zn - zm) // 2 + 1]:  # Horner scheme on r**2
             s *= r_square
             s += c
-        s[r_square > _UNIT_DISK_EDGE] = 0
+        s[r_square > unit_disk_edge] = 0
         if w is not None:
             s *= w
         if zm == 0:  # purely real moment; the imaginary segment-sum is identically zero

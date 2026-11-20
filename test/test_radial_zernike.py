@@ -19,7 +19,7 @@ from cp_measure.utils import masks_to_ijv
 ATOL = 1e-9  # >> the ~1e-13 summation-order round-off, << any real signal
 
 
-def _reference(labels, pixels, zernike_degree=9):
+def _reference(labels, pixels, zernike_degree=9, *, legacy_boundary=False):
     """Reproduce the original centrosome implementation (the pre-vectorisation path)."""
     zidx = zernike.get_zernike_indexes(zernike_degree + 1)
     ul = numpy.unique(labels)
@@ -34,7 +34,9 @@ def _reference(labels, pixels, zernike_degree=9):
     ijv = masks_to_ijv(labels)
     pos = ijv[:, 2] - 1  # contiguous 1..N: label -> row
     yx = (ijv[:, :2] - ij[pos]) / r[pos, numpy.newaxis]
-    xm, ym = onto_unit_disk(yx[:, 1], yx[:, 0])  # keep on-circle pixels
+    xm, ym = yx[:, 1], yx[:, 0]
+    if not legacy_boundary:
+        xm, ym = onto_unit_disk(xm, ym)
     z = zernike.construct_zernike_polynomials(xm, ym, zidx)
     w = pixels[ijv[:, 0], ijv[:, 1]]
     areas = numpy.bincount(pos, minlength=len(ul)).astype(float)

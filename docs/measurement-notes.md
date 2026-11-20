@@ -44,6 +44,14 @@ Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim 
 
 `legacy=True` restores the original intensity quantile conventions; the default uses NumPy's linear quartiles and the usual median absolute deviation. See the [`get_intensity` docstring](../src/cp_measure/core/measureobjectintensity.py#L139-L163) for formulas, including the different legacy MAD convention in 3D.
 
+## Zernike boundary compatibility
+
+Shape `get_zernike` and intensity-weighted `get_radial_zernikes` include pixels on the enclosing circle by default, allowing a squared normalized radius up to `1 + 1e-9`. This avoids dropping boundary pixels solely because of floating-point rounding when an unchanged object moves in the image. It changes some historical measurements, not the feature names or normalization.
+
+Pass `legacy_boundary=True` to either function to restore the previous strict `r² > 1` exclusion. In the Numba backend this also restores the historical centrosome coordinate calculation: changing only the cutoff while using a different circle algorithm would not reproduce the same boundary membership. Legacy mode retains compiled moment evaluation and batch support, but its coordinate preparation is not the new GIL-free kernel. The flag applies to single images, singleton-Z volumes, and every item in a batch. It is independent of intensity's `legacy` percentile option.
+
+For the featurizer, use `zernike_params={"legacy_boundary": True}` and/or `radial_zernikes_params={"legacy_boundary": True}`. Omitting the flag, or setting it to `False`, keeps the boundary-rounding fix. Legacy compatibility is to the previous numerical convention, not a promise of bit-identical floating-point results across backends, library versions, or ill-defined near-zero Zernike phases.
+
 ## Costes integer-to-float normalization
 
 For integer images, Costes divides by `scale_max`; normalized floats require the same scale explicitly. Equivalent floating-point expressions such as `level / scale_max` and `level * (1 / scale_max)` can differ at round-off, which can otherwise change threshold decisions substantially (see [#117](https://github.com/afermg/cp_measure/issues/117)).

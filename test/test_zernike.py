@@ -17,12 +17,17 @@ from cp_measure.utils import _zernike_scores
 ATOL = 1e-10  # >> the ~2e-16 round-off observed, << any real signal
 
 
-def _reference(masks, zernike_numbers=9):
+def _reference(masks, zernike_numbers=9, *, legacy_boundary=False):
     """centrosome's ``zernike.zernike`` with the real label values as indices, step by
     step, keeping pixels that lie on the enclosing circle (see ``onto_unit_disk``)."""
     uniq = numpy.unique(masks)
     uniq = uniq[uniq > 0]
     zidx = zernike.get_zernike_indexes(zernike_numbers + 1)
+    if legacy_boundary:
+        score = zernike.zernike(zidx, masks, uniq)
+        return {
+            f"Zernike_{n}_{m}": score[:, index] for index, (n, m) in enumerate(zidx)
+        }
     centers, radii = zernike.minimum_enclosing_circle(masks, uniq)
     reverse = numpy.full(masks.max() + 1, -1)
     reverse[uniq] = numpy.arange(len(uniq))
