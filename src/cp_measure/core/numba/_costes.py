@@ -7,7 +7,10 @@ threshold inclusion (#118). Undefined results return a status per object; the
 wrapper emits the reference's warning, or replays the reference where its
 diagnostics need SciPy. Bisection steps and long linear searches answer from
 moments or sorted prefix sums but make the exact kernel's decisions. No
-fastmath or grid rounding is used.
+fastmath or grid rounding is used. Positive slopes use exact float-entry keys
+and bounded grid buckets from #167; the same rounding guard and SciPy-resume
+protocol serve every path. Long linear searches keep their delayed sort,
+including the guarded negative-slope sweep.
 """
 
 import numpy as np
@@ -195,6 +198,9 @@ def _bisection_steps(g1, g2, lo, hi, scale, state, totals, defer):
     left, right, mid = state[_LEFT], state[_RIGHT], state[_MID]
     lastmid, valid, iterations = state[_LASTMID], state[_VALID], state[_ITERATIONS]
     a, b = state[_A], state[_B]
+    grid = None
+    if _use_grid(a, hi - lo, scale):
+        grid = _grid_background(g1, g2, lo, hi, a, b, scale, totals)
     code = STEPS_DONE
     while lastmid != mid:
         iterations += 1
@@ -203,9 +209,14 @@ def _bisection_steps(g1, g2, lo, hi, scale, state, totals, defer):
             break
         thr_fi = mid / scale
         thr_si = a * thr_fi + b
-        cnt, r = _direct_count_pearson(
-            g1, g2, lo, hi, totals, thr_fi, thr_si, _SIGN_CUTOFF, defer
-        )
+        if grid is not None:
+            cnt, r = _grid_count_pearson(
+                g1, g2, lo, hi, a, b, scale, mid, grid, totals, defer
+            )
+        else:
+            cnt, r = _direct_count_pearson(
+                g1, g2, lo, hi, totals, thr_fi, thr_si, _SIGN_CUTOFF, defer
+            )
         if cnt <= 2:  # skipped without a correlation, as in the reference
             left = mid - 1
         elif np.isinf(r):
@@ -307,21 +318,23 @@ def _moment_totals(g1, g2, lo, hi):
 
 @njit(cache=True, error_model="numpy")
 def _sweep_prep(g1, g2, a, b):
-    """Tables for :func:`_sweep_count_pearson` on one object's pixels.
-
-    A pixel is EXCLUDED from the background at threshold ``t`` when ``g1 >= t`` and
-    ``g2 >= a*t + b``. With ``q = (g2 - b) / a`` that is ``t <= min(g1, q)`` for ``a > 0``
-    (one sorted key), and ``q <= t <= g1`` for ``a < 0`` (the pixels with ``q <= t`` minus
-    those with ``g1 < t``, over pixels where that interval is non-empty).
-    """
+    """Exact positive-slope entry keys; guarded excluded intervals for negative slopes."""
     n = g1.size
     totals = _moment_totals(g1, g2, 0, n)
     c1, c2 = totals[7], totals[8]
-    q = (g2 - b) / a
     if a > 0:
-        k1, P1 = _sorted_prefix(np.minimum(g1, q), g1, g2, c1, c2, np.ones(n, np.bool_))
+        scratch = np.empty(1)
+        entries = np.empty(n)
+        for index in range(n):
+            entries[index] = min(
+                np.nextafter(g1[index], np.inf),
+                _second_entry(g2[index], a, b, scratch),
+            )
+        k1, P1 = _sorted_prefix(entries, g1, g2, c1, c2, np.ones(n, np.bool_))
+        q = np.empty(0)
         k2, P2 = k1[:0], P1[:, :1]
     else:
+        q = (g2 - b) / a
         nonempty = q <= g1
         k1, P1 = _sorted_prefix(q, g1, g2, c1, c2, nonempty)
         k2, P2 = _sorted_prefix(g1, g1, g2, c1, c2, nonempty)
@@ -332,30 +345,28 @@ def _sweep_prep(g1, g2, a, b):
 def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si, cutoffs, defer):
     """Same ``(count, r)`` as :func:`_count_pearson_combt`, from the prefix tables.
 
-    Exactness: ``g1 < t`` is the same comparison either way, but ``q`` vs ``t`` can
+    Positive slopes use exact entry thresholds. For negative slopes, ``q`` vs ``t`` can
     disagree with ``g2 < a*t + b`` by rounding when they are within ``tol``; any such pixel
     sends the candidate to the exact pass. Likewise an ``r`` within its forward-error bound
     of a decision cutoff, or a near-constant subset, uses the exact pass, so every search
     decision equals the exact kernel's.
     """
     totals, k1, P1, k2, P2, qs = tab
+
     n = hi - lo
-    eps = np.finfo(np.float64).eps
-    t = thr_fi
-    tol = 64 * eps * (1.0 + abs(t) + (1.0 + abs(b)) / abs(a))
-    j = np.searchsorted(qs, t - tol)
-    if j < qs.size and qs[j] <= t + tol:
-        return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs, defer)
     if a > 0:
-        cut = np.searchsorted(k1, t)  # keys < t stay in the background
-        excluded = P1[:, -1] - P1[:, cut]
-        n_excluded = k1.size - cut
+        count = np.searchsorted(k1, thr_fi, side="right")
+        sums = P1[:, count]
     else:
-        hq = np.searchsorted(k1, t, side="right")  # q <= t
-        hf = np.searchsorted(k2, t)  # g1 < t
-        excluded = P1[:, hq] - P2[:, hf]
-        n_excluded = hq - hf
-    m = n - n_excluded
+        eps = np.finfo(np.float64).eps
+        tol = 64 * eps * (1.0 + abs(thr_fi) + (1.0 + abs(b)) / abs(a))
+        index = np.searchsorted(qs, thr_fi - tol)
+        if index < qs.size and qs[index] <= thr_fi + tol:
+            return _count_pearson_combt(g1, g2, lo, hi, thr_fi, thr_si, cutoffs, defer)
+        upper = np.searchsorted(k1, thr_fi, side="right")
+        lower = np.searchsorted(k2, thr_fi)
+        count = n - upper + lower
+        sums = totals[:5] - (P1[:, upper] - P2[:, lower])
     return _r_or_exact(
         g1,
         g2,
@@ -364,12 +375,12 @@ def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si, cutoffs, def
         thr_fi,
         thr_si,
         totals,
-        m,
-        totals[0] - excluded[0],
-        totals[1] - excluded[1],
-        totals[2] - excluded[2],
-        totals[3] - excluded[3],
-        totals[4] - excluded[4],
+        count,
+        sums[0],
+        sums[1],
+        sums[2],
+        sums[3],
+        sums[4],
         cutoffs,
         defer,
     )
@@ -377,7 +388,22 @@ def _sweep_count_pearson(g1, g2, lo, hi, a, b, tab, thr_fi, thr_si, cutoffs, def
 
 @njit(cache=True, error_model="numpy")
 def _r_or_exact(
-    g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv, cutoffs, defer
+    g1,
+    g2,
+    lo,
+    hi,
+    thr_fi,
+    thr_si,
+    totals,
+    m,
+    su,
+    sv,
+    suu,
+    svv,
+    suv,
+    cutoffs,
+    defer,
+    nops=0,
 ):
     """``(count, r)`` of the background subset from its centred moments, or from the
     exact kernel when the moments cannot decide the search exactly.
@@ -396,7 +422,7 @@ def _r_or_exact(
     cov = suv - su * sv / m
     # Forward-error bound of the prefix-sum moments (each a sum of at most 2n terms,
     # then a subtraction), propagated to r; conservative by a factor of two.
-    e = 8 * n * eps
+    e = 8 * max(n, nops) * eps
     err_u = e * (totals[2] + 2 * abs(su) * totals[5] / m)
     err_v = e * (totals[3] + 2 * abs(sv) * totals[6] / m)
     # Near-constant subsets (ill-conditioned here, or flagged by the exact kernel's
@@ -449,7 +475,22 @@ def _direct_count_pearson(g1, g2, lo, hi, totals, thr_fi, thr_si, cutoffs, defer
             svv += v * v
             suv += u * v
     return _r_or_exact(
-        g1, g2, lo, hi, thr_fi, thr_si, totals, m, su, sv, suu, svv, suv, cutoffs, defer
+        g1,
+        g2,
+        lo,
+        hi,
+        thr_fi,
+        thr_si,
+        totals,
+        m,
+        su,
+        sv,
+        suu,
+        svv,
+        suv,
+        cutoffs,
+        defer,
+        nops=0,
     )
 
 
@@ -497,7 +538,10 @@ def _linear(g1, g2, lo, hi, a, b, scale, accurate, defer):
     num_true = -1  # sentinel (reference's None: forces recompute on first pass)
     evaluated = 0
     found = False
-    while cur > i_step and evaluated < _SWEEP_AFTER:
+    use_sweep = _use_sorted(a, hi - lo) or (
+        a < 0 and _SORTED_MIN_PIXELS <= hi - lo <= _SORTED_MAX_PIXELS
+    )
+    while cur > i_step and (evaluated < _SWEEP_AFTER or not use_sweep):
         thr_fi_c = cur
         thr_si_c = a * cur + b
         cnt = _count_combt(g1, g2, lo, hi, thr_fi_c, thr_si_c)
@@ -728,3 +772,201 @@ def costes_linear_image(masks, pix1, pix2, scale, accurate, defer, chunk):
     c1, c2, status = costes_linear(g1, g2, offsets, scale, accurate, defer, chunk)
     g1, g2 = _for_replay(g1, g2, status)
     return c1, c2, status, g1, g2, offsets
+
+
+_SORTED_MAX_PIXELS = 1 << 22
+_SORTED_MIN_PIXELS = 32
+_GRID_PAD = 258
+_GRID_MAX_SCALE = 1 << 20
+_GRID_STEPS_PER_PIXEL = 2
+_GRID_MIN_PIXELS = 1 << 15
+_MAGNITUDE = np.int64(0x7FFFFFFFFFFFFFFF)
+_SIGN = np.int64(-0x8000000000000000)
+
+
+@njit(cache=True)
+def _float_key(t, scratch):
+    """Map a non-NaN float to an int64 with the same ordering."""
+    scratch[0] = t
+    bits = scratch.view(np.int64)[0]
+    return bits if bits >= 0 else -(bits & _MAGNITUDE)
+
+
+@njit(cache=True)
+def _key_float(key, scratch):
+    ints = scratch.view(np.int64)
+    ints[0] = key if key >= 0 else (-key) | _SIGN
+    return scratch[0]
+
+
+@njit(cache=True, error_model="numpy")
+def _second_entry(y, a, b, scratch):
+    """Smallest float t with ``a*t + b > y`` (a > 0, all finite)."""
+    t = (y - b) / a
+    if np.isfinite(t):
+        # The quotient is normally within an ulp or two of the boundary.
+        if a * t + b > y:
+            for _ in range(8):
+                below = np.nextafter(t, -np.inf)
+                if not (a * below + b > y):
+                    return t
+                t = below
+        else:
+            for _ in range(8):
+                t = np.nextafter(t, np.inf)
+                if a * t + b > y:
+                    return t
+    # Exact bisection over the float ordering: false at -inf, true at +inf.
+    lo = _float_key(-np.inf, scratch)
+    hi = _float_key(np.inf, scratch)
+    while True:
+        mid = (lo >> 1) + (hi >> 1) + (lo & hi & 1)
+        if mid == lo or mid == hi:
+            break
+        if a * _key_float(mid, scratch) + b > y:
+            hi = mid
+        else:
+            lo = mid
+    return _key_float(hi, scratch)
+
+
+@njit(cache=True, error_model="numpy")
+def _grid_background_at(x, y, k, a, b, scale):
+    """The scan's background test at candidate ``mid = k`` (k integer-valued)."""
+    t = k / scale
+    return x < t or y < a * t + b
+
+
+@njit(cache=True, error_model="numpy")
+def _grid_entry(x, y, a, b, scale, k_lo, k_hi):
+    """Smallest integer k in [k_lo, k_hi] with the pixel in background at k.
+
+    Returns ``k_lo`` if it is already background there and ``k_hi + 1`` if it
+    never is. The guess is normally exact or off by one; far guesses (e.g.
+    cancellation in ``y - b``) fall back to an exact integer bisection.
+    """
+    g = min(np.floor(x * scale), np.floor((y - b) / a * scale)) + 1.0
+    if not (g >= k_lo):  # also catches NaN
+        g = k_lo
+    if not (g <= k_hi + 1):
+        g = k_hi + 1
+    if g <= k_hi and _grid_background_at(x, y, g, a, b, scale):
+        for _ in range(4):
+            if g == k_lo or not _grid_background_at(x, y, g - 1, a, b, scale):
+                return g
+            g -= 1
+        lo, hi = k_lo, g
+    else:
+        if g > k_hi:
+            return k_hi + 1
+        for _ in range(4):
+            g += 1
+            if g > k_hi or _grid_background_at(x, y, g, a, b, scale):
+                return g
+        lo, hi = g + 1, k_hi + 1
+    # Invariant: background at hi (k_hi + 1 counts as background), not below lo.
+    while lo < hi:
+        m = np.floor((lo + hi) / 2)
+        if _grid_background_at(x, y, m, a, b, scale):
+            hi = m
+        else:
+            lo = m + 1
+    return lo
+
+
+@njit(cache=True, error_model="numpy")
+def _grid_background(g1, g2, lo, hi, a, b, scale, totals):
+    """Cumulative per-grid-step background statistics.
+
+    Returns ``(acc, ext, mx, my, k_lo, k_hi)``. Row ``j`` describes the
+    background at ``mid = k_lo + j``: ``acc[j]`` holds count and sums of
+    dx, dy, dx², dy², dx·dy (shifted by object means ``mx``/``my``);
+    ``ext[j]`` holds min/max of x and y.
+    """
+    k_lo = 1.0 - _GRID_PAD
+    k_hi = float(scale) + _GRID_PAD
+    nb = int(k_hi - k_lo) + 2  # last row: never background in range
+    mx, my = totals[7], totals[8]
+    acc = np.zeros((nb, 6), dtype=np.float64)
+    ext = np.empty((nb, 4), dtype=np.float64)
+    ext[:, 0] = np.inf
+    ext[:, 1] = -np.inf
+    ext[:, 2] = np.inf
+    ext[:, 3] = -np.inf
+    for i in range(lo, hi):
+        x = g1[i]
+        y = g2[i]
+        j = int(_grid_entry(x, y, a, b, scale, k_lo, k_hi) - k_lo)
+        dx = x - mx
+        dy = y - my
+        acc[j, 0] += 1.0
+        acc[j, 1] += dx
+        acc[j, 2] += dy
+        acc[j, 3] += dx * dx
+        acc[j, 4] += dy * dy
+        acc[j, 5] += dx * dy
+        ext[j, 0] = min(ext[j, 0], x)
+        ext[j, 1] = max(ext[j, 1], x)
+        ext[j, 2] = min(ext[j, 2], y)
+        ext[j, 3] = max(ext[j, 3], y)
+    for j in range(1, nb):
+        for c in range(6):
+            acc[j, c] += acc[j - 1, c]
+        ext[j, 0] = min(ext[j, 0], ext[j - 1, 0])
+        ext[j, 1] = max(ext[j, 1], ext[j - 1, 1])
+        ext[j, 2] = min(ext[j, 2], ext[j - 1, 2])
+        ext[j, 3] = max(ext[j, 3], ext[j - 1, 3])
+    return acc, ext, mx, my, k_lo, k_hi
+
+
+@njit(cache=True)
+def _use_sorted(a, n):
+    """Sorted searches need a > 0, enough pixels to amortize the sort, and
+    bounded scratch memory."""
+    return a > 0 and _SORTED_MIN_PIXELS <= n <= _SORTED_MAX_PIXELS
+
+
+@njit(cache=True)
+def _use_grid(a, n, scale):
+    """Grid buckets need a > 0, bounded scale, and pixels to amortize O(scale)."""
+    return (
+        a > 0
+        and n >= _GRID_MIN_PIXELS
+        and scale <= _GRID_MAX_SCALE
+        and scale + 2 * _GRID_PAD <= _GRID_STEPS_PER_PIXEL * n
+    )
+
+
+@njit(cache=True, error_model="numpy")
+def _grid_count_pearson(g1, g2, lo, hi, a, b, scale, mid, table, totals, defer):
+    """Use exact grid membership and the fused search rounding policy."""
+    acc, ext, _, _, k_lo, k_hi = table
+    thr_fi = mid / scale
+    thr_si = a * thr_fi + b
+    if mid < k_lo or mid > k_hi:
+        count, value = _count_pearson_combt(
+            g1, g2, lo, hi, thr_fi, thr_si, _SIGN_CUTOFF, defer
+        )
+        return count, np.nan if count <= 2 else value
+    index = int(mid - k_lo)
+    count = int(acc[index, 0])
+    if count <= 2 or ext[index, 0] == ext[index, 1] or ext[index, 2] == ext[index, 3]:
+        return count, np.nan
+    return _r_or_exact(
+        g1,
+        g2,
+        lo,
+        hi,
+        thr_fi,
+        thr_si,
+        totals,
+        count,
+        acc[index, 1],
+        acc[index, 2],
+        acc[index, 3],
+        acc[index, 4],
+        acc[index, 5],
+        _SIGN_CUTOFF,
+        defer,
+        hi - lo + acc.shape[0],
+    )
