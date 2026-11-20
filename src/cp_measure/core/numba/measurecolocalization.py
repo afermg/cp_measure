@@ -1,9 +1,10 @@
-"""Numba-backed colocalization, with current NumPy semantics.
+"""Numba-backed colocalization with explicit numerical compatibility policies.
 
-One grouped flatten and a fused per-object kernel handle float64 images.
+One grouped flatten and a fused per-object kernel handle float32/float64 images.
 Percentage-threshold metrics opt into float16/32 promotion with precision="float64".
-The default precision="input" retains the pre-policy dtype paths.
-Pearson's dtype policy is unchanged. Integer/wider-float inputs use reference
+The default precision="input" preserves float32 threshold rounding but uses
+float64 kernel reductions, which can differ from NumPy's float32 reductions.
+Integer/wider-float inputs use reference
 reductions, retaining their existing semantics. Undefined kernel results also use
 reference evaluation to preserve warnings and errors, including zero-denominator
 Overlap errors.
@@ -393,6 +394,8 @@ def get_correlation_costes(
     *,
     scale_max: int | None = None,
     scipy_ties: bool = False,
+    cellprofiler: bool = False,
+    scope: str = "object",
 ) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Costes coefficients using the current NumPy scale and warning contracts.
 
@@ -400,8 +403,8 @@ def get_correlation_costes(
     integers infer it. ``thr`` is retained but unused. One compiled pass measures
     all objects; its regression and coefficient sums reproduce NumPy's, so the
     same pixels count. Undefined results warn as the reference does, once per reason
-    and image with the number of objects, and near-constant searches replay the
-    reference for its diagnostics. See the NumPy API for details.
+    and image with the number of objects. With ``scipy_ties=True``, near-constant
+    searches replay the reference for its diagnostics. See the NumPy API for details.
 
     The kernel decides every search step itself. When r is within rounding of a
     decision point (often exactly 0 on small integer-grid objects) or the subset is
@@ -409,7 +412,29 @@ def get_correlation_costes(
     the two backends can differ (see the measurement notes). ``scipy_ties=True``
     asks SciPy for those steps, as the NumPy backend does, and also emits SciPy's
     near-constant warnings: the result is then bit-identical to the NumPy backend.
+
+    ``scope="object"`` and float64 arithmetic remain the defaults.
+    ``scope="image"`` fits thresholds over the whole image, including background.
+    Independently, ``cellprofiler=True`` selects historical input-precision
+    arithmetic. Either option uses the shared serial reference path instead of
+    this kernel, regardless of ``scipy_ties``. See the NumPy API for its contract.
     """
+    if not isinstance(cellprofiler, (bool, numpy.bool_)):
+        raise TypeError("cellprofiler must be a boolean")
+    if scope not in ("object", "image"):
+        raise ValueError("scope must be 'object' or 'image'")
+    if cellprofiler or scope == "image":
+        return reference.get_correlation_costes(
+            pixels_1,
+            pixels_2,
+            masks,
+            fast_costes,
+            thr,
+            scale_max=scale_max,
+            scipy_ties=scipy_ties,
+            cellprofiler=cellprofiler,
+            scope=scope,
+        )
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
     chunk = numpy_sum_chunk()  # on the calling thread: np.setbufsize is per thread

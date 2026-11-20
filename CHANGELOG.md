@@ -6,6 +6,11 @@ Notable user-facing changes are documented here.
 
 ### Added
 
+- Costes accepts independent `scope="image"` and `cellprofiler=True` options.
+  Defaults remain per-object fitting and native float64 arithmetic. The tested
+  CellProfiler 4.2.8 workflow requires both options, matching normalized float32
+  images and acquisition scale. NumPy and Numba share the serial reference for
+  these opt-in paths; coefficient outputs remain per-object float64 arrays.
 - Explicit `rank_scope="object_set"` for RWC, using CellProfiler-style foreground
   object-set ranks. The default remains independent per-object ranking (#121).
 - Shape and radial Zernike values no longer depend on where an object sits in

@@ -140,16 +140,10 @@ def test_bisection_paths_preserve_scan_state(monkeypatch, scale, size, seed, def
                 patch.setattr(
                     kernel,
                     "_direct_count_pearson",
-                    lambda first,
-                    second,
-                    lo,
-                    hi,
-                    totals,
-                    threshold,
-                    other,
-                    cutoffs,
-                    defer: kernel._count_pearson_combt(
-                        first, second, lo, hi, threshold, other, cutoffs, defer
+                    lambda first, second, lo, hi, totals, threshold, other, cutoffs, defer: (
+                        kernel._count_pearson_combt(
+                            first, second, lo, hi, threshold, other, cutoffs, defer
+                        )
                     ),
                 )
             state = kernel._bisection_state(slope, intercept, scale)

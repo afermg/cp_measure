@@ -381,6 +381,11 @@ def _costes_pair(
     thr_fi, thr_si, reason = search(fi, si, scale, fast_costes)
     if reason is not None:
         return numpy.nan, numpy.nan, reason
+    return _costes_coefficients(fi, si, thr_fi, thr_si)
+
+
+def _costes_coefficients(fi, si, thr_fi, thr_si):
+    """Reduce one object's signals using thresholds fitted at either scope."""
     if not (numpy.isfinite(thr_fi) and numpy.isfinite(thr_si)):
         return numpy.nan, numpy.nan, None
     fi_above = fi > thr_fi
@@ -936,6 +941,8 @@ def get_correlation_costes(
     *,
     scale_max: int | None = None,
     scipy_ties: bool = False,
+    cellprofiler: bool = False,
+    scope: str = "object",
 ) -> dict[str, NDArray[numpy.float64]] | list[dict[str, NDArray[numpy.float64]]]:
     """Per-object Costes coefficients with an explicit acquisition grid.
 
@@ -959,7 +966,26 @@ def get_correlation_costes(
     :func:`cp_measure._sanitize.sanitize` for arbitrary IDs. ``scipy_ties`` only
     affects the numba backend (this backend always decides with SciPy); it is
     accepted here so the same parameters work with both backends.
+
+    ``scope="object"`` fits thresholds independently for each object (default).
+    ``scope="image"`` fits once over the whole image, including background.
+    Coefficients remain per-object in either scope. Image scope uses the shared
+    serial reference path on both backends, independent of ``scipy_ties``.
+
+    ``cellprofiler=True`` independently selects input-precision regression and
+    historical NumPy 1.x / SciPy 1.9 arithmetic. It does not change fitting scope.
+    Integer images normalize to float32; float32/64 inputs retain their dtype
+    and values without grid canonicalization. Both backends use this reference
+    path, regardless of ``scipy_ties``. It is not the accelerated object path.
+    To reproduce the tested CellProfiler 4.2.8 workflow, combine ``scope="image"``
+    and ``cellprofiler=True`` with matching normalized float32 inputs and scale.
+    Image masks/cropping and bitwise reproducibility across platforms are not
+    provided. See the measurement notes for the validated reference environment.
     """
+    if not isinstance(cellprofiler, (bool, numpy.bool_)):
+        raise TypeError("cellprofiler must be a boolean")
+    if scope not in ("object", "image"):
+        raise ValueError("scope must be 'object' or 'image'")
     if is_batch(masks):  # list/tuple or 4D: one result per image
         return apply_per_pair(
             get_correlation_costes,
@@ -969,12 +995,22 @@ def get_correlation_costes(
             fast_costes=fast_costes,
             thr=thr,
             scale_max=scale_max,
+            scipy_ties=scipy_ties,
+            cellprofiler=cellprofiler,
+            scope=scope,
+        )
+    if cellprofiler:
+        return _cellprofiler_costes(
+            pixels_1, pixels_2, masks, scale_max, fast_costes, scope
         )
     first, second, scale = _prepare_costes_inputs(pixels_1, pixels_2, scale_max)
+    masks = numpy.asarray(masks)
     if masks.shape != first.shape or not numpy.issubdtype(masks.dtype, numpy.integer):
         raise ValueError("Costes labels must be an integer array matching the images")
     if fast_costes not in (M_FASTER, M_FAST, M_ACCURATE):
         raise ValueError("Unknown Costes threshold-search mode")
+    if scope == "image":
+        return _image_costes(first, second, masks, scale, fast_costes)
     c1: list[float] = []
     c2: list[float] = []
     undefined: dict[str, int] = {}  # objects per reason, in first-seen order
@@ -990,6 +1026,121 @@ def get_correlation_costes(
         c2.append(C2)
     _warn_undefined_costes(undefined)
     return {f"{F_COSTES_FORMAT}_1": _values(c1), f"{F_COSTES_FORMAT}_2": _values(c2)}
+
+
+def _image_costes(first, second, masks, scale, mode):
+    """Native float64 image-wide fitting with per-object reductions."""
+    if masks.ndim not in (2, 3):
+        raise ValueError("Costes expects 2D or 3D images")
+    if numpy.any(masks < 0):
+        raise ValueError("Costes labels must be nonnegative")
+    count = int(masks.max(initial=0))
+    first_values = numpy.full(count, numpy.nan)
+    second_values = numpy.full(count, numpy.nan)
+    if count:
+        first = _canonical_costes_pixels(first, scale)
+        second = _canonical_costes_pixels(second, scale)
+        search = _bisection_search if mode == M_FASTER else _linear_search
+        first_threshold, second_threshold, fit_reason = search(
+            first.ravel(), second.ravel(), scale, mode
+        )
+        undefined: dict[str, int] = {}
+        for index, (object_first, object_second) in enumerate(
+            _iter_label_pixels(first, second, masks)
+        ):
+            if object_first is None or object_second is None:
+                reason = "missing or empty object label"
+            elif fit_reason is not None:
+                reason = fit_reason
+            else:
+                first_values[index], second_values[index], reason = (
+                    _costes_coefficients(
+                        object_first, object_second, first_threshold, second_threshold
+                    )
+                )
+            if reason is not None:
+                undefined[reason] = undefined.get(reason, 0) + 1
+        _warn_undefined_costes(undefined)
+    return {
+        f"{F_COSTES_FORMAT}_1": first_values,
+        f"{F_COSTES_FORMAT}_2": second_values,
+    }
+
+
+def _cellprofiler_costes(pixels_1, pixels_2, masks, scale_max, mode, scope):
+    from cp_measure.core._costes_compat import image_costes
+
+    first, second = numpy.asarray(pixels_1), numpy.asarray(pixels_2)
+    scale = _costes_scale(first, second, scale_max)
+    masks = numpy.asarray(masks)
+    if masks.shape != first.shape or masks.dtype.kind not in "iu":
+        raise ValueError("Costes labels must be an integer array matching the images")
+    if masks.ndim not in (2, 3):
+        raise ValueError("Costes expects 2D or 3D images")
+    if numpy.any(masks < 0):
+        raise ValueError("Costes labels must be nonnegative")
+    if mode not in (M_FASTER, M_FAST, M_ACCURATE):
+        raise ValueError("Unknown Costes threshold-search mode")
+    prepared = []
+    for image in (first, second):
+        if image.dtype.kind in "ui":
+            image = image.astype(numpy.float32) / numpy.float32(scale)
+        elif image.dtype.itemsize not in (4, 8):
+            raise ValueError(
+                "CellProfiler compatibility requires float32 or float64 pixels"
+            )
+        if numpy.isinf(image).any() or numpy.any((image < 0) | (image > 1)):
+            raise ValueError(
+                "Costes expects normalized pixels in [0, 1]; check scale_max"
+            )
+        prepared.append(image)
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", RuntimeWarning)
+        if scope == "image":
+            first_values, second_values = image_costes(*prepared, masks, scale, mode)
+        else:
+            count = int(masks.max(initial=0))
+            first_values = numpy.full(count, numpy.nan)
+            second_values = numpy.full(count, numpy.nan)
+            undefined: dict[str, int] = {}
+            for index, (object_first, object_second) in enumerate(
+                _iter_label_pixels(*prepared, masks)
+            ):
+                reason = None
+                if object_first is None or object_second is None:
+                    reason = "missing or empty object label"
+                elif (
+                    numpy.count_nonzero(
+                        ~numpy.isnan(object_first) & ~numpy.isnan(object_second)
+                    )
+                    < 2
+                ):
+                    reason = "fewer than two usable paired pixels"
+                else:
+                    values = image_costes(
+                        object_first,
+                        object_second,
+                        numpy.ones(object_first.shape, dtype=numpy.int32),
+                        scale,
+                        mode,
+                    )
+                    first_values[index], second_values[index] = (
+                        values[0][0],
+                        values[1][0],
+                    )
+                if reason is not None:
+                    undefined[reason] = undefined.get(reason, 0) + 1
+            _warn_undefined_costes(undefined)
+    seen = set()
+    for warning in recorded:
+        identity = warning.category, str(warning.message)
+        if identity not in seen:
+            warnings.warn(str(warning.message), warning.category, stacklevel=3)
+            seen.add(identity)
+    return {
+        f"{F_COSTES_FORMAT}_1": first_values,
+        f"{F_COSTES_FORMAT}_2": second_values,
+    }
 
 
 def get_correlation_overlap(

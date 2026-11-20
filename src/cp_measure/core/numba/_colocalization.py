@@ -11,9 +11,9 @@ processes a single object via ``scipy.ndimage`` over an all-ones label
 (``lrange=[1]``, hence the ``[0]`` indexing throughout). Here that becomes a
 plain loop over each object's contiguous block.
 
-Serial by construction: objects are iterated in a single ``for``; no
-``prange``/``nogil``. Parallelism is the job of a future batch layer over images,
-never the kernel.
+Serial within each image: objects are iterated in a single ``for``, without
+``prange``. The kernels release the GIL with ``nogil=True`` so the batch layer
+can measure independent images on threads.
 """
 
 import numpy as np
