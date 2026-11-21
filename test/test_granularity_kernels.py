@@ -247,7 +247,7 @@ def test_subtract_background_2d_matches_numpy_steps(shape, radius, sample_size, 
 def test_granularity_spectrum_2d_matches_numpy_assembly(dtype):
     """The spectrum kernel's per-object values equal, bit for bit, the NumPy
     assembly from the starting sums and step sums: means as sum / count (NaN for
-    an absent label), the start clamped to eps, and ``(prev - new) * 100 / start``."""
+    an absent label), NaN for a start <= eps (#132), and ``(prev - new) * 100 / start``."""
     rng = numpy.random.default_rng(4)
     shape = (31, 27)
     pixels = rng.random(shape).astype(dtype)
@@ -255,7 +255,7 @@ def test_granularity_spectrum_2d_matches_numpy_assembly(dtype):
     labels = rng.integers(0, 6, size=orig.shape)
     labels[labels == 3] = 0  # absent label -> NaN
     labels[0, 0] = 6
-    orig[labels == 6] = 0  # zero start mean -> clamped to eps
+    orig[labels == 6] = 0  # zero start mean -> NaN (#132)
     n = int(labels.max())
     counts, *tables = readback_tables(labels, n, 30 / 61, 26 / 53, *shape)
     counts = counts[1:]
@@ -264,7 +264,7 @@ def test_granularity_spectrum_2d_matches_numpy_assembly(dtype):
 
     with numpy.errstate(invalid="ignore", divide="ignore"):
         current = label_sums(labels, orig.astype(numpy.float64), n)[1:] / counts
-        start = numpy.maximum(current, numpy.finfo(float).eps)
+        start = numpy.where(current > numpy.finfo(float).eps, current, numpy.nan)
         steps = spectrum_sums_2d(pixels, ng, *tables)
         expected = []
         for g in range(ng):
@@ -272,7 +272,8 @@ def test_granularity_spectrum_2d_matches_numpy_assembly(dtype):
             expected.append((current - new) * 100 / start)
             current = new
     _assert_same_bits(got, numpy.array(expected))
-    assert numpy.isnan(got[:, 2]).all() and numpy.isfinite(got[:, 5]).all()
+    assert numpy.isnan(got[:, 2]).all() and numpy.isnan(got[:, 5]).all()
+    assert numpy.isfinite(got[:, [0, 1, 3, 4]]).all()
 
 
 @pytest.mark.parametrize("seed", [0, 1, 7])
@@ -665,7 +666,7 @@ def test_granularity_spectrum_3d_matches_numpy_assembly(dtype):
     with numpy.errstate(invalid="ignore", divide="ignore"):
         sums = label_sums(flat, orig.astype(numpy.float64).reshape(flat.shape), n)
         current = sums[1:] / counts
-        start = numpy.maximum(current, numpy.finfo(float).eps)
+        start = numpy.where(current > numpy.finfo(float).eps, current, numpy.nan)
         expected = []
         ero, recon_mask = pixels, pixels
         for _ in range(ng):
