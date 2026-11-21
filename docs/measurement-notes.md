@@ -120,6 +120,10 @@ Pass `legacy_boundary=True` to either function to restore the previous strict `r
 
 For the featurizer, use `zernike_params={"legacy_boundary": True}` and/or `radial_zernikes_params={"legacy_boundary": True}`. Omitting the flag, or setting it to `False`, keeps the boundary-rounding fix. Legacy compatibility is to the previous numerical convention, not a promise of bit-identical floating-point results across backends, library versions, or ill-defined near-zero Zernike phases.
 
+## Costes scale
+
+**Breaking correction.** Float inputs to `get_correlation_costes` and `get_correlation_costes_ind` must be normalized to `[0, 1]` **and** specify `scale_max` (e.g. `65535` for normalized 16-bit data). It controls the threshold grid; it is not the observed image maximum. Both matching unsigned-integer dtypes infer their storage maximum and are normalized internally. For 12-bit data stored in `uint16`, pass `scale_max=4095` explicitly; signed or mixed-dtype arrays also require a scale. Through the featurizer, use `correlation_costes_params={"scale_max": 65535}` or disable Costes.
+
 ## Costes integer-to-float normalization
 
 For integer images, Costes divides by `scale_max`; normalized floats require the same scale explicitly. Equivalent floating-point expressions such as `level / scale_max` and `level * (1 / scale_max)` can differ at round-off, which can otherwise change threshold decisions substantially (see [#117](https://github.com/afermg/cp_measure/issues/117)).
