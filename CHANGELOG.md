@@ -121,8 +121,8 @@ Notable user-facing changes are documented here.
   leaked in from a neighbour (always the case with `subsample_size >= 1`).
   When upsampling spread some intensity from a bright neighbour into the
   object, dividing by eps gave finite values around 1e15. Objects with signal
-  are unchanged. Pass `legacy_zero_signal=True` (or
-  `granularity_params={"legacy_zero_signal": True}` in the featurizer) to
+  are unchanged. Pass `zero_signal_policy="epsilon_floor"` (or
+  `granularity_params={"zero_signal_policy": "epsilon_floor"}` in the featurizer) to
   restore the eps floor. Objects with a positive mean just above eps can still
   get very large values next to a bright neighbour, because the upsampling leak
   is unchanged.

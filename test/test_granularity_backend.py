@@ -192,7 +192,7 @@ def test_label_gaps_dense_output():
 def test_objects_without_signal_are_nan(granularity, ndim):
     # Regression test for #132: object 2 has no signal and touches textured
     # object 1, whose signal leaks into it through upsampling; object 3 has no
-    # signal and is isolated. Both get NaN; legacy_zero_signal restores
+    # signal and is isolated. Both get NaN; the epsilon-floor policy restores
     # CellProfiler's eps floor (~1e15 and 0). Object 1 is the same either way.
     rng = numpy.random.default_rng(0)
     pixels = numpy.zeros((128, 128), numpy.float32)
@@ -204,7 +204,9 @@ def test_objects_without_signal_are_nan(granularity, ndim):
     if ndim == 3:
         mask, pixels = numpy.stack([mask] * 12), numpy.stack([pixels] * 12)
     new = numpy.stack(list(granularity(mask, pixels).values()))
-    old = numpy.stack(list(granularity(mask, pixels, legacy_zero_signal=True).values()))
+    old = numpy.stack(
+        list(granularity(mask, pixels, zero_signal_policy="epsilon_floor").values())
+    )
     assert numpy.isnan(new[:, 1:]).all()
     numpy.testing.assert_array_equal(new[:, 0], old[:, 0])
     assert numpy.abs(old[:, 1]).max() > 1e14
@@ -423,3 +425,60 @@ def test_thin_volume_background_is_deterministic():
     got = gran_numba(mask, pixels)
     for key in first:
         numpy.testing.assert_array_equal(got[key], first[key], err_msg=key)
+
+
+@pytest.mark.parametrize(
+    "granularity", [gran_numpy, gran_numba], ids=["numpy", "numba"]
+)
+@pytest.mark.parametrize("policy", ["zero", "legacy", "", None, True])
+@pytest.mark.parametrize("batched", [False, True])
+def test_invalid_zero_signal_policy(granularity, policy, batched):
+    mask = numpy.ones((16, 16), dtype=numpy.int32)
+    pixels = numpy.zeros((16, 16))
+    if batched:
+        mask, pixels = [mask, mask], [pixels, pixels]
+    with pytest.raises(ValueError, match="zero_signal_policy must be"):
+        granularity(mask, pixels, zero_signal_policy=policy)
+
+
+@pytest.mark.parametrize("backend", [None, "numba"])
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize("policy", ["nan", "epsilon_floor"])
+def test_zero_signal_policy_batch_and_featurizer(backend, ndim, policy):
+    cp_measure.set_accelerator(backend)
+    try:
+        shape = (32, 32) if ndim == 2 else (3, 32, 32)
+        mask = numpy.ones(shape, dtype=numpy.int32)
+        pixels = numpy.zeros(shape, dtype=numpy.float32)
+        params = dict(
+            zero_signal_policy=policy,
+            granular_spectrum_length=2,
+            element_size=2,
+            subsample_size=1,
+            image_sample_size=1,
+        )
+        granularity = gran_numpy if backend is None else gran_numba
+        batch = granularity([mask, mask], [pixels, pixels], **params)
+        for result in batch:
+            for values in result.values():
+                if policy == "nan":
+                    assert numpy.isnan(values).all()
+                else:
+                    assert (values == 0).all()
+        flags = {**ALL_OFF, "granularity": True}
+        config = make_featurizer_config(
+            ["DNA"], objects=["Cells"], granularity_params=params, **flags
+        )
+        values, _, _ = featurize(
+            numpy.stack([pixels, pixels])[:, None],
+            numpy.stack([mask, mask])[:, None],
+            config,
+            is_3d=ndim == 3,
+        )
+        assert values.shape == (2, 2)
+        if policy == "nan":
+            assert numpy.isnan(values).all()
+        else:
+            assert (values == 0).all()
+    finally:
+        cp_measure.set_accelerator(None)

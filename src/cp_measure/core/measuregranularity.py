@@ -52,7 +52,7 @@ References
 """
 
 from functools import partial
-from typing import Callable
+from typing import Callable, Literal
 
 import numpy
 import scipy.ndimage
@@ -150,7 +150,7 @@ def get_granularity(
     granular_spectrum_length: int = 16,
     *,
     precision: Precision = "input",
-    legacy_zero_signal: bool = False,
+    zero_signal_policy: Literal["nan", "epsilon_floor"] = "nan",
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object granularity spectrum features.
 
@@ -216,9 +216,10 @@ def get_granularity(
         Preserve the pre-policy dtype path (default), or widen float16/32
         before resampling and background arithmetic. See measurement notes.
 
-    legacy_zero_signal : bool, keyword-only
-        Floor the start mean at float64 eps as CellProfiler's MeasureGranularity
-        does, instead of returning NaN for objects without signal (#132).
+    zero_signal_policy : {"nan", "epsilon_floor"}, keyword-only
+        Return NaN for raw mean intensity at or below float64 eps (default),
+        or floor the start mean at eps as CellProfiler's MeasureGranularity
+        does (#132).
 
     Returns
     -------
@@ -228,6 +229,8 @@ def get_granularity(
     Examples
 
     """
+    if zero_signal_policy not in ("nan", "epsilon_floor"):
+        raise ValueError("zero_signal_policy must be 'nan' or 'epsilon_floor'")
     # Promote before every resampling/morphology/subtraction stage, not just
     # the final reduction. Preserve the stored acquisition values exactly.
     pixels = promote_float_pixels(pixels, precision)
@@ -380,7 +383,7 @@ def get_granularity(
     # signal gets NaN. CellProfiler floors the mean at eps instead, which turns the
     # signal a bright neighbour leaks in through upsampling into ~1e15 (#132).
     eps = numpy.finfo(float).eps
-    if legacy_zero_signal:
+    if zero_signal_policy == "epsilon_floor":
         start_mean = numpy.maximum(current_mean, eps)
     else:
         start_mean = numpy.where(current_mean > eps, current_mean, numpy.nan)

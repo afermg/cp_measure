@@ -566,38 +566,38 @@ def spectrum_sums_2d(pixels, ng, starts, cells, values):
 
 @njit(cache=True, nogil=True, error_model="numpy")
 def granularity_spectrum_2d(
-    pixels, ng, mask, orig_pixels, counts, starts, cells, values, legacy=False
+    pixels, ng, mask, orig_pixels, counts, starts, cells, values, epsilon_floor=False
 ):
     """Granularity values ``(ng, n)`` for labels ``1..n``, in one GIL-free call.
 
     The start mean of each object is its mean in ``orig_pixels`` and each step's
     mean comes from :func:`spectrum_sums_2d`; step ``g`` is ``(mean_{g-1} - mean_g)
-    * 100 / start``, NaN when ``start <= eps`` (``legacy``: CellProfiler's eps
+    * 100 / start``, NaN when ``start <= eps`` (``epsilon_floor``: CellProfiler's eps
     floor, see :func:`_spectrum_values`). ``counts`` are the label pixel counts (absent labels
     give 0 / 0 = NaN, as ``scipy.ndimage.mean``); the arithmetic is the NumPy
     assembly's, element by element.
     """
     sums = label_sums(mask, orig_pixels, counts.size)
     steps = spectrum_sums_2d(pixels, ng, starts, cells, values)
-    return _spectrum_values(sums, steps, counts, legacy)
+    return _spectrum_values(sums, steps, counts, epsilon_floor)
 
 
 @njit(cache=True, nogil=True, error_model="numpy")
-def _spectrum_values(sums, steps, counts, legacy):
+def _spectrum_values(sums, steps, counts, epsilon_floor):
     """``(ng, n)`` granularity values from the start sums ``(n + 1,)`` and the
     step sums ``(ng, n + 1)`` (index 0 is background) of each label. A start mean
-    <= eps gives NaN, or with ``legacy`` is floored at eps as CellProfiler does."""
+    <= eps gives NaN, or with ``epsilon_floor`` is floored at eps as CellProfiler does."""
     ng = steps.shape[0]
     n = counts.size
     out = np.empty((ng, n))
     for lab in range(n):
         current = sums[lab + 1] / counts[lab]
         # No signal (mean <= eps, or 0 / 0 for absent labels): NaN (#132);
-        # legacy floors it at eps as np.maximum would (NaN propagates)
+        # epsilon_floor floors it at eps as np.maximum would (NaN propagates)
         if current > _EPS or current != current:
             start = current
         else:
-            start = _EPS if legacy else np.nan
+            start = _EPS if epsilon_floor else np.nan
         for g in range(ng):
             new = steps[g, lab + 1] / counts[lab]
             out[g, lab] = (current - new) * 100.0 / start
@@ -717,7 +717,7 @@ def subtract_background_3d(pixels, radius, resample, factor, scale_z, scale_y, s
 
 @njit(cache=True, nogil=True, error_model="numpy")
 def granularity_spectrum_3d(
-    pixels, ng, mask, orig_pixels, counts, scales, round_float32, legacy=False
+    pixels, ng, mask, orig_pixels, counts, scales, round_float32, epsilon_floor=False
 ):
     """Granularity values ``(ng, n)`` for labels ``1..n`` of a volume, in one
     GIL-free call: ball(1) erosion, 6-connectivity reconstruction cascaded under
@@ -742,7 +742,7 @@ def granularity_spectrum_3d(
             ero = _cross_min_3d(_pad_edge_3d(ero, 1))
             rec = reconstruction_by_dilation_3d(ero, rec)
             steps[g] = upsample_label_sums_3d(rec, mask, n, scales, round_float32)
-    return _spectrum_values(sums, steps, counts, legacy)
+    return _spectrum_values(sums, steps, counts, epsilon_floor)
 
 
 @njit(cache=True, nogil=True)

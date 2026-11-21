@@ -56,7 +56,7 @@ Kernel bit-parity checks require identical dtype, shape, NaN locations, and all 
 
 ## Granularity of objects without signal
 
-Each `Granularity_k` is a percentage of the object's raw mean intensity, so both backends return NaN for an object whose raw mean is at or below float64 eps (#132). CellProfiler's MeasureGranularity floors that mean at eps instead. With the floor, an object without signal gets 0 when nothing leaks into it, and values around 1e15 when the bilinear upsampling of each spectrum step spreads intensity from a bright neighbour into its border pixels. Pass `legacy_zero_signal=True` to either backend, or `granularity_params={"legacy_zero_signal": True}` to the featurizer, to restore CellProfiler's floor.
+Each `Granularity_k` is a percentage of the object's raw mean intensity, so both backends return NaN for an object whose raw mean is at or below float64 eps (#132). CellProfiler's MeasureGranularity floors that mean at eps instead. With the floor, an object without signal gets 0 when nothing leaks into it, and values around 1e15 when the bilinear upsampling of each spectrum step spreads intensity from a bright neighbour into its border pixels. Pass `zero_signal_policy="epsilon_floor"` to either backend, or `granularity_params={"zero_signal_policy": "epsilon_floor"}` to the featurizer, to restore CellProfiler's floor.
 
 The upsampling leak itself is unchanged, so a dim object next to a bright one can still get values outside 0 to 100. For example, an object at 1% of its neighbour's brightness gets `Granularity_1` near -57. With `subsample_size=1` there is no upsampling and no leak.
 
