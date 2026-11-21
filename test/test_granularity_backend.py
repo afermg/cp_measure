@@ -185,6 +185,32 @@ def test_label_gaps_dense_output():
     _assert_same(out, base)
 
 
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize(
+    "granularity", [gran_numpy, gran_numba], ids=["numpy", "numba"]
+)
+def test_objects_without_signal_are_nan(granularity, ndim):
+    # Regression test for #132: object 2 has no signal and touches textured
+    # object 1, whose signal leaks into it through upsampling; object 3 has no
+    # signal and is isolated. Both get NaN; legacy_zero_signal restores
+    # CellProfiler's eps floor (~1e15 and 0). Object 1 is the same either way.
+    rng = numpy.random.default_rng(0)
+    pixels = numpy.zeros((128, 128), numpy.float32)
+    pixels[10:40, 10:40] = rng.random((30, 30))
+    mask = numpy.zeros((128, 128), numpy.int32)
+    mask[10:40, 10:40] = 1
+    mask[40:60, 10:40] = 2
+    mask[70:90, 10:40] = 3
+    if ndim == 3:
+        mask, pixels = numpy.stack([mask] * 12), numpy.stack([pixels] * 12)
+    new = numpy.stack(list(granularity(mask, pixels).values()))
+    old = numpy.stack(list(granularity(mask, pixels, legacy_zero_signal=True).values()))
+    assert numpy.isnan(new[:, 1:]).all()
+    numpy.testing.assert_array_equal(new[:, 0], old[:, 0])
+    assert numpy.abs(old[:, 1]).max() > 1e14
+    assert (old[:, 2] == 0).all()
+
+
 def test_empty_mask():
     mask = numpy.zeros((40, 40), numpy.int32)
     pixels = numpy.random.default_rng(4).random((40, 40))

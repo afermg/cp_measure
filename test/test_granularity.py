@@ -116,7 +116,8 @@ def _reference_unfused(
     ero = pixels.copy()
     range_ = numpy.arange(1, numpy.max(orig_mask) + 1)
     current_mean = fix(scipy.ndimage.mean(orig_pixels, orig_mask, range_))
-    start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
+    eps = numpy.finfo(float).eps
+    start_mean = numpy.where(current_mean > eps, current_mean, numpy.nan)  # #132
 
     results = {}
     for granularity_id in range(1, ng + 1):
@@ -222,6 +223,6 @@ def test_returns_nan_when_subsampling_collapses_axis():
     # #91: subsampling shrinks an axis below the 2 samples bilinear interpolation needs -> NaN.
     mask = numpy.zeros((7, 17), dtype=int)
     mask[:, 1:-1] = 1
-    out = get_granularity(mask, numpy.zeros((7, 17)))
+    out = get_granularity(mask, numpy.ones((7, 17)))  # signal: NaN is not #132's
     for v in out.values():
         assert numpy.isnan(v).all()

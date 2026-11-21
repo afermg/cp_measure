@@ -54,6 +54,12 @@ For 2D float16 images with `subsample_size=1`, the Numba backend retains its his
 
 Kernel bit-parity checks require identical dtype, shape, NaN locations, and all non-NaN bits (including signed zeros and infinities). NaN sign and payload encodings are excluded: CI observed different NaN signs between SciPy and Numba for the same non-finite interpolation inputs, without differences in NaN locations or non-NaN values.
 
+## Granularity of objects without signal
+
+Each `Granularity_k` is a percentage of the object's raw mean intensity, so both backends return NaN for an object whose raw mean is at or below float64 eps (#132). CellProfiler's MeasureGranularity floors that mean at eps instead. With the floor, an object without signal gets 0 when nothing leaks into it, and values around 1e15 when the bilinear upsampling of each spectrum step spreads intensity from a bright neighbour into its border pixels. Pass `legacy_zero_signal=True` to either backend, or `granularity_params={"legacy_zero_signal": True}` to the featurizer, to restore CellProfiler's floor.
+
+The upsampling leak itself is unchanged, so a dim object next to a bright one can still get values outside 0 to 100. For example, an object at 1% of its neighbour's brightness gets `Granularity_1` near -57. With `subsample_size=1` there is no upsampling and no leak.
+
 ## Texture quantization
 
 Intensities use a fixed image-wide mapping, not per-object min/max scaling. Dim variation can disappear, and pairs containing zero are excluded. See the [#100 explanation](https://github.com/afermg/cp_measure/issues/100#issuecomment-5939719548) and [`get_texture` Notes](../src/cp_measure/core/measuretexture.py) for CellProfiler compatibility and zero/NaN behavior.
