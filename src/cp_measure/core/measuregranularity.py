@@ -52,7 +52,7 @@ References
 """
 
 from functools import partial
-from typing import Callable
+from typing import Callable, Literal
 
 import numpy
 import scipy.ndimage
@@ -150,6 +150,7 @@ def get_granularity(
     granular_spectrum_length: int = 16,
     *,
     precision: Precision = "input",
+    zero_signal_policy: Literal["nan", "epsilon_floor"] = "nan",
 ) -> dict[str, NDArray[numpy.floating]] | list[dict[str, NDArray[numpy.floating]]]:
     """Per-object granularity spectrum features.
 
@@ -215,13 +216,21 @@ def get_granularity(
         Preserve the pre-policy dtype path (default), or widen float16/32
         before resampling and background arithmetic. See measurement notes.
 
+    zero_signal_policy : {"nan", "epsilon_floor"}, keyword-only
+        Return NaN for raw mean intensity at or below float64 eps (default),
+        or floor the start mean at eps as CellProfiler's MeasureGranularity
+        does (#132).
+
     Returns
     -------
     Dictionary of 1-d arrays where each value contains the specific granularity feature for a given cells.
+    Objects without signal (raw mean intensity <= float64 eps) get NaN.
 
     Examples
 
     """
+    if zero_signal_policy not in ("nan", "epsilon_floor"):
+        raise ValueError("zero_signal_policy must be 'nan' or 'epsilon_floor'")
     # Promote before every resampling/morphology/subtraction stage, not just
     # the final reduction. Preserve the stored acquisition values exactly.
     pixels = promote_float_pixels(pixels, precision)
@@ -370,7 +379,14 @@ def get_granularity(
     range_ = numpy.arange(1, numpy.max(orig_mask) + 1)
 
     current_mean = fix(scipy.ndimage.mean(orig_pixels, orig_mask, range_))
-    start_mean = numpy.maximum(current_mean, numpy.finfo(float).eps)
+    # Granularity is a percentage of the object's signal, so an object without
+    # signal gets NaN. CellProfiler floors the mean at eps instead, which turns the
+    # signal a bright neighbour leaks in through upsampling into ~1e15 (#132).
+    eps = numpy.finfo(float).eps
+    if zero_signal_policy == "epsilon_floor":
+        start_mean = numpy.maximum(current_mean, eps)
+    else:
+        start_mean = numpy.where(current_mean > eps, current_mean, numpy.nan)
 
     # The per-step "restore to original scale + per-object mean" is linear in the
     # reconstruction and uses fixed geometry, so precompute it once as a sparse operator

@@ -110,6 +110,19 @@ Notable user-facing changes are documented here.
 - Numba `granularity` keeps float32 backgrounds in float32, as NumPy does (#123),
   measures integer images as float64 (no wraparound), and rejects masks and
   pixels of different shapes instead of reading outside the image.
+- `granularity` returns NaN in every `Granularity_k` for objects without signal,
+  meaning a raw mean intensity at or below float64 eps (#132). The change
+  applies to both backends, in 2D and 3D. Granularity is a percentage of the
+  object's signal, so it is undefined when there is no signal. CellProfiler
+  floors the mean at eps instead, and the old values were 0 when no signal
+  leaked in from a neighbour (always the case with `subsample_size >= 1`).
+  When upsampling spread some intensity from a bright neighbour into the
+  object, dividing by eps gave finite values around 1e15. Objects with signal
+  are unchanged. Pass `zero_signal_policy="epsilon_floor"` (or
+  `granularity_params={"zero_signal_policy": "epsilon_floor"}` in the featurizer) to
+  restore the eps floor. Objects with a positive mean just above eps can still
+  get very large values next to a bright neighbour, because the upsampling leak
+  is unchanged.
 - Numba radial Zernike accepts float16 intensity images in single-image and
   batch calls, widening them before compiled coordinate extraction.
 - Numba `intensity` skips non-finite pixels as NumPy does: an object without a
