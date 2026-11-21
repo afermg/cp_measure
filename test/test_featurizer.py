@@ -336,3 +336,38 @@ class TestMultiMask:
 
         assert data.shape[0] == 1
         assert rows == [(0, "nuclei", 1)]
+
+
+@pytest.mark.parametrize("accelerator", [None, "numba"])
+def test_no_channels_measures_shape_features(monkeypatch, accelerator):
+    """A shape-only run (an image with zero channels) still returns the shape
+    features; channel features are skipped rather than called with an empty batch."""
+    import cp_measure
+
+    if accelerator == "numba":
+        pytest.importorskip("numba")
+    monkeypatch.setattr(cp_measure, "_ACCELERATOR", accelerator)
+    masks = np.zeros((1, 1, 32, 32), np.int32)
+    masks[0, 0, 4:12, 4:12] = 1
+    masks[0, 0, 18:28, 16:30] = 2
+    image = np.zeros((1, 0, 32, 32), np.float32)
+    data, columns, rows = featurize(image, masks, make_featurizer_config([]))
+    assert data.shape == (2, len(columns)) and len(rows) == 2
+    assert any(c.startswith("Area") for c in columns)
+
+
+def test_batch_matrix_is_c_ordered_rows_in_image_order():
+    """A multi-image batch returns one C-ordered float64 matrix whose rows follow
+    the images, then the labels, matching the per-row metadata."""
+    masks = np.zeros((2, 1, 32, 32), np.int32)
+    masks[0, 0, 4:12, 4:12] = 1
+    masks[1, 0, 18:28, 16:30] = 1
+    masks[1, 0, 2:6, 2:6] = 2
+    image = get_rng(0).random((2, 1, 32, 32)).astype(np.float32)
+    config = make_featurizer_config(["DNA"], **{**ALL_OFF, "intensity": True})
+    data, columns, rows = featurize(image, masks, config)
+    assert data.dtype == np.float64 and data.flags["C_CONTIGUOUS"]
+    assert rows == [(0, "object", 1), (1, "object", 1), (1, "object", 2)]
+    total = data[:, columns.index("Intensity_IntegratedIntensity__DNA")]
+    expected = [image[b, 0][masks[b, 0] == label].sum() for b, _, label in rows]
+    np.testing.assert_allclose(total, expected, rtol=1e-6)

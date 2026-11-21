@@ -396,9 +396,13 @@ def numpy_sum(a, chunk):
     return res
 
 
-@njit(cache=True, nogil=True)
+@njit(cache=True, nogil=True, error_model="numpy")
 def numpy_var(a, chunk):
-    """``np.var(a, ddof=1)`` of a contiguous 1D float64 array, bit for bit."""
+    """``np.var(a, ddof=1)`` of a contiguous 1D float64 array, bit for bit.
+
+    ``error_model="numpy"`` so an empty or singleton array yields NaN (``/n`` and
+    ``/(n - 1)``), matching ``numpy.var``, instead of raising ``ZeroDivisionError``
+    as numba's default ``"python"`` model does on a scalar ``0.0 / 0``."""
     n = a.size
     mean = numpy_sum(a, chunk) / n
     sq = np.empty(n)

@@ -8,11 +8,15 @@ import scipy.ndimage
 import skimage.morphology as M
 
 from cp_measure.core.numba._granularity import (
+    _ball_halfwidths,
+    _ball_reduce,
+    _cross_min_3d,
     _disk_halfwidths,
-    ball_dilation_3d,
-    ball_erosion_3d,
+    _disk_reduce,
+    _pad_edge,
+    _pad_edge_3d,
+    _plus_reduce,
     bilinear_resample_2d,
-    erosion_6conn_3d,
     granularity_spectrum_2d,
     granularity_spectrum_3d,
     reconstruction_by_dilation_3d,
@@ -20,16 +24,74 @@ from cp_measure.core.numba._granularity import (
     subtract_background_3d,
     trilinear_resample_3d,
     upsample_label_sums_3d,
-    disk_dilation_2d,
-    disk_erosion_2d,
-    dilation_4conn_2d,
-    erosion_4conn_2d,
     label_sums,
     readback_sums,
     readback_tables,
     reconstruction_by_dilation_2d,
     spectrum_sums_2d,
 )
+
+
+# Morphology helpers for the tests: they call the exact reduce kernels and edge-pad
+# (_pad_edge / _pad_edge_3d) that the backend's openings use, so the tests exercise
+# the real production path. They are not production code (nothing in src calls them).
+def disk_erosion_2d(img, radius):
+    a = numpy.ascontiguousarray(img, dtype=numpy.float64)
+    if radius <= 0:
+        return a.copy()
+    return _disk_reduce(
+        _pad_edge(a, radius),
+        radius,
+        _disk_halfwidths(radius),
+        a.shape[0],
+        a.shape[1],
+        False,
+    )
+
+
+def disk_dilation_2d(img, radius):
+    a = numpy.ascontiguousarray(img, dtype=numpy.float64)
+    if radius <= 0:
+        return a.copy()
+    return _disk_reduce(
+        _pad_edge(a, radius),
+        radius,
+        _disk_halfwidths(radius),
+        a.shape[0],
+        a.shape[1],
+        True,
+    )
+
+
+def erosion_4conn_2d(img):
+    a = numpy.ascontiguousarray(img, dtype=numpy.float64)
+    return _plus_reduce(_pad_edge(a, 1), a.shape[0], a.shape[1], False)
+
+
+def dilation_4conn_2d(img):
+    a = numpy.ascontiguousarray(img, dtype=numpy.float64)
+    return _plus_reduce(_pad_edge(a, 1), a.shape[0], a.shape[1], True)
+
+
+def ball_erosion_3d(img, radius):
+    a = numpy.ascontiguousarray(img, dtype=numpy.float64)
+    if radius <= 0:
+        return a.copy()
+    return _ball_reduce(
+        _pad_edge_3d(a, radius), radius, _ball_halfwidths(radius), False
+    )
+
+
+def ball_dilation_3d(img, radius):
+    a = numpy.ascontiguousarray(img, dtype=numpy.float64)
+    if radius <= 0:
+        return a.copy()
+    return _ball_reduce(_pad_edge_3d(a, radius), radius, _ball_halfwidths(radius), True)
+
+
+def erosion_6conn_3d(img):
+    a = numpy.ascontiguousarray(img, dtype=numpy.float64)
+    return _cross_min_3d(_pad_edge_3d(a, 1))
 
 
 def _assert_same_bits(got, expected):

@@ -233,6 +233,15 @@ def test_all_empty_raises_without_warning(mask_2d, image_2d_2ch):
         featurize(image_2d_2ch[None], empty[None], CONFIG_2CH)
 
 
+def test_zero_length_batch_raises_empty_error():
+    with pytest.raises(ValueError, match="no images had labelled objects"):
+        featurize(
+            np.empty((0, 2, 4, 4)),
+            np.empty((0, 1, 4, 4), dtype=np.int32),
+            CONFIG_2CH,
+        )
+
+
 def test_negative_labels_raise_not_skipped(image_2d_2ch, mask_2d):
     """An all-negative mask stack is surfaced (contract), not silently skipped as empty."""
     neg = np.where(mask_2d > 0, -mask_2d, 0)

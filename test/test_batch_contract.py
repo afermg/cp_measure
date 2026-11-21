@@ -25,6 +25,7 @@ CORE = [
     "radial_distribution",
     "radial_zernikes",
     "zernike",
+    "sizeshape",
     "feret",
     "texture",
     "granularity",
@@ -184,6 +185,15 @@ def test_batch_matches_independent_items(
     for group, before in zip(inputs, originals):
         for a, b in zip(group, before):
             np.testing.assert_array_equal(a, b)
+
+
+@pytest.mark.parametrize("depth", [0, 3], ids=["2d", "3d"])
+def test_non_native_byte_order_matches_native(measurement, depth):
+    """Big-endian labels and pixels (FITS, N5, some zarr) give the native result."""
+    _, call, _ = measurement
+    masks, first, second = (group[0] for group in scenes(depth))
+    swapped = (a.astype(a.dtype.newbyteorder(">")) for a in (masks, first, second))
+    assert_same(call(*swapped), call(masks, first, second))
 
 
 @pytest.mark.parametrize("case", ["count", "mixed", "ragged"])
