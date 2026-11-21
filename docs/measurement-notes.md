@@ -2,6 +2,40 @@
 
 For essential input and performance guidance, see the [README](../README.md#important-notes). For dimensions, label requirements, empty masks, and Feret batch shapes, see the [measurement support table](measurement-support.md).
 
+## Matching CellProfiler
+
+Some cp_measure defaults intentionally differ from CellProfiler 4.2.8. Each difference has an option that restores CellProfiler's behavior. The featurizer's top-level `legacy=True` covers **only** the intensity percentiles; set the others yourself.
+
+Inputs must be float images scaled to `[0, 1]` (e.g. uint16 ÷ 65535), as in CellProfiler. Beyond that:
+
+| Measurement                                                 | cp_measure default                                                                | To match CellProfiler                                               | Why the default differs                                                                                                                                               |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Intensity percentiles](#legacy-percentile-convention)      | `legacy=False`: standard linear quantiles, `(n - 1) * q`                          | `legacy=True`: CellProfiler's `n * q`                               | Standard quantiles match NumPy. CellProfiler's 3D MAD also has a bug: it uses the ⅓ quantile instead of the median. `legacy=True` reproduces that bug.                |
+| [Granularity](#granularity-of-objects-without-signal)       | `zero_signal_policy="nan"`: NaN for objects without signal                        | `zero_signal_policy="epsilon_floor"`                                | CellProfiler floors the object's mean at machine epsilon, giving 0, or values around 1e15 when a bright neighbor's signal leaks in. NaN marks the value as undefined. |
+| [Costes](#explicit-cellprofiler-costes-compatibility)       | `scope="object"`, `precision="float64"`: thresholds fitted per object, in float64 | `scope="image"`, `precision="input"`, `scale_max` matching the data | With per-object thresholds, an object's values stay the same when other objects are added. float64 reduces rounding.                                                  |
+| [RWC](#rwc-ranking-scope)                                   | `rank_scope="object"`: each object ranked on its own                              | `rank_scope="object_set"`: ranks shared across all objects          | An object's coefficient stays the same when other objects are added.                                                                                                  |
+| [Zernike, radial Zernikes](#zernike-boundary-compatibility) | `legacy_boundary=False`: includes pixels on the enclosing circle                  | `legacy_boundary=True`: strict `r² > 1` cutoff                      | The strict cutoff drops boundary pixels depending on float rounding, so values change when an unchanged object moves in the image.                                    |
+
+Also use your pipeline's own module settings, e.g. texture `scale`. Through the featurizer:
+
+```python
+from cp_measure.featurizer import make_featurizer_config
+
+channels = ["DNA", "ER"]  # your channel names
+config = make_featurizer_config(
+    channels,
+    legacy=True,  # intensity percentiles only
+    granularity_params={"zero_signal_policy": "epsilon_floor"},
+    correlation_costes_params={"scope": "image", "precision": "input", "scale_max": 65535},
+    correlation_rwc_params={"rank_scope": "object_set"},
+    zernike_params={"legacy_boundary": True},
+    radial_zernikes_params={"legacy_boundary": True},
+    texture_params={"scale": 15},  # your pipeline's setting
+)
+```
+
+Granularity and Costes have been compared directly with CellProfiler 4.2.8 on real images (in [cpm_benchmark](https://github.com/afermg/cpm_benchmark)) and agree within numerical tolerance, not bit for bit.
+
 ## Feature coverage policy
 
 Maximize valid feature coverage: prefer 3D measurements; where unavailable for singleton 3D inputs, generate supported 2D features. Apply fallback per measurement family, retain 2D feature names and meanings, and keep schemas consistent across backends and empty/nonempty inputs.
@@ -86,6 +120,10 @@ Pass `legacy_boundary=True` to either function to restore the previous strict `r
 
 For the featurizer, use `zernike_params={"legacy_boundary": True}` and/or `radial_zernikes_params={"legacy_boundary": True}`. Omitting the flag, or setting it to `False`, keeps the boundary-rounding fix. Legacy compatibility is to the previous numerical convention, not a promise of bit-identical floating-point results across backends, library versions, or ill-defined near-zero Zernike phases.
 
+## Costes scale
+
+**Breaking correction.** Float inputs to `get_correlation_costes` and `get_correlation_costes_ind` must be normalized to `[0, 1]` **and** specify `scale_max` (e.g. `65535` for normalized 16-bit data). It controls the threshold grid; it is not the observed image maximum. Both matching unsigned-integer dtypes infer their storage maximum and are normalized internally. For 12-bit data stored in `uint16`, pass `scale_max=4095` explicitly; signed or mixed-dtype arrays also require a scale. Through the featurizer, use `correlation_costes_params={"scale_max": 65535}` or disable Costes.
+
 ## Costes integer-to-float normalization
 
 For integer images, Costes divides by `scale_max`; normalized floats require the same scale explicitly. Equivalent floating-point expressions such as `level / scale_max` and `level * (1 / scale_max)` can differ at round-off, which can otherwise change threshold decisions substantially (see [#117](https://github.com/afermg/cp_measure/issues/117)).
@@ -155,6 +193,15 @@ To reproduce the tested **CellProfiler 4.2.8 normalized-float32 workflow**, use
 image scope, float32 input images and the compatibility arithmetic together:
 
 ```python
+import numpy
+
+from cp_measure.core.measurecolocalization import get_correlation_costes
+
+rng = numpy.random.default_rng(0)
+first, second = rng.random((2, 32, 32))  # normalized to [0, 1]
+labels = numpy.zeros((32, 32), dtype=numpy.int32)
+labels[4:28, 4:28] = 1
+
 get_correlation_costes(
     first.astype(numpy.float32),
     second.astype(numpy.float32),
@@ -264,6 +311,8 @@ Higher precision does not recover acquisition information or establish biologica
 Direct and bulk calls accept the option, for example `get_granularity(mask, pixels, precision="float64")`. Through the featurizer, use the existing per-feature parameter dictionaries:
 
 ```python
+from cp_measure.featurizer import make_featurizer_config
+
 config = make_featurizer_config(
     channels=["DNA", "AGP"],
     granularity_params={"precision": "float64"},
