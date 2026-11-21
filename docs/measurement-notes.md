@@ -34,7 +34,7 @@ config = make_featurizer_config(
 )
 ```
 
-Granularity and Costes have been compared directly with CellProfiler 4.2.8 on real images (in [cpm_benchmark](https://github.com/afermg/cpm_benchmark)) and agree within numerical tolerance, not bit for bit. `legacy_boundary=True` restores cp_measure's earlier Zernike convention rather than being checked against CellProfiler directly.
+Granularity and Costes have been compared directly with CellProfiler 4.2.8 on real images (in [cpm_benchmark](https://github.com/afermg/cpm_benchmark)) and agree within numerical tolerance, not bit for bit.
 
 ## Feature coverage policy
 
