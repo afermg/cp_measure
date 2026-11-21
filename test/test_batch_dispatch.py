@@ -5,12 +5,31 @@ from inspect import signature, unwrap
 import numpy as np
 import pytest
 
+from cp_measure._sanitize import sanitize
+from cp_measure.core.measuregranularity import get_granularity
 from cp_measure.core.measureobjectintensity import get_intensity
+from cp_measure.core.measureobjectintensitydistribution import (
+    get_radial_distribution,
+    get_radial_zernikes,
+)
+from cp_measure.core.measureobjectsizeshape import get_feret, get_sizeshape, get_zernike
 from cp_measure.core.measuretexture import get_texture
 from cp_measure.primitives.shapes import batch_dispatch
 
 
-@pytest.mark.parametrize("measurement", [get_intensity, get_texture])
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        get_intensity,
+        get_texture,
+        get_granularity,
+        get_sizeshape,
+        get_feret,
+        get_zernike,
+        get_radial_distribution,
+        get_radial_zernikes,
+    ],
+)
 def test_metadata_and_signature(measurement):
     original = unwrap(measurement)
     assert original is measurement.__wrapped__
@@ -37,6 +56,52 @@ def test_arguments_and_shape_only_inputs():
     assert measure(masks=[masks], pixels=None, required="value") == [
         (2, None, 3, (), "value", {})
     ]
+
+
+def test_optional_pixels_and_named_mask():
+    @batch_dispatch
+    def measure(mask, pixels=None, scale=3):
+        return mask.shape, pixels, scale
+
+    mask = np.ones((4, 5), np.int32)
+    assert measure(mask=mask, scale=7) == ((4, 5), None, 7)
+    assert measure(mask=[mask], scale=7) == [((4, 5), None, 7)]
+
+
+@pytest.mark.parametrize(
+    "measurement, options",
+    [
+        (get_sizeshape, {"calculate_advanced": False}),
+        (get_feret, {}),
+        (get_zernike, {"zernike_numbers": 2}),
+        (get_radial_distribution, {"bin_count": 3}),
+        (get_radial_zernikes, {"zernike_degree": 2}),
+        (
+            get_granularity,
+            {
+                "subsample_size": 1,
+                "image_sample_size": 1,
+                "element_size": 1,
+                "granular_spectrum_length": 2,
+            },
+        ),
+    ],
+)
+def test_additional_entry_points_keep_keyword_and_sanitize_contracts(
+    measurement, options
+):
+    mask = np.zeros((8, 9), np.int32)
+    mask[1:7, 1:8] = 7
+    pixels = np.random.default_rng(42).random(mask.shape)
+    mask_name, pixel_name = list(signature(measurement).parameters)[:2]
+    call = sanitize(measurement)
+    actual = call(**{mask_name: [mask, mask], pixel_name: [pixels, pixels]}, **options)
+    expected = call(**{mask_name: mask, pixel_name: pixels}, **options)
+    assert len(actual) == 2
+    for result in actual:
+        assert result.keys() == expected.keys()
+        for key in expected:
+            np.testing.assert_array_equal(result[key], expected[key], err_msg=key)
 
 
 @pytest.mark.parametrize(

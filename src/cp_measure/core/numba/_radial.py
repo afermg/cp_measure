@@ -159,7 +159,8 @@ def radial_object(m, pix, d_to_edge, scaled, bin_count, maximum_radius):
 @njit(cache=True, nogil=True, error_model="numpy")
 def radial_all(labels, pixels, n, scaled, bin_count, maximum_radius):
     """:func:`radial_object` for every label ``1..n`` of a 2D image in one call, for
-    each channel of ``pixels`` ``(C, H, W)`` measured with these labels.
+    each channel of ``pixels`` (a tuple of ``(H, W)`` images) measured with these
+    labels.
 
     Each object is cropped to its bounding box grown by 1 pixel and clipped to the
     image, as the host loop did (the margin gives the distance transform its
@@ -185,7 +186,7 @@ def radial_all(labels, pixels, n, scaled, bin_count, maximum_radius):
                 c0[k] = min(c0[k], c)
                 c1[k] = max(c1[k], c)
     nb = bin_count + 1
-    C = pixels.shape[0]
+    C = len(pixels)
     frac_at_d = np.zeros((C, n, nb))
     mean_frac = np.zeros((C, n, nb))
     wedge_sums = np.zeros((C, n, nb, 8))
@@ -209,9 +210,10 @@ def radial_all(labels, pixels, n, scaled, bin_count, maximum_radius):
         d_to_edge = np.sqrt(squared_edt_2d(m).astype(np.float64))
         pix = np.empty((b - a, d - c))
         for ch in range(C):
+            chan = pixels[ch]
             for r in range(a, b):
                 for q in range(c, d):
-                    pix[r - a, q - c] = pixels[ch, r, q]
+                    pix[r - a, q - c] = chan[r, q]
             (
                 frac_at_d[ch, k],
                 mean_frac[ch, k],

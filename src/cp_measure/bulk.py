@@ -43,8 +43,12 @@ _REGISTRIES: dict[str, dict[str, Callable]] = {
     "correlation": _CORRELATION,
 }
 
-# 3D-capable subset of the core registry, by feature name.
+# 3D-capable subset of the core registry, by feature name. The 2D-only families are
+# the rest of the core registry, derived here so the two lists cannot drift apart
+# (the featurizer imports _2D_ONLY from this module).
 _3D_FEATURES = ("intensity", "sizeshape", "texture", "granularity")
+assert set(_3D_FEATURES) <= set(_CORE), "unknown feature in _3D_FEATURES"
+_2D_ONLY = tuple(name for name in _CORE if name not in _3D_FEATURES)
 
 
 def _numba_registries() -> dict[str, dict[str, Callable]]:

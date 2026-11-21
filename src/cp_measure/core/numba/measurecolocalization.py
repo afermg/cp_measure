@@ -15,6 +15,8 @@ NumPy's scale preparation and measures all objects in one compiled pass whose
 sums reproduce NumPy's; no combined featurizer dispatch is introduced here.
 """
 
+import inspect
+
 import numpy
 from numpy.typing import NDArray
 
@@ -148,6 +150,7 @@ def _featurize(
     compute_rwc,
     build,
     ref,
+    ref_ind=None,
     *,
     force_reference=False,
     **kwargs,
@@ -190,9 +193,14 @@ def _featurize(
         res = _run(m, p1, p2, frac, compute_rwc, compute_pearson, frac32, ranks, chunk)
         return m, p1, p2, res
 
+    # Kwargs the single-object reference accepts (e.g. thr/precision); only used by
+    # the per-object fallback, which only overlap needs (see finish).
+    ind_params = set(inspect.signature(ref_ind).parameters) if ref_ind else set()
+
     def finish(staged):
-        # Reference fallbacks (and their warnings) on the calling thread, in order.
         m, p1, p2, res = staged
+        # Dtypes the kernel cannot handle (and the object-set RWC scope) go to the
+        # whole-image reference.
         if (
             force_reference
             or p1.dtype not in _KERNEL_DTYPES
@@ -200,8 +208,27 @@ def _featurize(
         ):
             return ref(p1, p2, m, **kwargs)
         arrays = build(res)
-        if not all(numpy.isfinite(values).all() for values in arrays.values()):
-            return ref(p1, p2, m, **kwargs)
+        # The kernel's centred second moments reproduce the reference's for every
+        # object, including the NaN of a degenerate object (zero variance / zero
+        # signal is 0/0, as in numpy.cov and the Manders denominators), so Pearson,
+        # Manders and RWC use the kernel result directly (ref_ind is None). An
+        # earlier guard re-ran the reference whenever ANY object was non-finite,
+        # which on real FOVs full of signal-less objects discarded the kernel work
+        # for nearly every pair and made the batch serial. Only overlap passes a
+        # ref_ind: its reference divides by a Python float, raising ZeroDivisionError
+        # on a zero channel, which the njit kernel cannot reproduce, so each
+        # non-finite overlap object is replayed through the single-object reference.
+        if ref_ind is not None:
+            bad = numpy.zeros(next(iter(arrays.values())).shape[0], dtype=bool)
+            for values in arrays.values():
+                bad |= ~numpy.isfinite(values)
+            if bad.any():
+                ind_kwargs = {k: v for k, v in kwargs.items() if k in ind_params}
+                arrays = {key: numpy.array(values) for key, values in arrays.items()}
+                for k in numpy.nonzero(bad)[0]:
+                    obj = ref_ind(p1, p2, m == (k + 1), **ind_kwargs)
+                    for key in arrays:
+                        arrays[key][k] = obj[key]
         return arrays
 
     items = [(m, p1, p2) for (m, p1, _), (_, p2, _) in zip(first, second)]
@@ -248,7 +275,13 @@ def get_correlation_pearson(
         return {F_CORRELATION_FORMAT: res[0], F_SLOPE_FORMAT: res[1]}
 
     return _featurize(
-        pixels_1, pixels_2, masks, 15, False, build, reference.get_correlation_pearson
+        pixels_1,
+        pixels_2,
+        masks,
+        15,
+        False,
+        build,
+        reference.get_correlation_pearson,
     )
 
 
@@ -330,6 +363,7 @@ def get_correlation_overlap(
         False,
         build,
         reference.get_correlation_overlap,
+        reference.get_correlation_overlap_ind,
         thr=thr,
         precision=precision,
     )
@@ -522,5 +556,7 @@ def get_correlation_costes(
         )
         for (m, p1, ndim), (_, p2, _) in zip(first, second)
     ]
+    if scale_max is None:
+        reference._costes_scale(items[0][0], items[0][1], scale_max)
     staged = map_images(compute, items, pixels=sum(m.size for _, _, m in items))
     return [finish(s) for s in staged]
