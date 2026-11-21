@@ -10,7 +10,7 @@ Inputs must be float images scaled to `[0, 1]` (e.g. uint16 ÷ 65535), as in Cel
 
 | Measurement | cp_measure default | To match CellProfiler | Why the default differs |
 |---|---|---|---|
-| [Intensity percentiles](#legacy-percentile-convention) | `legacy=False`: standard linear quantiles, `(n - 1) * q` | `legacy=True`: CellProfiler's `n * q` | Standard quantiles match NumPy. CellProfiler's rule also makes its 3D MAD use the ⅓ quantile instead of the median. |
+| [Intensity percentiles](#legacy-percentile-convention) | `legacy=False`: standard linear quantiles, `(n - 1) * q` | `legacy=True`: CellProfiler's `n * q` | Standard quantiles match NumPy. CellProfiler's 3D MAD also has a bug: it uses the ⅓ quantile instead of the median. `legacy=True` reproduces that bug. |
 | [Granularity](#granularity-of-objects-without-signal) | `zero_signal_policy="nan"`: NaN for objects without signal | `zero_signal_policy="epsilon_floor"` | CellProfiler floors the object's mean at machine epsilon, giving 0, or values around 1e15 when a bright neighbor's signal leaks in. NaN marks the value as undefined. |
 | [Costes](#explicit-cellprofiler-costes-compatibility) | `scope="object"`, `precision="float64"`: thresholds fitted per object, in float64 | `scope="image"`, `precision="input"`, `scale_max` matching the data | Per-object thresholds keep an object's values independent of the rest of the image. float64 reduces rounding. |
 | [RWC](#rwc-ranking-scope) | `rank_scope="object"`: each object ranked on its own | `rank_scope="object_set"`: ranks shared across all objects | An object's coefficient does not change when other objects change. |
