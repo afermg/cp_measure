@@ -2,6 +2,37 @@
 
 For essential input and performance guidance, see the [README](../README.md#important-notes). For dimensions, label requirements, empty masks, and Feret batch shapes, see the [measurement support table](measurement-support.md).
 
+## Matching CellProfiler
+
+Some cp_measure defaults intentionally differ from CellProfiler 4.2.8. Each difference has an option that restores CellProfiler's behavior. The featurizer's top-level `legacy=True` covers **only** the intensity percentiles; set the others yourself.
+
+Inputs must be float images scaled to `[0, 1]` (e.g. uint16 ÷ 65535), as in CellProfiler. Beyond that:
+
+| Measurement | cp_measure default | To match CellProfiler | Why the default differs |
+|---|---|---|---|
+| [Intensity percentiles](#legacy-percentile-convention) | `legacy=False`: standard linear quantiles, `(n - 1) * q` | `legacy=True`: CellProfiler's `n * q` | Standard quantiles match NumPy. CellProfiler's rule also makes its 3D MAD use the ⅓ quantile instead of the median. |
+| [Granularity](#granularity-of-objects-without-signal) | `zero_signal_policy="nan"`: NaN for objects without signal | `zero_signal_policy="epsilon_floor"` | CellProfiler floors the object's mean at machine epsilon, giving 0, or values around 1e15 when a bright neighbor's signal leaks in. NaN marks the value as undefined. |
+| [Costes](#explicit-cellprofiler-costes-compatibility) | `scope="object"`, `precision="float64"`: thresholds fitted per object, in float64 | `scope="image"`, `precision="input"`, `scale_max` matching the data | Per-object thresholds keep an object's values independent of the rest of the image. float64 reduces rounding. |
+| [RWC](#rwc-ranking-scope) | `rank_scope="object"`: each object ranked on its own | `rank_scope="object_set"`: ranks shared across all objects | An object's coefficient does not change when other objects change. |
+| [Zernike, radial Zernikes](#zernike-boundary-compatibility) | `legacy_boundary=False`: includes pixels on the enclosing circle | `legacy_boundary=True`: strict `r² > 1` cutoff | The strict cutoff drops boundary pixels depending on float rounding, so values change when an unchanged object moves in the image. |
+
+Also use your pipeline's own module settings, e.g. texture `scale`. Through the featurizer:
+
+```python
+config = make_featurizer_config(
+    channels,
+    legacy=True,  # intensity percentiles only
+    granularity_params={"zero_signal_policy": "epsilon_floor"},
+    correlation_costes_params={"scope": "image", "precision": "input", "scale_max": 65535},
+    correlation_rwc_params={"rank_scope": "object_set"},
+    zernike_params={"legacy_boundary": True},
+    radial_zernikes_params={"legacy_boundary": True},
+    texture_params={"scale": 15},  # your pipeline's setting
+)
+```
+
+Granularity and Costes have been compared directly with CellProfiler 4.2.8 on real images (in [cpm_benchmark](https://github.com/afermg/cpm_benchmark)) and agree within numerical tolerance, not bit for bit. `legacy_boundary=True` restores cp_measure's earlier Zernike convention rather than being checked against CellProfiler directly.
+
 ## Feature coverage policy
 
 Maximize valid feature coverage: prefer 3D measurements; where unavailable for singleton 3D inputs, generate supported 2D features. Apply fallback per measurement family, retain 2D feature names and meanings, and keep schemas consistent across backends and empty/nonempty inputs.
