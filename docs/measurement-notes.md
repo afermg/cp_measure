@@ -8,17 +8,20 @@ Some cp_measure defaults intentionally differ from CellProfiler 4.2.8. Each diff
 
 Inputs must be float images scaled to `[0, 1]` (e.g. uint16 ÷ 65535), as in CellProfiler. Beyond that:
 
-| Measurement | cp_measure default | To match CellProfiler | Why the default differs |
-|---|---|---|---|
-| [Intensity percentiles](#legacy-percentile-convention) | `legacy=False`: standard linear quantiles, `(n - 1) * q` | `legacy=True`: CellProfiler's `n * q` | Standard quantiles match NumPy. CellProfiler's 3D MAD also has a bug: it uses the ⅓ quantile instead of the median. `legacy=True` reproduces that bug. |
-| [Granularity](#granularity-of-objects-without-signal) | `zero_signal_policy="nan"`: NaN for objects without signal | `zero_signal_policy="epsilon_floor"` | CellProfiler floors the object's mean at machine epsilon, giving 0, or values around 1e15 when a bright neighbor's signal leaks in. NaN marks the value as undefined. |
-| [Costes](#explicit-cellprofiler-costes-compatibility) | `scope="object"`, `precision="float64"`: thresholds fitted per object, in float64 | `scope="image"`, `precision="input"`, `scale_max` matching the data | With per-object thresholds, an object's values stay the same when other objects are added. float64 reduces rounding. |
-| [RWC](#rwc-ranking-scope) | `rank_scope="object"`: each object ranked on its own | `rank_scope="object_set"`: ranks shared across all objects | An object's coefficient stays the same when other objects are added. |
-| [Zernike, radial Zernikes](#zernike-boundary-compatibility) | `legacy_boundary=False`: includes pixels on the enclosing circle | `legacy_boundary=True`: strict `r² > 1` cutoff | The strict cutoff drops boundary pixels depending on float rounding, so values change when an unchanged object moves in the image. |
+| Measurement                                                 | cp_measure default                                                                | To match CellProfiler                                               | Why the default differs                                                                                                                                               |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Intensity percentiles](#legacy-percentile-convention)      | `legacy=False`: standard linear quantiles, `(n - 1) * q`                          | `legacy=True`: CellProfiler's `n * q`                               | Standard quantiles match NumPy. CellProfiler's 3D MAD also has a bug: it uses the ⅓ quantile instead of the median. `legacy=True` reproduces that bug.                |
+| [Granularity](#granularity-of-objects-without-signal)       | `zero_signal_policy="nan"`: NaN for objects without signal                        | `zero_signal_policy="epsilon_floor"`                                | CellProfiler floors the object's mean at machine epsilon, giving 0, or values around 1e15 when a bright neighbor's signal leaks in. NaN marks the value as undefined. |
+| [Costes](#explicit-cellprofiler-costes-compatibility)       | `scope="object"`, `precision="float64"`: thresholds fitted per object, in float64 | `scope="image"`, `precision="input"`, `scale_max` matching the data | With per-object thresholds, an object's values stay the same when other objects are added. float64 reduces rounding.                                                  |
+| [RWC](#rwc-ranking-scope)                                   | `rank_scope="object"`: each object ranked on its own                              | `rank_scope="object_set"`: ranks shared across all objects          | An object's coefficient stays the same when other objects are added.                                                                                                  |
+| [Zernike, radial Zernikes](#zernike-boundary-compatibility) | `legacy_boundary=False`: includes pixels on the enclosing circle                  | `legacy_boundary=True`: strict `r² > 1` cutoff                      | The strict cutoff drops boundary pixels depending on float rounding, so values change when an unchanged object moves in the image.                                    |
 
 Also use your pipeline's own module settings, e.g. texture `scale`. Through the featurizer:
 
 ```python
+from cp_measure.featurizer import make_featurizer_config
+
+channels = ["DNA", "ER"]  # your channel names
 config = make_featurizer_config(
     channels,
     legacy=True,  # intensity percentiles only
@@ -186,6 +189,15 @@ To reproduce the tested **CellProfiler 4.2.8 normalized-float32 workflow**, use
 image scope, float32 input images and the compatibility arithmetic together:
 
 ```python
+import numpy
+
+from cp_measure.core.measurecolocalization import get_correlation_costes
+
+rng = numpy.random.default_rng(0)
+first, second = rng.random((2, 32, 32))  # normalized to [0, 1]
+labels = numpy.zeros((32, 32), dtype=numpy.int32)
+labels[4:28, 4:28] = 1
+
 get_correlation_costes(
     first.astype(numpy.float32),
     second.astype(numpy.float32),
@@ -295,6 +307,8 @@ Higher precision does not recover acquisition information or establish biologica
 Direct and bulk calls accept the option, for example `get_granularity(mask, pixels, precision="float64")`. Through the featurizer, use the existing per-feature parameter dictionaries:
 
 ```python
+from cp_measure.featurizer import make_featurizer_config
+
 config = make_featurizer_config(
     channels=["DNA", "AGP"],
     granularity_params={"precision": "float64"},
