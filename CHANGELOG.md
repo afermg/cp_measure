@@ -17,8 +17,10 @@ changes; review the migration notes below before upgrading.
   (1.83× faster than CellProfiler 4.2.8). With current CPM default measurement
   semantics, Numba was 20.14× faster than same-policy NumPy. These are warmed,
   workload-specific backend comparisons, not a release-to-release speedup or a
-  numerical-equivalence guarantee. Matched colocalization alone was slower than
-  CellProfiler. See the [full report and limitations](docs/releases/0.4.1.md#benchmark-report).
+  numerical-equivalence guarantee. CP-matched parameters still leave extra CPM
+  computations and exports, so CP ratios compare configured workflows, not
+  identical workloads. Matched colocalization alone was slower than CellProfiler.
+  See the [full report and limitations](docs/releases/0.4.1.md#benchmark-report).
 
 ### Added
 
