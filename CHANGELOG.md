@@ -10,6 +10,16 @@ This release accelerates batched profile generation and adds measurement
 compatibility controls. Despite the patch version, it includes API and numerical
 changes; review the migration notes below before upgrading.
 
+### Performance
+
+- In the 300-field, eight-core full-profile benchmark including Costes, Numba
+  was 1.76× faster than this candidate's NumPy backend with CP-matched parameters
+  (1.83× faster than CellProfiler 4.2.8). With current CPM default measurement
+  semantics, Numba was 20.14× faster than same-policy NumPy. These are warmed,
+  workload-specific backend comparisons, not a release-to-release speedup or a
+  numerical-equivalence guarantee. Matched colocalization alone was slower than
+  CellProfiler. See the [full report and limitations](docs/releases/0.4.1.md#benchmark-report).
+
 ### Added
 
 - Costes accepts independent `scope="image"` and `precision="input"` options.
