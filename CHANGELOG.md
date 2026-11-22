@@ -63,6 +63,9 @@ Notable user-facing changes are documented here.
 - NumPy colocalization functions accept a batch and return one result per
   image; the numba backend measures batches on threads, with Costes in one
   compiled pass per image.
+- Fused Numba Costes reuses exact positive-slope entry thresholds and bounded
+  grid buckets from #167, while retaining mode-specific tie handling, SciPy
+  replay and the delayed negative-slope linear sweep.
 - The numba backend's Costes decides every threshold-search step itself. When a
   step's background correlation is within rounding of a decision point (often
   exactly 0 on small integer-grid objects) or the subset is nearly constant, the

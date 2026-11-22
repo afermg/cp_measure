@@ -423,6 +423,21 @@ further workloads show large numerical discrepancies, a speed penalty, or no
 useful speedup from keeping these steps in Numba. This setting neither removes
 SciPy as a dependency nor disables unrelated exceptional-case reference fallbacks.
 
+The fused searches share #167's exact positive-slope entry calculation: a
+pixel joins the sorted background at the first representable threshold that
+satisfies the original strict comparisons. Bisection uses bounded grid buckets
+for objects with at least 32768 pixels when the acquisition scale is small
+enough relative to the object's size, otherwise its one-pass moment scan.
+Sorting ordinary objects slowed Faster mode relative to the fused scan in
+matched tests, so that #167 dispatch is deliberately not carried over.
+Long linear searches retain
+their delayed sort and guarded negative-slope sweep. All paths use the same
+rounding guard, mode-specific cutoffs and `scipy_ties` replay policy; acceleration
+does not change the policy or introduce image-wide thresholds. Sorted scratch
+is capped at 2^22 pixels and grid scratch at scale 2^20; larger inputs scan when
+neither bounded path is eligible. Dispatch constants are frozen in Numba's
+compiled kernels, not runtime tuning parameters.
+
 Both backends apply the same per-object normalization canonicalization before
 validation, regression and threshold search. Exact reciprocal-multiply
 acquisition-grid encodings therefore follow the same division encoding in the
