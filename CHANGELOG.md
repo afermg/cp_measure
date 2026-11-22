@@ -4,6 +4,24 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-22
+
+This release accelerates batched profile generation and adds measurement
+compatibility controls. Despite the patch version, it includes API and numerical
+changes; review the migration notes below before upgrading.
+
+### Performance
+
+- In the 300-field, eight-core full-profile benchmark including Costes, Numba
+  was 1.76× faster than this candidate's NumPy backend with CP-matched parameters
+  (1.83× faster than CellProfiler 4.2.8). With current CPM default measurement
+  semantics, Numba was 20.14× faster than same-policy NumPy. These are warmed,
+  workload-specific backend comparisons, not a release-to-release speedup or a
+  numerical-equivalence guarantee. CP-matched parameters still leave extra CPM
+  computations and exports, so CP ratios compare configured workflows, not
+  identical workloads. Matched colocalization alone was slower than CellProfiler.
+  See the [full report and limitations](docs/releases/0.4.1.md#benchmark-report).
+
 ### Added
 
 - Costes accepts independent `scope="image"` and `precision="input"` options.
@@ -22,9 +40,6 @@ Notable user-facing changes are documented here.
   and differ from CellProfiler only in those pixels. Pass `legacy_boundary=True`
   to shape or radial Zernike measurements to restore the historical strict cutoff
   and centrosome coordinate calculation; the rounding fix remains the default.
-- `radial_distribution` sums intensities in float64. Integer images no longer
-  wrap around (uint8/uint16 results were wrong), and float32 results gain
-  precision (relative changes up to ~2e-4).
 
 ### Changed
 
@@ -42,6 +57,10 @@ Notable user-facing changes are documented here.
   between images that use the same mask.
 - Numba Feret computes the convex hull and diameters in Numba instead of
   centrosome, so batch images run fully in parallel. Results are bit-identical.
+- Numba size/shape computes the 2D spatial moments in one GIL-free kernel, so
+  batch images scale across threads. Raw moments are unchanged; the
+  inertia-derived features (inertia tensor, eigenvalues, axis lengths,
+  eccentricity) match NumPy within 1e-12.
 - **Return type change:** the colocalization label APIs (`get_correlation_pearson`,
   `get_correlation_manders_fold`, `get_correlation_rwc`, `get_correlation_costes`
   and `get_correlation_overlap`, NumPy and Numba, single image and batch) return
@@ -81,13 +100,6 @@ Notable user-facing changes are documented here.
   category and the `Undefined Costes result` prefix are unchanged, so existing
   warning filters still match. See the
   [measurement notes](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
-- Costes (NumPy and Numba) restores permissive CellProfiler-style threshold
-  boundaries: remove the final-background validity veto and the no-candidate
-  bisection rejection; restore linear handling of tiny/constant backgrounds.
-  This selectively reverses #110's background-search policy, not its scale fix.
-  Previously rejected searches may now yield finite coefficients (including 0/1),
-  leaving quality filtering downstream. Invalid input/regression and zero
-  denominator checks remain. See [boundary policy](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
 - NumPy `intensity` accepts a batch (a list/tuple of images or a 4D
   `(B, Z, Y, X)` array) and returns one result per image.
 - Numba `granularity` measures 3D volumes with numba kernels, bit-identical to
@@ -137,6 +149,27 @@ Notable user-facing changes are documented here.
   grows from 212 to 224 features. Existing columns keep their names and values;
   the new columns appear in index order after the `0_2_3` moments.
 
+### Migration
+
+- Colocalization label APIs now return NumPy arrays, not lists. Use
+  `numpy.array_equal(..., equal_nan=True)` for equality or `.tolist()` when a
+  downstream consumer requires lists.
+- NumPy intensity rejects mismatched image/mask shapes. Broadcast an intentionally
+  shared 2D mask explicitly before measuring a 3D image.
+- Zero-signal granularity now returns NaN; choose
+  `zero_signal_policy="epsilon_floor"` to retain the old denominator floor.
+- Zernike boundary handling is translation-stable by default; choose
+  `legacy_boundary=True` when historical boundary behavior is required.
+- Choose `scipy_ties=True` for Costes when SciPy's near-boundary decisions must
+  be reproduced. For the tested CellProfiler image-scope workflow, also use
+  `scope="image"`, `precision="input"`, and the acquisition scale. These opt-in
+  compatibility paths do not promise the default Numba speedup.
+- Advanced 3D size/shape adds 12 columns. Match features by name rather than
+  assuming the previous 212-column schema.
+- See [measurement notes](docs/measurement-notes.md) for numerical differences
+  and the [release preparation notes](docs/releases/0.4.1.md) for benchmark scope
+  and publishing requirements.
+
 ## [0.4.0] - 2026-11-19
 
 ### Performance
@@ -159,11 +192,7 @@ Notable user-facing changes are documented here.
 - Size/shape measures singleton-Z volumes as 2D in both backends, returning
   the 2D schema for empty and nonempty inputs. Multi-slice behavior is unchanged.
   Numba accelerates 2D convex-hull and perimeter/Euler calculations; Euler
-  output remains integer.
-- Numba size/shape computes the 2D spatial moments in one GIL-free kernel, so
-  batch images scale across threads. Raw moments are unchanged; the
-  inertia-derived features (inertia tensor, eigenvalues, axis lengths,
-  eccentricity) match NumPy within 1e-12.
+  output remains integer and the existing moment implementation is retained.
 - Manders, overlap/K, RWC and granularity accept keyword-only `precision="input"`
   (default, preserves pre-#129 arithmetic paths) or `precision="float64"` (opt-in
   widening of float16/float32 before arithmetic in both backends). Opting in can
