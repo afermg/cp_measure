@@ -80,7 +80,6 @@ References
 
 from numbers import Integral
 from typing import Iterator
-import math
 import warnings
 
 import numpy
@@ -235,10 +234,8 @@ def _rwc_pair(
     precision: Precision = "input",
 ) -> tuple[float, float]:
     fi, si = promote_float_pixels(fi, precision), promote_float_pixels(si, precision)
-    # Equal values receive the same dense rank; stable ordering of ties is
-    # unnecessary. A single-key argsort avoids lexsort's stable-sort overhead.
-    Rank1 = numpy.argsort(fi)
-    Rank2 = numpy.argsort(si)
+    Rank1 = numpy.lexsort([fi])
+    Rank2 = numpy.lexsort([si])
     Rank1_U = numpy.hstack([[False], fi[Rank1[:-1]] != fi[Rank1[1:]]])
     Rank2_U = numpy.hstack([[False], si[Rank2[:-1]] != si[Rank2[1:]]])
     Rank1_S = numpy.cumsum(Rank1_U)
@@ -365,47 +362,14 @@ def _invalid_costes_reason(fi, si) -> str | None:
     return None
 
 
-_COSTES_NEAR_CONSTANT = numpy.finfo(numpy.float64).eps ** 0.75
-_COSTES_TINY = numpy.finfo(numpy.float64).tiny
-
-
-def _costes_background_correlation(fi, si, selected, cacheable=None) -> float:
+def _costes_background_correlation(fi, si, selected) -> float:
     # Linear search permits two pairs; bisection skips them before calling here.
-    first, second = fi[selected], si[selected]
-    if first.size < 2:
+    if numpy.count_nonzero(selected) < 2:
         return numpy.nan
-    # Costes uses only the statistic, not pearsonr's distribution/p-value.
-    # Inputs are normalized to [0, 1]. Delegate numerically delicate inputs
-    # back to SciPy (including its NearConstantInputWarning policy).
-    # Nonempty, 1-D float64 arrays: sum/size is mean's exact reduction without
-    # its generic axis/dtype/count validation on every search probe.
-    first_mean = first.sum() / first.size
-    second_mean = second.sum() / second.size
-    xm, ym = first - first_mean, second - second_mean
-    xx, yy = numpy.dot(xm, xm), numpy.dot(ym, ym)
-    normxm, normym = math.sqrt(xx), math.sqrt(yy)
-    if (
-        first.size == 2
-        or min(xx, yy) < _COSTES_TINY
-        or not math.isfinite(xx + yy)
-        or normxm < _COSTES_NEAR_CONSTANT * abs(first_mean)
-        or normym < _COSTES_NEAR_CONSTANT * abs(second_mean)
-    ):
-        # Constants are a subset of this guard; avoid two full min/max scans
-        # on the normal path while preserving the silent constant-subset NaN.
-        if numpy.ptp(first) == 0 or numpy.ptp(second) == 0:
-            return numpy.nan
-        return float(scipy.stats.pearsonr(first, second)[0])
-    r = float(numpy.dot(xm, ym) / normxm / normym)
-    # Preserve Faster's sign and Fast's step-size decisions despite differences
-    # in SciPy/NumPy reduction implementations across supported versions.
-    if any(abs(r - boundary) < 1e-12 for boundary in (0.0, 0.25, 0.35, 0.45)):
-        return float(scipy.stats.pearsonr(first, second)[0])
-    if cacheable is not None:
-        # Only reuse the warning-free fast path. SciPy fallbacks must still run
-        # on each probe so warning categories/counts/filter behavior survive.
-        cacheable[0] = True
-    return min(1.0, max(-1.0, r)) if math.isfinite(r) else r
+    first, second = fi[selected], si[selected]
+    if numpy.ptp(first) == 0 or numpy.ptp(second) == 0:
+        return numpy.nan
+    return float(scipy.stats.pearsonr(first, second)[0])
 
 
 def _costes_pair(
@@ -744,41 +708,17 @@ def _bisection_search(
     # for the first threshold and the fitted intercept for the second.
     valid: float = 1
     iterations = 0
-    previous_selected = None
-    previous_count = -1
-    previous_correlation = numpy.nan
-    cacheable = [False]
-    fi_max, si_max = fi.max(), si.max()
     while lastmid != mid:
         iterations += 1
         if iterations > 256:
             return numpy.nan, numpy.nan, "bisection did not converge"
         thr_fi_c = mid / scale_max
         thr_si_c = (a * thr_fi_c) + b
-        if thr_fi_c > fi_max or thr_si_c > si_max:
-            # The OR selects every pixel. Avoid mask construction, recounting,
-            # and advanced-index copies on the high-threshold probes.
-            combt = slice(None)
-            count = fi.size
-        else:
-            combt = (fi < thr_fi_c) | (si < thr_si_c)
-            count = numpy.count_nonzero(combt)
-        if count <= 2:
+        combt = (fi < thr_fi_c) | (si < thr_si_c)
+        if numpy.count_nonzero(combt) <= 2:
             left = mid - 1
         else:
-            # For nonnegative slopes both cutoffs move together: subsets are
-            # nested, so equal cardinality proves equality even on backtracking.
-            same_subset = count == previous_count and (
-                a >= 0 or numpy.array_equal(combt, previous_selected)
-            )
-            if same_subset:
-                costReg = previous_correlation
-            else:
-                cacheable[0] = False
-                costReg = _costes_background_correlation(fi, si, combt, cacheable)
-                previous_count = count if cacheable[0] else -1
-                previous_selected = combt if a < 0 else None
-                previous_correlation = costReg
+            costReg = _costes_background_correlation(fi, si, combt)
             if costReg < 0:
                 left = mid - 1
             elif costReg >= 0:
