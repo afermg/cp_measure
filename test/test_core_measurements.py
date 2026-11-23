@@ -139,6 +139,26 @@ def test_correlation_overlap_zero_channel(zero_channel):
     assert result[other_k][1] == 0
 
 
+@pytest.mark.parametrize(
+    "intensity, expected_overlap",
+    [(1e100, 0.0), (1e-100, numpy.inf)],
+    ids=["denominator-product-overflow", "denominator-product-underflow"],
+)
+def test_correlation_overlap_denominator_product_preserves_float_behavior(
+    intensity, expected_overlap
+):
+    pixels = numpy.full((2, 2), intensity, dtype=numpy.float64)
+    masks = numpy.ones((2, 2), dtype=numpy.int32)
+    # Each sum of squares is finite and nonzero. Only their product over/underflows.
+    # Preserve Python-float multiplication's quiet behavior, not a new exception
+    # or NumPy warning. These are the historical results, not scale-robust scores.
+    with numpy.errstate(all="raise"):
+        result = get_correlation_overlap(pixels, pixels, masks)
+    numpy.testing.assert_array_equal(result["Correlation_Overlap"], [expected_overlap])
+    numpy.testing.assert_array_equal(result["Correlation_K_1"], [1.0])
+    numpy.testing.assert_array_equal(result["Correlation_K_2"], [1.0])
+
+
 def test_get_intensity_edge_measurements_flag():
     """With edge_measurements=True (default) edge keys are present; with False they are omitted."""
     masks = get_masks()["one"]

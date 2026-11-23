@@ -217,7 +217,9 @@ def _overlap_pair(
     fpsq = numpy.float64(numpy.sum(fi_t * fi_t))
     spsq = numpy.float64(numpy.sum(si_t * si_t))
     prod = numpy.float64(numpy.sum(fi_t * si_t))
-    pdt = numpy.sqrt(fpsq * spsq)
+    # Keep the historical Python-float product: NumPy scalar multiplication
+    # would newly warn/raise on over/underflow before the zero-safe divisions.
+    pdt = numpy.sqrt(float(fpsq) * float(spsq))
     with numpy.errstate(invalid="ignore", divide="ignore"):
         overlap = prod / pdt
         K1 = float(prod / fpsq)

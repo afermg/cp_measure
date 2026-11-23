@@ -4,6 +4,9 @@ Notable user-facing changes are documented here.
 
 ## [Unreleased]
 
+- Return NaN for undefined overlap/K coefficients from zero-intensity channels
+  instead of raising `ZeroDivisionError`.
+
 ## [0.4.1] - 2026-11-22
 
 This release accelerates batched profile generation and adds measurement
