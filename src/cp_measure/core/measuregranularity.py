@@ -52,16 +52,129 @@ References
 """
 
 from functools import partial
+from inspect import signature
 from typing import Callable, Literal
 
 import numpy
 import scipy.ndimage
 import scipy.sparse
+import skimage
 import skimage.morphology
 from cp_measure._precision import Precision, promote_float_pixels
 from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 from cp_measure.primitives.shapes import batch_dispatch
+
+def _compatible_reconstruction_loop(version, loop):
+    """Opt in only to tested private APIs; all other installs use the public API.
+
+    A successful import alone is not a compatibility contract. In particular,
+    future releases, development builds, and uninspectable/changed signatures
+    must not receive our linked-list buffers. Do not catch execution errors:
+    failures in a verified kernel are bugs, not grounds to hide a failed run.
+    """
+    if version not in {"0.25.2", "0.26.0"}:
+        return None
+    try:
+        parameters = tuple(signature(loop).parameters.values())
+    except (TypeError, ValueError):
+        return None
+    names = (
+        ("aranks", "aprev", "anext", "astrides", "current_idx", "image_stride")
+        if version == "0.25.2"
+        else ("ranks", "prev", "next", "strides", "current_idx", "image_stride")
+    )
+    if tuple(p.name for p in parameters) != names:
+        return None
+    if any(p.kind != p.POSITIONAL_OR_KEYWORD for p in parameters):
+        return None
+    return loop
+
+
+try:
+    from skimage.morphology._grayreconstruct import reconstruction_loop
+except ImportError:  # Optional private acceleration; public path is supported.
+    reconstruction_loop = None
+else:
+    reconstruction_loop = _compatible_reconstruction_loop(
+        skimage.__version__, reconstruction_loop
+    )
+
+
+# _reconstruct_eroded adapts the list/rank construction in scikit-image's
+# morphology/grayreconstruct.py and filters/_rank_order.py (BSD-3-Clause):
+# Copyright 2009-2022 the scikit-image team
+# Copyright 2003-2009 Massachusetts Institute of Technology
+# Copyright 2009-2011 Broad Institute
+# Copyright 2003 Lee Kamentsky
+# Copyright 2003-2005 Peter J. Verveer
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 1. Redistributions of source code must retain the above copyright notice,
+#    this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+# 3. Neither the name of the University nor the names of its contributors may
+#    be used to endorse or promote products derived from this software without
+#    specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE HOLDERS OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+def _reconstruct_eroded(seed, mask):
+    """Reconstruct a finite erosion under its mask with disk/ball(1) connectivity.
+
+    This is the downhill reconstruction used by scikit-image, but builds both
+    ranks and the linked list from ONE stable sort. The public implementation
+    sorts the same padded values twice (once for the list, once for rank_order),
+    which dominates granularity on acquisition images. No values are quantized:
+    the rank-to-value map contains the original floating-point values exactly.
+
+    Only the existing compiled propagation loop is reused. The caller retains
+    the public path for nonfinite images or an unavailable private hook. Seed
+    <= mask and unit-radius cross connectivity follow from the erosion here;
+    this is deliberately not a general replacement for reconstruction().
+    """
+    shape = numpy.array(mask.shape) + 2
+    inside = (slice(1, -1),) * mask.ndim
+    images = numpy.full((2, *shape), seed.min(), dtype=mask.dtype)
+    images[(0, *inside)] = seed
+    images[(1, *inside)] = mask
+    image_stride = images[0].size
+    signed = numpy.int32 if images.size < numpy.iinfo(numpy.int32).max else numpy.int64
+    unsigned = numpy.uint32 if signed == numpy.int32 else numpy.uint64
+    strides = numpy.array(images.strides[1:]) // images.itemsize
+    # Same neighbour order as the lexicographic disk(1)/ball(1) footprint.
+    neighbours = numpy.concatenate((-strides, strides[::-1])).astype(signed)
+    values = images.ravel()
+    order = numpy.argsort(values, kind="stable").astype(signed, copy=False)
+    sorted_values = values[order]
+    different = numpy.empty(values.size, dtype=bool)
+    different[0] = True
+    numpy.not_equal(sorted_values[1:], sorted_values[:-1], out=different[1:])
+    sorted_ranks = numpy.cumsum(different, dtype=unsigned) - 1
+    value_map = sorted_values[different]
+    ranks = numpy.empty(values.size, dtype=unsigned)
+    ranks[order] = sorted_ranks
+    order = order[::-1]  # Dilation visits largest values first.
+    previous = numpy.full(values.size, -1, dtype=signed)
+    following = previous.copy()
+    previous[order[1:]] = order[:-1]
+    following[order[:-1]] = order[1:]
+    reconstruction_loop(ranks, previous, following, neighbours, order[0], image_stride)
+    reconstructed = value_map[ranks[:image_stride]]
+    # Match the public implementation, including NumPy's shape-setter warning.
+    reconstructed.shape = shape
+    return reconstructed[inside]
 
 
 def _make_fused_upsample_mean(
@@ -395,13 +508,23 @@ def get_granularity(
     if pixels.ndim == 2 and range_.size:
         fused_mean = _make_fused_upsample_mean(orig_shape, new_shape, orig_mask)
 
+    # Preserve scikit-image's handling of NaNs/infinities, including warnings
+    # and validation. Float16 also keeps its historical public-library path.
+    fast_reconstruction = (
+        reconstruction_loop is not None
+        and pixels.dtype in (numpy.dtype("float32"), numpy.dtype("float64"))
+        and numpy.isfinite(pixels).all()
+    )
     results: dict[str, NDArray[numpy.floating]] = {}
     for granularity_id in range(1, ng + 1):
         ero_mask = ero.copy()
         # Shrink bright regions
         ero = skimage.morphology.erosion(ero_mask, footprint=footprint)
         # Reconstruct: undo erosion for pixels that were already small
-        rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
+        if fast_reconstruction:
+            rec = _reconstruct_eroded(ero, pixels)
+        else:
+            rec = skimage.morphology.reconstruction(ero, pixels, footprint=footprint)
 
         # Calculate the means for the objects
         gss = numpy.zeros((0,))
