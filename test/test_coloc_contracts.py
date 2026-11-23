@@ -27,13 +27,7 @@ def assert_parity(name, first, second, masks, **kwargs):
     originals = [x.copy() for x in (first, second, masks)]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        try:
-            expected = reference(first, second, masks, **kwargs)
-        except ZeroDivisionError:
-            # Current-main overlap uses Python float division for K1/K2.
-            with pytest.raises(ZeroDivisionError):
-                accelerated(first, second, masks, **kwargs)
-            return
+        expected = reference(first, second, masks, **kwargs)
         actual = accelerated(first, second, masks, **kwargs)
     assert list(actual) == list(expected)
     # Numba keeps the reference's float32 thresholds (which pixels count) but sums

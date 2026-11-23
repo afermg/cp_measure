@@ -120,6 +120,25 @@ def test_correlation_overlap():
     )
 
 
+@pytest.mark.parametrize("zero_channel", [0, 1])
+def test_correlation_overlap_zero_channel(zero_channel):
+    # A channel that is zero within an object must give NaN, not raise
+    rng = numpy.random.default_rng(0)
+    pixels = rng.random((40, 40, 2))
+    masks = numpy.zeros((40, 40), dtype=int)
+    masks[5:15, 5:15] = 1
+    masks[20:32, 20:30] = 2
+    pixels[masks == 2, zero_channel] = 0
+    result = get_correlation_overlap(
+        pixels_1=pixels[..., 0], pixels_2=pixels[..., 1], masks=masks
+    )
+    zero_k, other_k = ("Correlation_K_1", "Correlation_K_2")[:: 1 - 2 * zero_channel]
+    assert numpy.isfinite(result["Correlation_Overlap"][0])
+    assert numpy.isnan(result["Correlation_Overlap"][1])
+    assert numpy.isnan(result[zero_k][1])
+    assert result[other_k][1] == 0
+
+
 def test_get_intensity_edge_measurements_flag():
     """With edge_measurements=True (default) edge keys are present; with False they are omitted."""
     masks = get_masks()["one"]

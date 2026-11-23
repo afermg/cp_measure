@@ -211,14 +211,17 @@ def _overlap_pair(
         return 0.0, 0.0, 0.0
     fi_t = fi[combined]
     si_t = si[combined]
-    fpsq = float(numpy.sum(fi_t * fi_t))
-    spsq = float(numpy.sum(si_t * si_t))
-    prod = float(numpy.sum(fi_t * si_t))
+    # Keep NumPy float64 scalars so that a zero denominator (a channel that is
+    # zero throughout the combined region) yields NaN instead of raising
+    # ZeroDivisionError, matching the other percentage-threshold metrics.
+    fpsq = numpy.float64(numpy.sum(fi_t * fi_t))
+    spsq = numpy.float64(numpy.sum(si_t * si_t))
+    prod = numpy.float64(numpy.sum(fi_t * si_t))
     pdt = numpy.sqrt(fpsq * spsq)
     with numpy.errstate(invalid="ignore", divide="ignore"):
         overlap = prod / pdt
-        K1 = prod / fpsq
-        K2 = prod / spsq
+        K1 = float(prod / fpsq)
+        K2 = float(prod / spsq)
     return overlap, K1, K2
 
 
