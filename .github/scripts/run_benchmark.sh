@@ -8,7 +8,7 @@ set -euo pipefail
 # Pin BLAS/OpenMP to one thread so timings reflect algorithmic cost, not incidental parallelism
 # (cp_measure keeps core functions single-threaded; the batch layer is what parallelises).
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-export NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 NUMBA_NUM_THREADS=1
 
 OUT="${1:-bench-out}"
 COMMIT="${2:-}"
@@ -26,7 +26,7 @@ NUMBA=0
 # Capture the diff first, then grep the string: `git … | grep -q` under `pipefail` can report the
 # pipe's SIGPIPE (141) when grep exits early on a match, spuriously flipping detection to 0.
 CHANGED="$(git diff --name-only "$BASE" HEAD)"
-if grep -qE '^src/cp_measure/core/numba/|^src/cp_measure/bulk\.py$' <<< "$CHANGED"; then
+if grep -qE '^src/cp_measure/core/numba/|^src/cp_measure/(bulk|featurizer)\.py$|^src/cp_measure/core/(measurecolocalization|_costes_compat)\.py$|^\.github/scripts/(benchmark_colocalization\.py|run_benchmark\.sh)$' <<< "$CHANGED"; then
   NUMBA=1
 fi
 echo "numba-targeting PR: $NUMBA"
@@ -80,5 +80,28 @@ if [ "$NUMBA" = 1 ]; then
   fi
   echo "::endgroup::"
 fi
+
+# Featurizer-level pair selection is invisible to single-pair function timings.
+# Always compare NumPy; also require Numba when dispatch/colocalization is touched.
+# Unlike the optional exploratory function table above, correctness failures here
+# must fail the job. Run the same head-owned harness against both package versions.
+COLOC="$HEAD_DIR/.github/scripts/benchmark_colocalization.py"
+BACKENDS=(numpy)
+[ "$NUMBA" = 0 ] || BACKENDS+=(numba)
+BASE_RUNS=()
+HEAD_RUNS=()
+for backend in "${BACKENDS[@]}"; do
+  echo "::group::featurizer colocalization ($backend)"
+  "$WORK/venv-head/bin/python" "$COLOC" run --backend "$backend" \
+    --revision "$(git rev-parse HEAD)" --out "$OUT/coloc-head-$backend.json"
+  "$WORK/venv-main/bin/python" "$COLOC" run --backend "$backend" \
+    --revision "$(git -C "$WORK/main" rev-parse HEAD)" --out "$OUT/coloc-main-$backend.json"
+  BASE_RUNS+=("$OUT/coloc-main-$backend.json")
+  HEAD_RUNS+=("$OUT/coloc-head-$backend.json")
+  echo "::endgroup::"
+done
+"$WORK/venv-head/bin/python" "$COLOC" compare \
+  --base "${BASE_RUNS[@]}" --head "${HEAD_RUNS[@]}" --md "$OUT/coloc.md"
+{ printf '\n\n'; cat "$OUT/coloc.md"; } >> "$OUT/table.md"
 
 cat "$OUT/table.md"

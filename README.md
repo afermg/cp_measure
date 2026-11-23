@@ -86,6 +86,8 @@ data, columns, rows = featurize(image, masks, config)  # is_3d=False
 #          image_id defaults to the batch index; pass image_ids=[...] for your own ids
 ```
 
+The 0.4.1 featurizer produced extra Costes coefficients by also fitting each channel pair in reverse. The default is now `costes_pair_mode="unordered"`: one fit per pair, retaining both coefficients. Pairs follow channel-axis order, not alphabetical order; reversing channels can change the fitted thresholds. Set `costes_pair_mode="ordered"` in `make_featurizer_config` to retain the extra reverse-fit coefficients. This setting does not change Pearson correlations/slopes, Manders, RWC, or numerical parameters such as Costes scope and precision.
+
 To customise which features are extracted, or to name your channels and masks, use `make_featurizer_config`. Channel names are matched positionally to the image's channel axis (axis 1) and control how per-channel features are labeled in the output columns (e.g. "Intensity_MeanIntensity__DNA"). If omitted, channels are auto-named `ch0`, `ch1`, ...
 
 ```python

@@ -9,6 +9,10 @@ Notable user-facing changes are documented here.
 - Normalize overlap sequentially in both backends to avoid overflow/underflow
   from multiplying squared sums. Individual products and reductions still follow
   the selected precision policy; ordinary scores can change by roundoff.
+- The 0.4.1 featurizer produced extra reverse-fit Costes coefficients. The default
+  now fits each unordered channel pair once and retains both coefficients. Use
+  `costes_pair_mode="ordered"` to retain the extra coefficients. Pair orientation
+  follows channel-axis order; other correlation measurements are unchanged.
 
 ## [0.4.1] - 2026-11-22
 
