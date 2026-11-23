@@ -298,15 +298,6 @@ Manders, overlap/K and RWC accept keyword-only `precision="input"` (default) or 
 
 Opting in may change boundary membership substantially: the documented float32 fixture's Manders coefficient changes from approximately 1/3 to 1. Comparisons remain `>=`; there is no epsilon, clipping or final rounding. RWC remains object-local. Pearson, Costes and unrelated families are unaffected. True undefined/zero-denominator conventions remain; artifacts caused solely by float32 product overflow/underflow can disappear in float64 mode.
 
-Overlap normalizes the cross-product sum sequentially by each channel's norm,
-without multiplying the two squared sums. Both backends therefore avoid that
-intermediate product's overflow/underflow when the individual sums and resulting
-score are representable. This can also change ordinary scores by floating-point
-roundoff. Threshold selection, K1/K2 formulas and precision settings are unchanged.
-This is not a fully scaled algorithm: individual pixel products and reductions
-can still overflow or underflow at extreme intensities under the selected
-precision policy.
-
 ## Granularity intermediate precision
 
 Granularity accepts the same keyword-only `precision` option. The default `"input"` preserves each backend's pre-#129 path, including existing NumPy/Numba float32 differences: Numba's path was already mixed-precision. This mode does **not** incorporate #125's proposed float32 cast-back or promise new cross-backend/CellProfiler parity.
