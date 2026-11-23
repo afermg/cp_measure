@@ -244,7 +244,7 @@ measurecolocalization.get_correlation_overlap
 ### Important notes
 
 - **Labels**: Use positive integers for objects and `0` for background. `featurize` and the bulk registries relabel non-contiguous IDs internally without modifying your array; `featurize` reports the original IDs. Raw measurement functions require contiguous `1..N` labels; wrap them with `cp_measure._sanitize.sanitize` when needed.
-- **Image shapes**: `featurize` requires dense `(B, C, *spatial)` images and `(B, M, [Z], Y, X)` masks. A single image still needs `B=1`.
+- **Image shapes**: `featurize` requires dense `(B, C, [Z,] Y, X)` images and `(B, M, [Z,] Y, X)` masks. A single image still needs `B=1`.
 - **Matching CellProfiler**: Use float intensities in `[0, 1]` (e.g. divide uint16 values by `65535`). Some defaults intentionally differ from CellProfiler; see [Matching CellProfiler](docs/measurement-notes.md#matching-cellprofiler) for the options that restore its behavior.
 - **Costes scale**: Float inputs require `scale_max` (e.g. `65535`); see [Costes scale](docs/measurement-notes.md#costes-scale).
 - **Costes boundary policy**: Small/constant threshold-search backgrounds no longer veto coefficients. See [details](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
