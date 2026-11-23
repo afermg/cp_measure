@@ -35,7 +35,7 @@ from cp_measure.primitives.parallel import map_images
 # Feature groups that only support 2D spatial data.
 _Measurement = Callable[..., list[dict[str, np.ndarray]]]  # batch in, one dict per item
 _Feature = tuple[_Measurement, dict]  # measurement function, keyword arguments
-_CorrelationFeature = tuple[_Measurement, dict, bool]  # plus symmetric-pair flag
+_CorrelationFeature = tuple[_Measurement, dict, bool]  # plus once-per-pair flag
 
 
 def _batch_results(
@@ -75,6 +75,7 @@ def make_featurizer_config(
     correlation_pearson: bool = True,
     correlation_costes: bool = True,
     correlation_costes_params: dict | None = None,
+    costes_pair_mode: str = "unordered",
     correlation_manders_fold: bool = True,
     correlation_manders_fold_params: dict | None = None,
     correlation_rwc: bool = True,
@@ -107,6 +108,15 @@ def make_featurizer_config(
     correlation_costes_params, correlation_manders_fold_params,
     correlation_rwc_params : dict, optional
         Extra keyword arguments forwarded to the underlying functions.
+    costes_pair_mode : {"unordered", "ordered"}, default "unordered"
+        Fit Costes once per unordered channel pair, oriented by channel-list
+        order (image axis 1), and retain both coefficients from that fit.
+        Channel names are not alphabetically sorted. Swapping the configured
+        channels can change the fitted thresholds and coefficients.
+        ``ordered`` additionally fits the reverse order, retaining the extra
+        coefficients produced by the 0.4.1 featurizer. This affects only Costes
+        pair execution: Pearson correlations/slopes, Manders, RWC and all
+        numerical parameters (including Costes scope/precision) are unchanged.
 
     Returns
     -------
@@ -121,13 +131,15 @@ def make_featurizer_config(
     ------
     ValueError
         If no features are enabled, if channel/object names are not
-        unique, or if ``objects`` is explicitly empty.
+        unique, if ``objects`` is explicitly empty, or if ``costes_pair_mode``
+        is not a supported string.
 
     Examples
     --------
     >>> config = make_featurizer_config(["DNA", "ER"], objects=["nuclei", "cells"])
     >>> config = make_featurizer_config()  # auto-named channels, single "object" mask
     """
+    _validate_costes_pair_mode(costes_pair_mode)
     if channels is not None:
         if len(set(channels)) != len(channels):
             raise ValueError("channel names must be unique")
@@ -184,6 +196,7 @@ def make_featurizer_config(
         "feret": feret,
         "correlation_pearson": correlation_pearson,
         "correlation_costes": correlation_costes,
+        "costes_pair_mode": costes_pair_mode,
         "correlation_costes_params": correlation_costes_params
         if correlation_costes_params is not None
         else {},
@@ -224,9 +237,9 @@ def _featurize_batch(
 
     ``shape_feats`` and ``channel_feats`` contain ``(function, kwargs)`` pairs:
     shape measurements run once per mask type, channel measurements once per mask
-    type and channel. ``corr_feats`` contains ``(function, kwargs, symmetric)``
-    triples. Symmetric correlations measure each channel pair once; asymmetric
-    correlations measure both channel orders.
+    type and channel. ``corr_feats`` contains ``(function, kwargs, once_per_pair)``
+    triples. The flag selects channel-index combinations versus permutations;
+    it describes execution policy, not numerical symmetry.
     """
     n_ch = len(channels)
     out: dict[int, tuple[list[np.ndarray], list[tuple]]] = {
@@ -281,8 +294,10 @@ def _featurize_batch(
 
         # One call per correlation feature, returned pair-major (image i, pair p);
         # reshaped to one row of len(pairs) per image so the scatter indexes [i][p].
-        for func, params, symmetric in corr_feats:
-            iter_fn = itertools.combinations if symmetric else itertools.permutations
+        for func, params, once_per_pair in corr_feats:
+            iter_fn = (
+                itertools.combinations if once_per_pair else itertools.permutations
+            )
             pairs = list(iter_fn(range(n_ch), 2))
             if not pairs:
                 continue
@@ -599,6 +614,11 @@ def _warn_2d_only_in_3d(config: dict) -> None:
         )
 
 
+def _validate_costes_pair_mode(mode: str) -> None:
+    if not isinstance(mode, str) or mode not in ("unordered", "ordered"):
+        raise ValueError("costes_pair_mode must be 'unordered' or 'ordered'")
+
+
 def _collect_correlation_features(
     config: dict,
     corr_funcs: dict,
@@ -606,9 +626,12 @@ def _collect_correlation_features(
 ) -> list[_CorrelationFeature]:
     """Collect enabled correlation feature functions.
 
-    The third element of each tuple indicates whether the metric is
-    symmetric (combinations) or asymmetric (permutations).
+    The third element selects one execution per unordered pair (combinations)
+    or both channel orders (permutations). Costes is order-sensitive even when
+    configured to run once per pair. Configs without a mode use the new default.
     """
+    mode = config.get("costes_pair_mode", "unordered")
+    _validate_costes_pair_mode(mode)
     if n_channels < 2:
         has_corr = any(
             config[k]
@@ -629,10 +652,15 @@ def _collect_correlation_features(
         return []
 
     feats: list[_CorrelationFeature] = []
-    # (config key, corr_funcs key, params key, symmetric)
+    # (config key, corr_funcs key, params key, once per unordered pair)
     specs = [
         ("correlation_pearson", "pearson", None, False),
-        ("correlation_costes", "costes", "correlation_costes_params", False),
+        (
+            "correlation_costes",
+            "costes",
+            "correlation_costes_params",
+            mode == "unordered",
+        ),
         (
             "correlation_manders_fold",
             "manders_fold",
@@ -641,8 +669,8 @@ def _collect_correlation_features(
         ),
         ("correlation_rwc", "rwc", "correlation_rwc_params", True),
     ]
-    for cfg_key, func_key, params_key, symmetric in specs:
+    for cfg_key, func_key, params_key, once_per_pair in specs:
         if config[cfg_key]:
             params = config[params_key] if params_key else {}
-            feats.append((corr_funcs[func_key], params, symmetric))
+            feats.append((corr_funcs[func_key], params, once_per_pair))
     return feats
