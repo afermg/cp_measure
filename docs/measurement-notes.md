@@ -298,6 +298,15 @@ Manders, overlap/K and RWC accept keyword-only `precision="input"` (default) or 
 
 Opting in may change boundary membership substantially: the documented float32 fixture's Manders coefficient changes from approximately 1/3 to 1. Comparisons remain `>=`; there is no epsilon, clipping or final rounding. RWC remains object-local. Pearson, Costes and unrelated families are unaffected. True undefined/zero-denominator conventions remain; artifacts caused solely by float32 product overflow/underflow can disappear in float64 mode.
 
+Overlap normalizes the cross-product sum sequentially by each channel's norm,
+without multiplying the two squared sums. Both backends therefore avoid that
+intermediate product's overflow/underflow when the individual sums and resulting
+score are representable. This can also change ordinary scores by floating-point
+roundoff. Threshold selection, K1/K2 formulas and precision settings are unchanged.
+This is not a fully scaled algorithm: individual pixel products and reductions
+can still overflow or underflow at extreme intensities under the selected
+precision policy.
+
 ## Granularity intermediate precision
 
 Granularity accepts the same keyword-only `precision` option. The default `"input"` preserves each backend's pre-#129 path, including existing NumPy/Numba float32 differences: Numba's path was already mixed-precision. This mode does **not** incorporate #125's proposed float32 cast-back or promise new cross-backend/CellProfiler parity.
@@ -355,12 +364,13 @@ Float16, integer and wider-float inputs retain the reference path. For accelerat
 float32/float64 Pearson, Manders and RWC, undefined objects keep the kernel's NaN
 results without replaying the whole image through NumPy. Incidental NumPy runtime
 warnings from those calculations are therefore no longer guaranteed. Overlap/K
-replays only nonfinite objects through the single-object reference. If one channel
-is zero within the combined threshold region, overlap and that channel's K are
-NaN; the other channel's K is zero if its denominator is nonzero. If both channels
+replays only nonfinite objects through the single-object reference. For a nonempty
+combined threshold region, a zero channel gives NaN for overlap and that channel's
+K; the other channel's K is zero if its denominator is nonzero. If both channels
 are zero, all three values are NaN. These undefined divisions do not raise
-`ZeroDivisionError`. Reference fallbacks are not advertised as accelerated. These
-changes do not alter the separate Costes warning policy.
+`ZeroDivisionError`. An empty combined threshold region still returns three zeros.
+Reference fallbacks are not advertised as accelerated. These changes do not alter
+the separate Costes warning policy.
 
 All three inputs must have matching spatial ranks and extents. A 2D mask is not
 broadcast over Z, nor is the first intensity plane selected implicitly. Matching

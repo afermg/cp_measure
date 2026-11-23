@@ -120,6 +120,30 @@ def test_fused_kernel_undefined_and_missing_slots():
 
 @requires_numba
 @pytest.mark.parametrize(
+    "first_scale, second_scale",
+    [(1e100, 1e100), (1e-100, 1e-100), (1e100, 1e-100), (1e-100, 1e100)],
+)
+def test_fused_overlap_stable_normalization_without_reference_fallback(
+    first_scale, second_scale
+):
+    from cp_measure.core.numba._colocalization import coloc_per_object
+
+    first = np.arange(1.0, 5.0) * first_scale
+    second = np.arange(4.0, 0.0, -1.0) * second_scale
+    result = coloc_per_object(first, second, np.array([0, 4]), 1, 0.0, False)
+    # Exercise the kernel itself: public overlap can replay nonfinite results
+    # through NumPy, which must not hide an unstable Numba denominator.
+    np.testing.assert_allclose(result[4], [2 / 3], rtol=1e-12, atol=0)
+    np.testing.assert_allclose(
+        result[5], [(2 / 3) * (second_scale / first_scale)], rtol=1e-12, atol=0
+    )
+    np.testing.assert_allclose(
+        result[6], [(2 / 3) * (first_scale / second_scale)], rtol=1e-12, atol=0
+    )
+
+
+@requires_numba
+@pytest.mark.parametrize(
     "n", [1, 2, 7, 8, 9, 127, 128, 129, 1000, 8191, 8192, 8193, 16385, 100_003]
 )
 @pytest.mark.parametrize("bufsize", [None, 4096])

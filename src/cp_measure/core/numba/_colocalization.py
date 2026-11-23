@@ -213,7 +213,9 @@ def coloc_per_object(
         if n_comb > 0:
             m1[k] = sum_fi_c / tot_fi
             m2[k] = sum_si_c / tot_si
-            overlap[k] = sum_fisi_c / np.sqrt(sum_fi2_c * sum_si2_c)
+            # Match the reference without multiplying the squared sums: that
+            # product can over/underflow despite a representable overlap.
+            overlap[k] = (sum_fisi_c / np.sqrt(sum_fi2_c)) / np.sqrt(sum_si2_c)
             k1[k] = sum_fisi_c / sum_fi2_c
             k2[k] = sum_fisi_c / sum_si2_c
             if compute_rwc:
