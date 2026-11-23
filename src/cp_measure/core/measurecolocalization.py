@@ -744,7 +744,8 @@ def _bisection_search(
     # for the first threshold and the fitted intercept for the second.
     valid: float = 1
     iterations = 0
-    previous_selected = None
+    previous_selected: NDArray[numpy.bool_] | slice | None = None
+    combt: NDArray[numpy.bool_] | slice
     previous_count = -1
     previous_correlation = numpy.nan
     cacheable = [False]
@@ -761,15 +762,23 @@ def _bisection_search(
             combt = slice(None)
             count = fi.size
         else:
-            combt = (fi < thr_fi_c) | (si < thr_si_c)
-            count = numpy.count_nonzero(combt)
+            selected: NDArray[numpy.bool_] = (fi < thr_fi_c) | (si < thr_si_c)
+            count = int(numpy.count_nonzero(selected))
+            combt = selected
         if count <= 2:
             left = mid - 1
         else:
             # For nonnegative slopes both cutoffs move together: subsets are
             # nested, so equal cardinality proves equality even on backtracking.
             same_subset = count == previous_count and (
-                a >= 0 or numpy.array_equal(combt, previous_selected)
+                a >= 0
+                # Every slice here is slice(None), denoting the full input.
+                or (isinstance(combt, slice) and isinstance(previous_selected, slice))
+                or (
+                    isinstance(combt, numpy.ndarray)
+                    and isinstance(previous_selected, numpy.ndarray)
+                    and numpy.array_equal(combt, previous_selected)
+                )
             )
             if same_subset:
                 costReg = previous_correlation

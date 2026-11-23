@@ -61,3 +61,51 @@ def test_background_selection_and_invalid_subsets():
     assert _costes_background_correlation(x, y, sel) == pytest.approx(
         pearsonr(x[sel], y[sel]).statistic
     )
+
+
+@pytest.mark.parametrize("scale", [255, 65535])
+@pytest.mark.parametrize(
+    "scene", ["random", "positive", "negative", "negative_low", "tied"]
+)
+def test_search_cache_preserves_uncached_thresholds(monkeypatch, scale, scene):
+    from cp_measure.core import measurecolocalization as coloc
+
+    rng = np.random.default_rng(419)
+    first, second = rng.random((2, 64))
+    if scene == "positive":
+        second = 0.7 * first + 0.3 * second
+    elif scene in ("negative", "negative_low"):
+        second = 0.8 - 0.6 * first + 0.05 * second
+        if scene == "negative_low":
+            first *= 0.4  # Initial probes use the slice(None) full-input sentinel.
+    elif scene == "tied":
+        first, second = np.round(first * 5) / 5, np.round(second * 5) / 5
+
+    original = coloc._costes_background_correlation
+    calls = {"cached": 0, "uncached": 0}
+
+    def cached(a, b, selected, cacheable=None):
+        calls["cached"] += 1
+        return original(a, b, selected, cacheable)
+
+    def uncached(a, b, selected, cacheable=None):
+        calls["uncached"] += 1
+        return original(a, b, selected)  # Never mark the result cacheable.
+
+    monkeypatch.setattr(coloc, "_costes_background_correlation", cached)
+    with warnings.catch_warnings(record=True) as cached_warnings:
+        warnings.simplefilter("always")
+        actual = coloc._bisection_search(first, second, scale, "Faster")
+    monkeypatch.setattr(coloc, "_costes_background_correlation", uncached)
+    with warnings.catch_warnings(record=True) as uncached_warnings:
+        warnings.simplefilter("always")
+        expected = coloc._bisection_search(first, second, scale, "Faster")
+
+    np.testing.assert_array_equal(actual[:2], expected[:2])
+    assert actual[2] == expected[2]
+    assert [(w.category, str(w.message)) for w in cached_warnings] == [
+        (w.category, str(w.message)) for w in uncached_warnings
+    ]
+    assert calls["cached"] <= calls["uncached"]
+    if scene == "negative_low":
+        assert calls["cached"] < calls["uncached"]
