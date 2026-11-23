@@ -88,17 +88,20 @@ fi
 COLOC="$HEAD_DIR/.github/scripts/benchmark_colocalization.py"
 BACKENDS=(numpy)
 [ "$NUMBA" = 0 ] || BACKENDS+=(numba)
+BASE_RUNS=()
+HEAD_RUNS=()
 for backend in "${BACKENDS[@]}"; do
   echo "::group::featurizer colocalization ($backend)"
   "$WORK/venv-head/bin/python" "$COLOC" run --backend "$backend" \
     --revision "$(git rev-parse HEAD)" --out "$OUT/coloc-head-$backend.json"
   "$WORK/venv-main/bin/python" "$COLOC" run --backend "$backend" \
     --revision "$(git -C "$WORK/main" rev-parse HEAD)" --out "$OUT/coloc-main-$backend.json"
-  "$WORK/venv-head/bin/python" "$COLOC" compare \
-    --base "$OUT/coloc-main-$backend.json" --head "$OUT/coloc-head-$backend.json" \
-    --md "$OUT/coloc-$backend.md"
-  { printf '\n\n'; cat "$OUT/coloc-$backend.md"; } >> "$OUT/table.md"
+  BASE_RUNS+=("$OUT/coloc-main-$backend.json")
+  HEAD_RUNS+=("$OUT/coloc-head-$backend.json")
   echo "::endgroup::"
 done
+"$WORK/venv-head/bin/python" "$COLOC" compare \
+  --base "${BASE_RUNS[@]}" --head "${HEAD_RUNS[@]}" --md "$OUT/coloc.md"
+{ printf '\n\n'; cat "$OUT/coloc.md"; } >> "$OUT/table.md"
 
 cat "$OUT/table.md"

@@ -138,7 +138,8 @@ def run(path, backend="numpy", revision="", reps=REPS):
             if len(columns) != expected_columns or len(rows) != 4:
                 raise AssertionError("Unexpected output coverage")
             timings = []
-            for _ in range(reps):
+            # Ordered mode is an untimed, single-call correctness control.
+            for _ in range(reps if mode == "default" else 0):
                 start = perf_counter()
                 values, timed_columns, timed_rows = featurize(
                     image, masks, cfg, image_ids=["ci"]
@@ -191,23 +192,12 @@ def reverse_columns():
     }
 
 
-def compare(base_path, head_path):
+def comparison_rows(base_path, head_path):
     base, head = (json.loads(Path(path).read_text()) for path in (base_path, head_path))
     for key in ("backend", "input_sha256", "dependencies"):
         if base[key] != head[key]:
             raise AssertionError(f"Incompatible benchmark {key}")
-    lines = [
-        f"### Featurizer colocalization — {head['backend']}",
-        "",
-        f"Main `{base['revision'][:7]}` vs head `{head['revision'][:7]}`; "
-        "five channels, four objects, seeded 64×64 uint8 image; 255-level Costes grid.",
-        "Warmed in-memory calls; median [min–max] milliseconds. "
-        "Timings informational; pair counts and exact retained outputs are gates. "
-        "Matched means colocalization settings, not a CP comparison.",
-        "",
-        "|Policy / mode|Main ms|Head ms|Main/head|Costes pair tasks main→head|Columns main→head|",
-        "|---|---:|---:|---:|---:|---:|",
-    ]
+    lines = []
     with (
         np.load(Path(base_path).with_suffix(".npz")) as ba,
         np.load(Path(head_path).with_suffix(".npz")) as ha,
@@ -225,21 +215,41 @@ def compare(base_path, head_path):
                     data[ordered],
                     data[key],
                 )
-            b, h = (entry["reps_seconds"] for entry in (previous, current))
-
-            def display(times):
-                return f"{statistics.median(times) * 1000:.2f} [{min(times) * 1000:.2f}–{max(times) * 1000:.2f}]"
-
-            lines.append(
-                f"|{key}|{display(b)}|{display(h)}|{statistics.median(b) / statistics.median(h):.2f}×|"
-                f"{previous['pair_executions']['costes']}→{current['pair_executions']['costes']}|"
-                f"{len(previous['columns'])}→{len(current['columns'])}|"
+            if key.endswith("-ordered"):
+                continue
+            b, h = (
+                statistics.median(entry["reps_seconds"])
+                for entry in (previous, current)
             )
+            lines.append(
+                f"|{head['backend']}|{key.removesuffix('-default')}|"
+                f"{b * 1000:.2f}|{h * 1000:.2f}|{b / h:.2f}×|"
+            )
+    return lines
+
+
+def compare(base_paths, head_paths):
+    if isinstance(base_paths, (str, Path)):
+        base_paths = [base_paths]
+    if isinstance(head_paths, (str, Path)):
+        head_paths = [head_paths]
+    if not base_paths or len(base_paths) != len(head_paths):
+        raise ValueError("Supply matching nonempty base/head lists")
+    lines = [
+        "### Featurizer colocalization",
+        "",
+        "Default pair mode; warmed median milliseconds. Timing is informational.",
+        "",
+        "|Backend|Policy|Main ms|Head ms|Speedup|",
+        "|---|---|---:|---:|---:|",
+    ]
+    for base, head in zip(base_paths, head_paths, strict=True):
+        lines.extend(comparison_rows(base, head))
     lines += [
         "",
-        "Exact retained outputs and NaN/signed-infinity patterns: **PASS**. "
-        "Only extra reverse-fit Costes columns may disappear; savings from fewer pairs "
-        "are not equal-work algorithm speedups. Three repetitions are not confidence intervals.",
+        "Correctness **PASS** (pair counts, exact retained outputs, NaN/±inf, "
+        "ordered controls). Matched = settings, not CP equivalence. "
+        "Fewer-pair speedups are not equal-work comparisons. Details in artifacts.",
     ]
     return "\n".join(lines)
 
@@ -272,8 +282,8 @@ def main():
     run_parser.add_argument("--backend", choices=("numpy", "numba"), default="numpy")
     run_parser.add_argument("--revision", required=True)
     compare_parser = sub.add_parser("compare")
-    compare_parser.add_argument("--base", required=True)
-    compare_parser.add_argument("--head", required=True)
+    compare_parser.add_argument("--base", required=True, nargs="+")
+    compare_parser.add_argument("--head", required=True, nargs="+")
     compare_parser.add_argument("--md", required=True)
     args = parser.parse_args()
     if args.command == "run":

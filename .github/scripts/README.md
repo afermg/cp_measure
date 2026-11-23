@@ -18,9 +18,12 @@ on older main without `costes_pair_mode`, the default already supplies that cont
 
 An untimed instrumented call warms the full path and counts actual pair tasks:
 20 Pearson, 10 Manders, 10 RWC, and 10 unordered or 20 ordered Costes pairs.
-These are pair executions, not per-object fit counts. Three subsequent calls
-are timed without instrumentation, input generation, imports or serialization.
-Tables report median and min/max, including when no speedup was observed.
+These are pair executions, not per-object fit counts. For default mode only,
+three subsequent calls are timed without instrumentation, input generation,
+imports or serialization. Ordered mode runs once as an untimed correctness
+control, without repeated timings. One compact table combines both backends:
+policy, main/head median milliseconds and speedup (including no speedup).
+Per-call timings, pair counts, columns, settings and revisions remain in artifacts.
 
 Correctness failures fail CI: retained outputs must match exactly across main/head
 and default/ordered controls, including NaN and signed-infinity patterns. Only
