@@ -13,6 +13,10 @@ Notable user-facing changes are documented here.
   now fits each unordered channel pair once and retains both coefficients. Use
   `costes_pair_mode="ordered"` to retain the extra coefficients. Pair orientation
   follows channel-axis order; other correlation measurements are unchanged.
+- Reduce NumPy Costes threshold-search overhead with statistic-only background
+  correlations, SciPy fallbacks for delicate numerical cases, reuse of unchanged
+  background subsets, and a fast path for thresholds selecting every pixel.
+- Use a single-key argsort for per-object RWC dense ranks without changing ties.
 
 ## [0.4.1] - 2026-11-22
 
