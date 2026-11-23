@@ -120,6 +120,82 @@ def test_correlation_overlap():
     )
 
 
+@pytest.fixture
+def overlap_function(accelerator):
+    if accelerator == "numba":
+        from cp_measure.core.numba.measurecolocalization import (
+            get_correlation_overlap as numba_overlap,
+        )
+
+        return numba_overlap
+    return get_correlation_overlap
+
+
+@pytest.mark.parametrize("zero_channel", [0, 1, None], ids=["first", "second", "both"])
+def test_correlation_overlap_zero_channel(zero_channel, overlap_function):
+    # A channel that is zero within an object must give NaN, not raise
+    rng = numpy.random.default_rng(0)
+    pixels = rng.random((40, 40, 2))
+    masks = numpy.zeros((40, 40), dtype=int)
+    masks[5:15, 5:15] = 1
+    masks[20:32, 20:30] = 2
+    if zero_channel is None:
+        pixels[masks == 2] = 0
+    else:
+        pixels[masks == 2, zero_channel] = 0
+    with numpy.errstate(all="raise"):
+        result = overlap_function(
+            pixels_1=pixels[..., 0], pixels_2=pixels[..., 1], masks=masks
+        )
+    assert numpy.isfinite(result["Correlation_Overlap"][0])
+    assert numpy.isnan(result["Correlation_Overlap"][1])
+    if zero_channel is None:
+        assert all(numpy.isnan(values[1]) for values in result.values())
+    else:
+        zero_k = f"Correlation_K_{zero_channel + 1}"
+        other_k = f"Correlation_K_{2 - zero_channel}"
+        assert numpy.isnan(result[zero_k][1])
+        assert result[other_k][1] == 0
+
+
+@pytest.mark.parametrize(
+    "first_scale, second_scale",
+    [(1e100, 1e100), (1e-100, 1e-100), (1e100, 1e-100), (1e-100, 1e100)],
+    ids=["large", "tiny", "large-small", "small-large"],
+)
+@pytest.mark.parametrize("reverse", [False, True], ids=["identical", "different"])
+@pytest.mark.parametrize("precision", ["input", "float64"])
+def test_correlation_overlap_stable_normalization(
+    overlap_function, first_scale, second_scale, reverse, precision
+):
+    first_pattern = numpy.arange(1.0, 5.0).reshape(2, 2)
+    second_pattern = first_pattern[::-1, ::-1] if reverse else first_pattern
+    first = first_pattern * first_scale
+    second = second_pattern * second_scale
+    masks = numpy.ones((2, 2), dtype=numpy.int32)
+    # Analytic scale-independent oracle: sums of squares are 30, cross-product
+    # is 20 for the reversed pattern and 30 otherwise. All input products/sums
+    # remain representable; multiplying the squared sums need not be.
+    expected = 2 / 3 if reverse else 1.0
+    with numpy.errstate(all="raise"):
+        result = overlap_function(first, second, masks, thr=0, precision=precision)
+    numpy.testing.assert_allclose(
+        result["Correlation_Overlap"], [expected], rtol=1e-12, atol=0
+    )
+    numpy.testing.assert_allclose(
+        result["Correlation_K_1"],
+        [expected * (second_scale / first_scale)],
+        rtol=1e-12,
+        atol=0,
+    )
+    numpy.testing.assert_allclose(
+        result["Correlation_K_2"],
+        [expected * (first_scale / second_scale)],
+        rtol=1e-12,
+        atol=0,
+    )
+
+
 def test_get_intensity_edge_measurements_flag():
     """With edge_measurements=True (default) edge keys are present; with False they are omitted."""
     masks = get_masks()["one"]

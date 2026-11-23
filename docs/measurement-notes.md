@@ -355,9 +355,13 @@ Float16, integer and wider-float inputs retain the reference path. For accelerat
 float32/float64 Pearson, Manders and RWC, undefined objects keep the kernel's NaN
 results without replaying the whole image through NumPy. Incidental NumPy runtime
 warnings from those calculations are therefore no longer guaranteed. Overlap/K
-replays only nonfinite objects through the single-object reference, preserving
-the existing true zero-denominator error. Reference fallbacks are not advertised
-as accelerated. These changes do not alter the separate Costes warning policy.
+replays only nonfinite objects through the single-object reference. For a nonempty
+combined threshold region, a zero channel gives NaN for overlap and that channel's
+K; the other channel's K is zero if its denominator is nonzero. If both channels
+are zero, all three values are NaN. These undefined divisions do not raise
+`ZeroDivisionError`. An empty combined threshold region still returns three zeros.
+Reference fallbacks are not advertised as accelerated. These changes do not alter
+the separate Costes warning policy.
 
 All three inputs must have matching spatial ranks and extents. A 2D mask is not
 broadcast over Z, nor is the first intensity plane selected implicitly. Matching

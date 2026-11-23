@@ -5,9 +5,9 @@ Percentage-threshold metrics opt into float16/32 promotion with precision="float
 The default precision="input" preserves float32 threshold rounding but uses
 float64 kernel reductions, which can differ from NumPy's float32 reductions.
 Integer/wider-float inputs use reference
-reductions, retaining their existing semantics. Undefined kernel results also use
-reference evaluation to preserve warnings and errors, including zero-denominator
-Overlap errors.
+reductions, retaining their existing semantics. Nonfinite overlap/K kernel results
+use per-object reference evaluation to preserve its undefined-result conventions.
+A zero channel yields NaN for overlap and its K coefficient, not a division error.
 
 The public feature schema, label slots and per-object RWC scope are unchanged.
 Overlap remains a direct API, not an extra default bulk feature. Costes keeps
@@ -215,9 +215,9 @@ def _featurize(
         # earlier guard re-ran the reference whenever ANY object was non-finite,
         # which on real FOVs full of signal-less objects discarded the kernel work
         # for nearly every pair and made the batch serial. Only overlap passes a
-        # ref_ind: its reference divides by a Python float, raising ZeroDivisionError
-        # on a zero channel, which the njit kernel cannot reproduce, so each
-        # non-finite overlap object is replayed through the single-object reference.
+        # ref_ind: each object with nonfinite overlap/K values is replayed through
+        # the single-object reference to retain its undefined-result conventions,
+        # including NaN for a zero channel's denominator (not a division error).
         if ref_ind is not None:
             bad = numpy.zeros(next(iter(arrays.values())).shape[0], dtype=bool)
             for values in arrays.values():
