@@ -248,7 +248,7 @@ measurecolocalization.get_correlation_overlap
 - **Matching CellProfiler**: Use float intensities in `[0, 1]` (e.g. divide uint16 values by `65535`). Some defaults intentionally differ from CellProfiler; see [Matching CellProfiler](docs/measurement-notes.md#matching-cellprofiler) for the options that restore its behavior.
 - **Costes scale**: Float inputs require `scale_max` (e.g. `65535`); see [Costes scale](docs/measurement-notes.md#costes-scale).
 - **Costes boundary policy**: Small/constant threshold-search backgrounds no longer veto coefficients. See [details](docs/measurement-notes.md#costes-boundary-results-and-downstream-quality-control).
-- **Speed**: v0.4.X includes Numba-driven accelerations, we are currently working on benchmarks. The default NumPy/SciPy improvements are described in the [v0.2.0 performance report](benchmarks/releases/v0.2.0.md).
+- **Speed**: 0.4.2 reduces default featurizer Costes work for both NumPy and Numba; see the [changelog and compatibility option](CHANGELOG.md). Earlier NumPy/SciPy improvements are described in the [v0.2.0 performance report](benchmarks/releases/v0.2.0.md).
 
 See [Measurement notes](docs/measurement-notes.md) for texture quantization, percentile formulas, radial-distribution centers, and floating-point caveats.
 
