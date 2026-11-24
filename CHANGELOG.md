@@ -8,7 +8,7 @@ Notable user-facing changes are documented here.
 
 This patch reduces default featurizer Costes work and fixes undefined/extreme-scale
 Overlap/K calculations. The Costes default changes output coverage; use the
-ordered mode below for compatibility. See [release notes](docs/releases/0.4.2.md).
+ordered mode below for compatibility.
 
 - Return NaN for undefined overlap/K coefficients from zero-intensity channels
   instead of raising `ZeroDivisionError`.
