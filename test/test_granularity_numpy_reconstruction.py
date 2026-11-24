@@ -29,7 +29,9 @@ def test_reconstruction_exact(shape, dtype, scene):
         seed = morphology.erosion(seed, footprint=footprint)
         expected = morphology.reconstruction(seed, mask, footprint=footprint)
         if gran.reconstruction_loop is None:
-            pytest.skip("Private acceleration is intentionally disabled on this version")
+            pytest.skip(
+                "Private acceleration is intentionally disabled on this version"
+            )
         actual = gran._reconstruct_eroded(seed, mask)
         assert actual.dtype == expected.dtype
         np.testing.assert_array_equal(actual, expected)
@@ -61,7 +63,9 @@ def _same_result(actual, expected):
         )
         assert actual[key].dtype == expected[key].dtype
         np.testing.assert_array_equal(actual[key], expected[key])
-        np.testing.assert_array_equal(np.signbit(actual[key]), np.signbit(expected[key]))
+        np.testing.assert_array_equal(
+            np.signbit(actual[key]), np.signbit(expected[key])
+        )
 
 
 @pytest.mark.parametrize("shape", [(32, 40), (8, 16, 20)])
@@ -155,7 +159,9 @@ def test_nonfinite_uses_public_reconstruction(monkeypatch, value):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("version", ["0.25.2", "0.26.0", "0.19.3", "0.27.0", "0.26.0.dev0"])
+@pytest.mark.parametrize(
+    "version", ["0.25.2", "0.26.0", "0.19.3", "0.27.0", "0.26.0.dev0"]
+)
 def test_private_version_gate(version):
     def loop(ranks, prev, next, strides, current_idx, image_stride):
         raise AssertionError("Selection must never invoke the kernel")
@@ -168,7 +174,9 @@ def test_private_version_gate(version):
     assert selected is (candidate if version in {"0.25.2", "0.26.0"} else None)
 
 
-@pytest.mark.parametrize("loop", [None, object(), lambda *args: None, lambda ranks: None])
+@pytest.mark.parametrize(
+    "loop", [None, object(), lambda *args: None, lambda ranks: None]
+)
 def test_incompatible_private_api_uses_public_path(monkeypatch, loop):
     pixels = np.random.default_rng(12).random((32, 40)).astype(np.float32)
     mask = np.ones(pixels.shape, np.int32)

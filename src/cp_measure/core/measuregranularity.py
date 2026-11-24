@@ -65,6 +65,7 @@ from cp_measure.utils import _ensure_np_array as fix
 from numpy.typing import NDArray
 from cp_measure.primitives.shapes import batch_dispatch
 
+
 def _compatible_reconstruction_loop(version, loop):
     """Opt in only to tested private APIs; all other installs use the public API.
 
