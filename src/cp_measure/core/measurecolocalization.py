@@ -369,11 +369,12 @@ _COSTES_NEAR_CONSTANT = numpy.finfo(numpy.float64).eps ** 0.75
 _COSTES_TINY = numpy.finfo(numpy.float64).tiny
 
 
-def _costes_background_correlation(fi, si, selected, cacheable=None) -> float:
+def _costes_background_correlation(fi, si, selected) -> tuple[float, bool]:
+    """Return the correlation and whether it is safe to reuse without warnings."""
     # Linear search permits two pairs; bisection skips them before calling here.
     first, second = fi[selected], si[selected]
     if first.size < 2:
-        return numpy.nan
+        return numpy.nan, False
     # Costes uses only the statistic, not pearsonr's distribution/p-value.
     # Inputs are normalized to [0, 1]. Delegate numerically delicate inputs
     # back to SciPy (including its NearConstantInputWarning policy).
@@ -394,18 +395,16 @@ def _costes_background_correlation(fi, si, selected, cacheable=None) -> float:
         # Constants are a subset of this guard; avoid two full min/max scans
         # on the normal path while preserving the silent constant-subset NaN.
         if numpy.ptp(first) == 0 or numpy.ptp(second) == 0:
-            return numpy.nan
-        return float(scipy.stats.pearsonr(first, second)[0])
+            return numpy.nan, False
+        return float(scipy.stats.pearsonr(first, second)[0]), False
     r = float(numpy.dot(xm, ym) / normxm / normym)
     # Preserve Faster's sign and Fast's step-size decisions despite differences
     # in SciPy/NumPy reduction implementations across supported versions.
     if any(abs(r - boundary) < 1e-12 for boundary in (0.0, 0.25, 0.35, 0.45)):
-        return float(scipy.stats.pearsonr(first, second)[0])
-    if cacheable is not None:
-        # Only reuse the warning-free fast path. SciPy fallbacks must still run
-        # on each probe so warning categories/counts/filter behavior survive.
-        cacheable[0] = True
-    return min(1.0, max(-1.0, r)) if math.isfinite(r) else r
+        return float(scipy.stats.pearsonr(first, second)[0]), False
+    # Only reuse the warning-free fast path. SciPy fallbacks must still run
+    # on each probe so warning categories/counts/filter behavior survive.
+    return min(1.0, max(-1.0, r)), True
 
 
 def _costes_pair(
@@ -662,7 +661,7 @@ def _linear_search(
         # Only run Pearson if the input has changed. Constant subsets yield NaN
         # and take the ordinary one-step descent, matching CP's comparisons.
         if positives != num_true:
-            costReg = _costes_background_correlation(fi, si, combt)
+            costReg, _ = _costes_background_correlation(fi, si, combt)
             num_true = positives
         if costReg <= 0:
             break
@@ -748,7 +747,6 @@ def _bisection_search(
     combt: NDArray[numpy.bool_] | slice
     previous_count = -1
     previous_correlation = numpy.nan
-    cacheable = [False]
     fi_max, si_max = fi.max(), si.max()
     while lastmid != mid:
         iterations += 1
@@ -783,9 +781,8 @@ def _bisection_search(
             if same_subset:
                 costReg = previous_correlation
             else:
-                cacheable[0] = False
-                costReg = _costes_background_correlation(fi, si, combt, cacheable)
-                previous_count = count if cacheable[0] else -1
+                costReg, cacheable = _costes_background_correlation(fi, si, combt)
+                previous_count = count if cacheable else -1
                 previous_selected = combt if a < 0 else None
                 previous_correlation = costReg
             if costReg < 0:

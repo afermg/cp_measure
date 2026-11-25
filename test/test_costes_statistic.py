@@ -29,7 +29,11 @@ def test_background_statistic_matches_scipy(size, kind):
         expected = pearsonr(x, y).statistic if np.ptp(x) and np.ptp(y) else np.nan
     with warnings.catch_warnings(record=True) as actual_warnings:
         warnings.simplefilter("always")
-        actual = _costes_background_correlation(x, y, np.ones(size, bool))
+        actual, cacheable = _costes_background_correlation(x, y, np.ones(size, bool))
+    if size == 2 or kind in ("near_constant", "tiny"):
+        assert not cacheable
+    elif kind == "random":
+        assert cacheable
     np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-15, equal_nan=True)
     assert [(w.category, str(w.message)) for w in actual_warnings] == [
         (w.category, str(w.message)) for w in expected_warnings
@@ -45,7 +49,9 @@ def test_boundary_decisions_exact(boundary, offset):
     y = r * x + np.sqrt(1 - r * r) * orthogonal
     x, y = x * 0.1 + 0.5, y * 0.1 + 0.5
     expected = pearsonr(x, y).statistic
-    assert _costes_background_correlation(x, y, np.ones(4, bool)) == expected
+    actual, cacheable = _costes_background_correlation(x, y, np.ones(4, bool))
+    assert actual == expected
+    assert not cacheable
 
 
 def test_background_selection_and_invalid_subsets():
@@ -56,11 +62,12 @@ def test_background_selection_and_invalid_subsets():
         np.array([1, 0, 0, 0], bool),
         np.array([1, 1, 0, 0], bool),
     ):
-        assert np.isnan(_costes_background_correlation(x, y, sel))
+        actual, cacheable = _costes_background_correlation(x, y, sel)
+        assert np.isnan(actual)
+        assert not cacheable
     sel = np.array([0, 1, 1, 1], bool)
-    assert _costes_background_correlation(x, y, sel) == pytest.approx(
-        pearsonr(x[sel], y[sel]).statistic
-    )
+    actual, _ = _costes_background_correlation(x, y, sel)
+    assert actual == pytest.approx(pearsonr(x[sel], y[sel]).statistic)
 
 
 @pytest.mark.parametrize("scale", [255, 65535])
@@ -84,13 +91,14 @@ def test_search_cache_preserves_uncached_thresholds(monkeypatch, scale, scene):
     original = coloc._costes_background_correlation
     calls = {"cached": 0, "uncached": 0}
 
-    def cached(a, b, selected, cacheable=None):
+    def cached(first, second, selected):
         calls["cached"] += 1
-        return original(a, b, selected, cacheable)
+        return original(first, second, selected)
 
-    def uncached(a, b, selected, cacheable=None):
+    def uncached(first, second, selected):
         calls["uncached"] += 1
-        return original(a, b, selected)  # Never mark the result cacheable.
+        correlation, _ = original(first, second, selected)
+        return correlation, False
 
     monkeypatch.setattr(coloc, "_costes_background_correlation", cached)
     with warnings.catch_warnings(record=True) as cached_warnings:
