@@ -389,7 +389,7 @@ def _resume_bisection(g1, g2, lo, hi, scale, state, chunk):
         if numpy.count_nonzero(selected) <= 2:
             left = mid - 1
         else:
-            r = reference._costes_background_correlation(fi, si, selected)
+            r, _ = reference._costes_background_correlation(fi, si, selected)
             if r < 0:
                 left = mid - 1
             elif r >= 0:

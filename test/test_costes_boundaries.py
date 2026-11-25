@@ -96,9 +96,9 @@ def test_no_nonnegative_candidate_keeps_cp_boundary_fallback(monkeypatch):
     correlations = []
 
     def recording(*args):
-        value = original(*args)
+        value, cacheable = original(*args)
         correlations.append(value)
-        return value
+        return value, cacheable
 
     monkeypatch.setattr(ref, "_costes_background_correlation", recording)
     thresholds = ref.bisection_costes(
@@ -115,9 +115,11 @@ def test_two_pair_linear_correlation_is_exact(second, expected):
     from cp_measure.core.numba._costes import _pearson_combt
 
     first, second = np.array([0.2, 0.3]), np.array(second)
-    assert (
-        ref._costes_background_correlation(first, second, np.ones(2, bool)) == expected
+    actual, cacheable = ref._costes_background_correlation(
+        first, second, np.ones(2, bool)
     )
+    assert actual == expected
+    assert not cacheable
     no_cutoffs, defer = np.zeros(0), True
     assert (
         _pearson_combt(first, second, 0, 2, np.inf, np.inf, no_cutoffs, defer)
